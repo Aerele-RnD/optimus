@@ -25,6 +25,7 @@ passes them to ``_build_candidates_from_trees``.
 import importlib
 
 from frappe_profiler.analyzers.base import FRAMEWORK_APPS
+from frappe_profiler.analyzers.call_tree import _is_pure_helper_frame
 
 CANDIDATE_CAP = 30
 
@@ -127,7 +128,19 @@ def _walk_tree(node: dict, hits: dict) -> None:
 	filename = node.get("filename") or ""
 	kind = node.get("kind", "python")
 
-	if kind == "python" and not _is_synthetic_frame(function):
+	if (
+		kind == "python"
+		and not _is_synthetic_frame(function)
+		# Drop framework plumbing/wrapper frames — every request goes
+		# through frappe.app.application, frappe.handler.handle,
+		# frappe.utils.typing_validations.wrapper, frappe.recorder.record_sql,
+		# frappe.model.document.save / fn / runner / composer, etc. These
+		# always dominate the leaderboard but line-profiling them is
+		# pointless for the user. Reuses the same filter the call_tree
+		# analyzer applies to the Repeated Hot Frame leaderboard so the
+		# picker shows the same shape of "actually optimizable" frames.
+		and not _is_pure_helper_frame(node)
+	):
 		dotted = _build_dotted_path(filename, function)
 		# Use the (filename, function) tuple as the dedup key so two
 		# unrelated functions sharing a name (e.g. multiple ``validate``

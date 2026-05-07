@@ -173,19 +173,95 @@ class TestBuildCandidatesFromTrees:
 		assert len(candidates) == 30
 
 
+class TestPureHelperFiltering:
+	"""Plumbing / wrapper / dispatch frames that every request passes
+	through (frappe.app.application, frappe.handler.handle, recorder,
+	typing_validations wrapper, document.save's decorator chain, etc.)
+	dominate the leaderboard but aren't actionable to line-profile.
+
+	Reuses the same filter the call_tree analyzer applies to Repeated
+	Hot Frame so the picker surfaces the same shape of "real logic" the
+	user can actually optimize.
+	"""
+
+	def test_frappe_app_application_dropped(self):
+		tree = _root(_frame("application", "apps/frappe/frappe/app.py", 1, 400.0))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_frappe_handler_handle_dropped(self):
+		tree = _root(_frame("handle", "apps/frappe/frappe/handler.py", 1, 800.0))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_frappe_recorder_record_sql_dropped(self):
+		tree = _root(_frame("record_sql", "apps/frappe/frappe/recorder.py", 1, 140.0))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_frappe_utils_typing_validations_wrapper_dropped(self):
+		tree = _root(_frame(
+			"wrapper", "apps/frappe/frappe/utils/typing_validations.py", 1, 750.0,
+		))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_frappe_model_document_save_dropped(self):
+		tree = _root(_frame("save", "apps/frappe/frappe/model/document.py", 1, 380.0))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_frappe_model_meta_init_dropped(self):
+		tree = _root(_frame("__init__", "apps/frappe/frappe/model/meta.py", 1, 116.0))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_frappe_qb_query_execute_dropped(self):
+		tree = _root(_frame("execute", "apps/frappe/frappe/model/qb_query.py", 1, 137.0))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert candidates == []
+
+	def test_bare_wrapper_names_dropped_anywhere(self):
+		# Decorator wrapper functions named "wrapper" / "fn" / "runner" /
+		# "composer" are always plumbing regardless of file.
+		tree = _root(
+			_frame("fn", "apps/my_app/my_app/x.py", 1, 100.0),
+			_frame("runner", "apps/my_app/my_app/x.py", 1, 100.0),
+			_frame("composer", "apps/my_app/my_app/x.py", 1, 100.0),
+			_frame("wrapper", "apps/my_app/my_app/x.py", 1, 100.0),
+		)
+		assert picker._build_candidates_from_trees([tree], []) == []
+
+	def test_real_business_logic_kept(self):
+		# This is what users WANT in the picker.
+		tree = _root(_frame(
+			"validate",
+			"apps/erpnext/erpnext/accounts/doctype/sales_invoice/sales_invoice.py",
+			142,
+			292.0,
+		))
+		candidates = picker._build_candidates_from_trees([tree], [])
+		assert len(candidates) == 1
+		assert candidates[0]["dotted_path"].endswith("sales_invoice.validate")
+
+
 class TestFrameworkSplit:
 	def test_user_app_marked_primary(self):
-		tree = _root(_frame("fn", "apps/my_app/my_app/x.py", 1, 100.0))
+		# Use a non-wrapper-named function so the pure-helper filter
+		# doesn't drop it.
+		tree = _root(_frame("compute_total", "apps/my_app/my_app/x.py", 1, 100.0))
 		c = picker._build_candidates_from_trees([tree], [])[0]
 		assert c["is_framework"] is False
 		assert c["app"] == "my_app"
 
 	def test_erpnext_marked_framework(self):
-		tree = _root(_frame("make", "apps/erpnext/erpnext/accounts/gl_entry.py", 1, 100.0))
+		tree = _root(_frame("make_gl_entries", "apps/erpnext/erpnext/accounts/gl_entry.py", 1, 100.0))
 		c = picker._build_candidates_from_trees([tree], [])[0]
 		assert c["is_framework"] is True
 
 	def test_frappe_marked_framework(self):
+		# frappe/client.py isn't in the pure-helper file list, so this
+		# survives filtering.
 		tree = _root(_frame("get_value", "apps/frappe/frappe/client.py", 1, 100.0))
 		c = picker._build_candidates_from_trees([tree], [])[0]
 		assert c["is_framework"] is True
