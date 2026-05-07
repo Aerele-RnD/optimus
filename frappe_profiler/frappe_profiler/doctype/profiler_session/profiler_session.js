@@ -37,6 +37,38 @@ function render_phase2_button(frm) {
 	frm.add_custom_button(__("Run Line-Profile Pass"), function () {
 		open_phase2_picker(frm);
 	}, __("Phase 2"));
+
+	// Recovery hatch: force-clear a stuck phase-2 active flag if a
+	// previous run never reached Stop (worker crash, tab close, etc.).
+	// Idempotent — safe to click when nothing is stuck.
+	frm.add_custom_button(__("Force Stop Stuck Run"), function () {
+		frappe.confirm(
+			__(
+				"Clear any in-flight phase-2 active flag for your user " +
+				"and mark stuck Recording rows as Failed? Use this if " +
+				"the picker keeps reporting 'phase-2 already active'."
+			),
+			function () {
+				frappe.call({
+					method: "frappe_profiler.api.force_stop_phase2",
+					callback: function (r) {
+						var msg = r && r.message ? r.message : {};
+						frappe.show_alert({
+							message: __(
+								"Phase 2 cleared — flag was " +
+								(msg.cleared_active_flag ? "set" : "already clear") +
+								"; " +
+								(msg.rows_marked_failed || 0) +
+								" rows marked Failed."
+							),
+							indicator: "blue",
+						});
+						frm.reload_doc();
+					},
+				});
+			}
+		);
+	}, __("Phase 2"));
 }
 
 function open_phase2_picker(frm) {

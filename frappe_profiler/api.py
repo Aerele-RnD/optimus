@@ -1386,6 +1386,71 @@ def start_line_profile_pass(session_uuid: str, picks) -> dict:
 
 
 @frappe.whitelist()
+def force_stop_phase2() -> dict:
+	"""Recovery endpoint: clears the calling user's phase-2 active flag and
+	marks any of their in-flight Phase 2 Run rows as Failed.
+
+	Idempotent — safe to call when nothing is stuck. Use this when the
+	form rejects ``start_line_profile_pass`` with "phase-2 already
+	active" and the previous run never reached Stop (worker crash, tab
+	close, or interrupted reproduction).
+	"""
+	from frappe_profiler.line_profile import capture as _lp_capture
+
+	user = _require_profiler_user()
+
+	cleared_run = _lp_capture.is_active(user)
+	# Always clear the flag, even if is_active returned None (defensive
+	# against stale frappe.local caches mid-test or after worker recycle).
+	_lp_capture.stop_line_profile_pass(cleared_run or "_unknown_", user)
+
+	# Mark any Recording rows the user owns as Failed so the form's child
+	# table reflects the recovery. We scope to rows where parent.user ==
+	# the calling user so a System Manager hitting this doesn't sweep
+	# other users' active runs.
+	stuck_rows = frappe.db.sql(
+		"""
+		SELECT pp2r.name, pp2r.parent, pp2r.run_uuid
+		FROM `tabProfiler Phase 2 Run` pp2r
+		JOIN `tabProfiler Session` ps ON ps.name = pp2r.parent
+		WHERE pp2r.status = 'Recording'
+		  AND ps.user = %s
+		""",
+		(user,),
+		as_dict=True,
+	)
+
+	failed = 0
+	for row in stuck_rows:
+		try:
+			parent = frappe.get_doc("Profiler Session", row["parent"])
+			for child in (parent.phase_2_runs or []):
+				if child.run_uuid == row["run_uuid"]:
+					child.status = "Failed"
+					child.warnings_json = frappe.as_json([
+						"Force-stopped by user via api.force_stop_phase2.",
+					])
+					child.ended_at = now_datetime()
+					_lp_capture.cleanup_run(row["run_uuid"])
+					break
+			parent.flags.ignore_validate_update_after_submit = True
+			parent.save(ignore_permissions=True)
+			failed += 1
+		except Exception as exc:
+			frappe.log_error(
+				title="force_stop_phase2 row save",
+				message=f"{row['name']}: {exc}",
+			)
+	frappe.db.commit()
+
+	return {
+		"cleared_active_flag": bool(cleared_run),
+		"prior_run_uuid": cleared_run,
+		"rows_marked_failed": failed,
+	}
+
+
+@frappe.whitelist()
 def stop_line_profile_pass(run_uuid: str) -> dict:
 	"""End a phase-2 run, mark it Analyzing, enqueue the analyzer."""
 	from frappe_profiler.line_profile import capture as _lp_capture
