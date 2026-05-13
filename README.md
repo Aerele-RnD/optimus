@@ -3,8 +3,6 @@
 **A flow-aware performance profiler for Frappe and ERPNext.** Records a real business workflow (Sales Invoice save → submit → Delivery Note → submit → …), joins it with server resource state and browser-side timings, and produces two downloadable HTML reports you can actually act on: a **Safe Report** to share with a third-party dev shop without leaking customer data, and a **Raw Report** for internal debugging with full stack traces and SQL literals.
 
 > **Status:** `v0.7.0` — production-ready. MIT-licensed. 1281 tests in CI on every push (ruff + pytest matrix on Python 3.12 / 3.14). See the [CHANGELOG](./CHANGELOG.md) for the full feature history, including the v0.7.0 rename from `frappe_profiler` → `optimus`.
->
-> **Design docs:** `apps/frappe_profiler_design/` holds the architecture deep-dive, spec history, and planning notes. The architecture rationale and extension points live in [`ARCHITECTURE.md`](../frappe_profiler_design/ARCHITECTURE.md).
 
 ---
 
@@ -52,21 +50,22 @@
 
 ```bash
 cd ~/frappe-bench
-bench get-app https://github.com/<your-org>/optimus.git
+bench get-app https://github.com/Aerele-RnD/optimus.git
 bench --site <your-site> install-app optimus
-bench --site <your-site> migrate
 bench restart
 ```
 
-Tested on **Frappe v16** with MariaDB and Redis. The app declares `required_apps = ["frappe"]` and has one external dependency (`pyinstrument >= 4.6, < 6`, pure-Python, no compiled extensions).
+Tested on **Frappe v16** with MariaDB and Redis. The app declares `required_apps = ["frappe"]`. Runtime dependencies (installed automatically by `bench get-app`) are listed in [`pyproject.toml`](./pyproject.toml) — currently `pyinstrument`, `line_profiler`, `requests`, `sqlparse`, and `Jinja2`, all pure-Python with no compiled extensions (`line_profiler` ships a small C extension; pre-built wheels exist for cpython 3.10–3.14).
 
-After install, a **Optimus User** role is created automatically. All existing System Managers are granted this role, and new System Managers get it automatically via a `User.validate` hook.
+After install, an **Optimus User** role is created automatically. All existing System Managers are granted this role, and new System Managers get it automatically via a `User.validate` hook.
+
+> **Note for v0.5.x / v0.6.x users:** no in-place upgrade path is supported. `optimus` 0.7.0 is fresh-deploy only — see the CHANGELOG's `Install` section under the v0.7.0 entry.
 
 ---
 
 ## 60-second quickstart
 
-1. Open Desk. A bright red **Profiler** pill appears in the bottom-right corner.
+1. Open Desk. A bright red **Optimus** pill appears in the bottom-right corner.
 2. Click it. A dialog asks for a label, an optional "Steps to Reproduce" note, and a `Capture Python call tree` toggle (leave on).
 3. Click **Start**. The pill turns green and shows an elapsed timer.
 4. Run your flow — save a Sales Invoice, submit it, wait for background jobs, whatever you want profiled.
@@ -166,7 +165,7 @@ Five sentences:
 4. **Frontend capture wraps WHATWG primitives, not Frappe APIs.** `optimus_frontend.js` hooks `window.fetch` and `XMLHttpRequest.prototype.open/send` directly — the same approach every production APM library uses. Survives future Frappe upgrades because `fetch` and `XHR` are stable web platform standards, while jQuery `ajaxComplete` hooks would break when Frappe drops jQuery.
 5. **Ten analyzers, all pure functions.** Per-action breakdown, top-N slow queries, N+1 (by callsite), EXPLAIN flags, index suggestions (verified against schema), per-table breakdown, Python call tree (v0.3.0), redundant calls (v0.3.0), infra pressure (v0.5.0), frontend timings (v0.5.0). Each is independently testable from JSON fixtures with no Frappe DB access.
 
-For the full architecture (data-flow diagrams, hook order, edge cases, extension points), see [`ARCHITECTURE.md`](../frappe_profiler_design/ARCHITECTURE.md).
+For the full architecture (data-flow diagrams, hook order, edge cases, extension points), read the inline docstrings in [`optimus/analyze.py`](./optimus/analyze.py) and [`optimus/renderer.py`](./optimus/renderer.py).
 
 ---
 
@@ -418,7 +417,7 @@ Contract:
 - Custom analyzers can read earlier analyzers' output from `context.actions`, `context.findings`, and `context.aggregate`.
 - A 60-second soft cap per analyzer logs a warning; the 20-minute total budget aborts remaining analyzers with a partial-completion warning.
 
-See [`optimus/analyzers/base.py`](./optimus/analyzers/base.py) for the full type contract and [`ARCHITECTURE.md`](../frappe_profiler_design/ARCHITECTURE.md) *Extension Points* for examples.
+See [`optimus/analyzers/base.py`](./optimus/analyzers/base.py) for the full type contract and the analyzers under [`optimus/analyzers/`](./optimus/analyzers/) for working examples (each is a self-contained module — `n_plus_one.py`, `call_tree.py`, `redundant_calls.py`, and `infra_pressure.py` are good starting points).
 
 ---
 
@@ -428,9 +427,9 @@ After `bench migrate`, verify in this order:
 
 1. **DocTypes exist:**
    ```bash
-   bench --site <site> mariadb -e "SHOW TABLES LIKE 'tabProfiler%';"
+   bench --site <site> mariadb -e "SHOW TABLES LIKE 'tabOptimus%';"
    ```
-   Should list `tabOptimus Session`, `tabOptimus Action`, `tabOptimus Finding`.
+   Should list `tabOptimus Session`, `tabOptimus Action`, `tabOptimus Finding`, `tabOptimus Settings`, `tabOptimus Tracked App`, `tabOptimus Phase Two Run`.
 
 2. **Enqueue monkey-patch is active:**
    ```bash
@@ -449,7 +448,7 @@ After `bench migrate`, verify in this order:
    ```
    If this returns an older version, `bench restart` didn't land — workers are stale.
 
-4. **Floating widget appears in Desk:** log in as a System Manager, open any Desk page, look bottom-right for the red **Profiler** pill. Hover it — the tooltip should show the current build ID. Open devtools → Console — you should see `[optimus] floating_widget.js LOADED build=... at ...`.
+4. **Floating widget appears in Desk:** log in as a System Manager, open any Desk page, look bottom-right for the red **Optimus** pill. Hover it — the tooltip should show the current build ID. Open devtools → Console — you should see `[optimus] floating_widget.js LOADED build=... at ...`.
 
 5. **Correlation header is set:** start a session, open devtools → Network, click any link in Desk, inspect the response headers. You should see `X-Optimus-Recording-Id` AND `Access-Control-Expose-Headers: X-Optimus-Recording-Id` (without the second header, browsers hide the custom header from JavaScript — this is the single most common frontend instrumentation failure mode).
 
