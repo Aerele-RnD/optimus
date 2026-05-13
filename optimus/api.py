@@ -1891,22 +1891,26 @@ def stop_line_profile_pass(run_uuid: str) -> dict:
 
 	user = _require_profiler_user()
 
-	# Find the run row + parent session. v0.6.x: ``get_list`` (instead of
-	# ``get_all``) respects user permissions on Optimus Phase Two Run —
-	# defence-in-depth on top of the ``_require_profiler_user()`` gate.
-	rows = frappe.get_list(
+	# Find the run row + parent session. ``frappe.db.get_value`` with a
+	# filter dict + ``as_dict=True`` is the right primitive for a single
+	# child-table lookup on v16 — Frappe's ``get_list`` against child
+	# DocTypes (``istable: 1``) occasionally returns rows where the
+	# requested ``Select`` columns are stripped, which surfaced as a
+	# ``KeyError: 'status'`` in production. ``_require_profiler_user()``
+	# already gates the endpoint; we don't need ``get_list``'s
+	# permission filter on top.
+	row = frappe.db.get_value(
 		"Optimus Phase Two Run",
-		filters={"run_uuid": run_uuid},
-		fields=["name", "parent", "status"],
-		limit=1,
+		{"run_uuid": run_uuid},
+		["name", "parent", "status"],
+		as_dict=True,
 	)
-	if not rows:
+	if not row:
 		frappe.throw(f"Phase 2 run {run_uuid!r} not found.")
-	row = rows[0]
-	if row["status"] != "Recording":
-		frappe.throw(f"Phase 2 run is in status {row['status']!r}, not Recording.")
+	if row.status != "Recording":
+		frappe.throw(f"Phase 2 run is in status {row.status!r}, not Recording.")
 
-	parent_docname = row["parent"]
+	parent_docname = row.parent
 	session_uuid = frappe.db.get_value("Optimus Session", parent_docname, "session_uuid")
 
 	# Clear the active flag (capture won't instrument further requests).
@@ -1996,18 +2000,18 @@ def retry_phase2_analyze(run_uuid: str) -> dict:
 
 	_require_profiler_user()
 
-	# v0.6.x: ``get_list`` respects user permissions (defence-in-depth on
-	# top of ``_require_profiler_user()``).
-	rows = frappe.get_list(
+	# See ``stop_line_profile_pass`` for why this uses ``db.get_value``
+	# instead of ``get_list`` (child-table ``get_list`` strips ``Select``
+	# columns in v16, producing ``KeyError: 'status'`` at runtime).
+	row = frappe.db.get_value(
 		"Optimus Phase Two Run",
-		filters={"run_uuid": run_uuid},
-		fields=["name", "parent", "status"],
-		limit=1,
+		{"run_uuid": run_uuid},
+		["name", "parent", "status"],
+		as_dict=True,
 	)
-	if not rows:
+	if not row:
 		frappe.throw(f"Phase 2 run {run_uuid!r} not found.")
-	row = rows[0]
-	parent_docname = row["parent"]
+	parent_docname = row.parent
 	session_uuid = frappe.db.get_value("Optimus Session", parent_docname, "session_uuid")
 
 	# Reset to Analyzing so the realtime event flow still makes sense.
