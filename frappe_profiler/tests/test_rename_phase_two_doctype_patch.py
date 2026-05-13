@@ -16,7 +16,10 @@ OLD = "Profiler Phase 2 Run"
 NEW = "Profiler Phase Two Run"
 
 
-def _install_frappe_stub(*, old_exists=False, new_exists=False, rename_raises=False):
+def _install_frappe_stub(monkeypatch, *, old_exists=False, new_exists=False, rename_raises=False):
+	"""Install a minimal ``frappe`` stub via ``monkeypatch.setitem`` so
+	the real ``frappe`` is restored at teardown (preventing cross-test
+	pollution of subsequent tests in the same pytest session)."""
 	stub = types.ModuleType("frappe")
 	stub._rename_calls = []
 	stub._cleared = []
@@ -56,20 +59,22 @@ def _install_frappe_stub(*, old_exists=False, new_exists=False, rename_raises=Fa
 	)
 	stub.logger = lambda: logger
 
-	sys.modules["frappe"] = stub
+	monkeypatch.setitem(sys.modules, "frappe", stub)
 	return stub
 
 
 def _import_patch():
+	"""Reload the patch module under the current ``sys.modules["frappe"]``
+	stub. ``importlib.reload`` re-runs top-level code so the patch's
+	``import frappe`` binds to the stub, not whatever was cached before."""
 	import importlib
-	from frappe_profiler.patches.v0_6_0 import rename_phase_two_doctype
-	importlib.reload(rename_phase_two_doctype)
-	return rename_phase_two_doctype
+	import frappe_profiler.patches.v0_6_0.rename_phase_two_doctype as patch_mod
+	return importlib.reload(patch_mod)
 
 
 class TestRenamePhaseTwoDoctypePatch:
-	def test_renames_when_only_old_exists(self):
-		stub = _install_frappe_stub(old_exists=True, new_exists=False)
+	def test_renames_when_only_old_exists(self, monkeypatch):
+		stub = _install_frappe_stub(monkeypatch, old_exists=True, new_exists=False)
 		patch = _import_patch()
 		patch.execute()
 		assert stub._rename_calls == [("DocType", OLD, NEW, True)]
@@ -77,27 +82,27 @@ class TestRenamePhaseTwoDoctypePatch:
 		assert "profiler_settings_cached" in stub._cache_deletes
 		assert stub._committed is True
 
-	def test_no_op_when_neither_exists(self):
+	def test_no_op_when_neither_exists(self, monkeypatch):
 		"""Fresh install: the new DocType is synced from JSON directly.
 		Patch must not call rename_doc."""
-		stub = _install_frappe_stub(old_exists=False, new_exists=False)
+		stub = _install_frappe_stub(monkeypatch, old_exists=False, new_exists=False)
 		patch = _import_patch()
 		patch.execute()
 		assert stub._rename_calls == []
 		assert stub._committed is False
 
-	def test_no_op_when_new_already_exists_alone(self):
+	def test_no_op_when_new_already_exists_alone(self, monkeypatch):
 		"""Already migrated install: only the new DocType remains. Patch
 		runs but finds no old DocType → no-op."""
-		stub = _install_frappe_stub(old_exists=False, new_exists=True)
+		stub = _install_frappe_stub(monkeypatch, old_exists=False, new_exists=True)
 		patch = _import_patch()
 		patch.execute()
 		assert stub._rename_calls == []
 
-	def test_bails_when_both_exist(self):
+	def test_bails_when_both_exist(self, monkeypatch):
 		"""Conflict guard: both DocTypes present means a previous partial
 		migration. Logging a warning + bailing is safer than guessing."""
-		stub = _install_frappe_stub(old_exists=True, new_exists=True)
+		stub = _install_frappe_stub(monkeypatch, old_exists=True, new_exists=True)
 		patch = _import_patch()
 		patch.execute()
 		assert stub._rename_calls == []
@@ -106,11 +111,11 @@ class TestRenamePhaseTwoDoctypePatch:
 			"Expected a warning naming the duplicate-doctype situation"
 		)
 
-	def test_rename_failure_logs_and_does_not_commit(self):
+	def test_rename_failure_logs_and_does_not_commit(self, monkeypatch):
 		"""If rename_doc raises (e.g. table-lock during migrate), the
 		patch must NOT commit and must NOT raise — let the operator
 		retry migrate."""
-		stub = _install_frappe_stub(old_exists=True, rename_raises=True)
+		stub = _install_frappe_stub(monkeypatch, old_exists=True, rename_raises=True)
 		patch = _import_patch()
 		patch.execute()  # must not raise
 		assert stub._committed is False

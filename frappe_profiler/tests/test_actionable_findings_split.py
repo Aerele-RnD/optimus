@@ -35,6 +35,9 @@ def test_actionable_finding_types_has_concrete_fixes_only():
 		"Redundant Call",
 		"Slow Frontend Render",
 		"Heavy Response",
+		# v0.6.x: Phase-2 line-profile output points at a specific line
+		# of code with a concrete refactor target — actionable.
+		"Hot Line",
 	}
 	assert renderer._ACTIONABLE_FINDING_TYPES == expected_actionable, (
 		"_ACTIONABLE_FINDING_TYPES drifted from the expected set. "

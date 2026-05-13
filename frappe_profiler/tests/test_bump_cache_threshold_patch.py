@@ -14,7 +14,10 @@ import sys
 import types
 
 
-def _install_frappe_stub():
+def _install_frappe_stub(monkeypatch):
+	"""Install a minimal ``frappe`` stub via ``monkeypatch.setitem`` so
+	pytest restores the real ``frappe`` at teardown (preventing
+	cross-test pollution)."""
 	stub = types.ModuleType("frappe")
 	stub._single_values = {}
 	stub._doctype_exists = True
@@ -43,31 +46,32 @@ def _install_frappe_stub():
 		get_value=lambda k: None,
 		set_value=lambda k, v: None,
 	)
-	sys.modules["frappe"] = stub
+	monkeypatch.setitem(sys.modules, "frappe", stub)
 	return stub
 
 
 def _import_patch():
-	# Force re-import so each test sees the fresh frappe stub.
-	for mod in list(sys.modules.keys()):
-		if mod.endswith("bump_cache_threshold_default"):
-			del sys.modules[mod]
-	from frappe_profiler.patches.v0_5_2 import bump_cache_threshold_default
-	return bump_cache_threshold_default
+	"""Reload the patch module under the current ``sys.modules["frappe"]``
+	stub. ``importlib.reload`` re-runs top-level code (including the
+	``import frappe`` at the top of the patch), which rebinds the
+	module's local ``frappe`` to whatever's in sys.modules now."""
+	import importlib
+	import frappe_profiler.patches.v0_5_2.bump_cache_threshold_default as patch_mod
+	return importlib.reload(patch_mod)
 
 
 class TestBumpCacheThreshold:
-	def test_bumps_exactly_10_to_50(self):
-		stub = _install_frappe_stub()
+	def test_bumps_exactly_10_to_50(self, monkeypatch):
+		stub = _install_frappe_stub(monkeypatch)
 		stub._single_values["redundant_cache_threshold"] = 10
 		patch = _import_patch()
 		patch.execute()
 		assert stub._single_values["redundant_cache_threshold"] == 50
 
-	def test_does_not_overwrite_deliberate_custom_value(self):
+	def test_does_not_overwrite_deliberate_custom_value(self, monkeypatch):
 		"""User set a custom threshold like 20 or 100 — don't touch it."""
 		for custom in [5, 20, 30, 75, 100, 500]:
-			stub = _install_frappe_stub()
+			stub = _install_frappe_stub(monkeypatch)
 			stub._single_values["redundant_cache_threshold"] = custom
 			patch = _import_patch()
 			patch.execute()
@@ -75,38 +79,38 @@ class TestBumpCacheThreshold:
 				f"Patch must not overwrite user-tuned value {custom}"
 			)
 
-	def test_leaves_50_alone(self):
+	def test_leaves_50_alone(self, monkeypatch):
 		"""Idempotent: if the value is already 50, do nothing."""
-		stub = _install_frappe_stub()
+		stub = _install_frappe_stub(monkeypatch)
 		stub._single_values["redundant_cache_threshold"] = 50
 		patch = _import_patch()
 		patch.execute()
 		assert stub._single_values["redundant_cache_threshold"] == 50
 
-	def test_no_op_when_doctype_missing(self):
+	def test_no_op_when_doctype_missing(self, monkeypatch):
 		"""On a fresh install where the DocType isn't yet synced,
 		patch should be a no-op without raising."""
-		stub = _install_frappe_stub()
+		stub = _install_frappe_stub(monkeypatch)
 		stub._doctype_exists = False
 		patch = _import_patch()
 		patch.execute()
 		# Nothing was set.
 		assert stub._single_values == {}
 
-	def test_no_op_when_value_is_none(self):
+	def test_no_op_when_value_is_none(self, monkeypatch):
 		"""Defensive: a DocType row that exists but has no value for
 		the field yet must not raise / crash migration."""
-		stub = _install_frappe_stub()
+		stub = _install_frappe_stub(monkeypatch)
 		# Explicitly leave it missing from _single_values.
 		patch = _import_patch()
 		patch.execute()
 		# Missing field → get_single_value returns None → patch returns.
 		assert "redundant_cache_threshold" not in stub._single_values
 
-	def test_handles_non_integer_stored_value(self):
+	def test_handles_non_integer_stored_value(self, monkeypatch):
 		"""If somehow the stored value is a string (legacy data),
 		the patch must not crash."""
-		stub = _install_frappe_stub()
+		stub = _install_frappe_stub(monkeypatch)
 		stub._single_values["redundant_cache_threshold"] = "not-a-number"
 		patch = _import_patch()
 		# Should NOT raise.

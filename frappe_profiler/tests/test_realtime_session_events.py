@@ -201,11 +201,23 @@ def test_widget_init_calls_status_only_once():
 	"""init() must call refreshStatus exactly once for the one-shot
 	rehydrate. Any additional call is a regression."""
 	src = _read_widget_source()
-	# Extract the init() function body
-	import re
-	m = re.search(r"function init\(\)\s*\{([^}]+)\}", src)
-	assert m, "init() function not found in widget"
-	init_body = m.group(1)
+	# Extract the init() function body by balanced-brace walking — a
+	# naive regex like ``function init\(\)\s*\{([^}]+)\}`` would stop at
+	# the first nested ``}`` (inside the early-return if-block, etc.),
+	# missing the actual refreshStatus call below.
+	start = src.index("function init()")
+	open_brace = src.index("{", start)
+	depth = 1
+	i = open_brace + 1
+	while i < len(src) and depth > 0:
+		c = src[i]
+		if c == "{":
+			depth += 1
+		elif c == "}":
+			depth -= 1
+		i += 1
+	assert depth == 0, "init() function body has unbalanced braces"
+	init_body = src[open_brace + 1:i - 1]
 	# refreshStatus should appear exactly once in init's body
 	assert init_body.count("refreshStatus") == 1, (
 		"init() must call refreshStatus exactly once (one-shot "
