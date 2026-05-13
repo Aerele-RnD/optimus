@@ -1,10 +1,114 @@
 # Changelog
 
-All notable changes to the Frappe Profiler app.
+All notable changes to the Optimus app.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/),
 and this project follows [SemVer](https://semver.org/) (pre-1.0, so minor
 versions may contain breaking changes — see migration notes below).
+
+---
+
+## [0.7.0] — 2026-05-13
+
+**The rename release.** The app rebrands from `frappe_profiler` →
+`optimus`, end-to-end: the Python package, the GitHub repo, every
+DocType, the auto-installed Role, the realtime channels, the
+`X-Profiler-Recording-Id` HTTP correlation header, and every
+user-facing string in the report HTML and floating widget.
+
+Also bundles the v0.6.x development cycle that shipped to the main
+branch since v0.5.2: line-profile Phase 2 drilldown, the audit-response
+patches (DocType title-case, redundant-cache threshold bump, hidden
+framework-tables default, safe-mode field deletions, AI fix fields
+revamp), and the per-finding drill-down chain that walks pyinstrument
+trees down to the first signal-floor leaf.
+
+### Breaking
+
+All existing installs must run `bench migrate` after upgrading. The
+migration patches in `optimus.patches.v0_7_0` handle:
+
+  - **`tabPatch Log`** entries rewritten from `frappe_profiler.patches.*`
+    → `optimus.patches.*` so historical patches aren't re-run under
+    their new module paths.
+  - **`tabModule Def`** row renamed: `Frappe Profiler` → `Optimus`,
+    `app_name` updated to `optimus`.
+  - **DocTypes** (6) renamed via `frappe.rename_doc`:
+    - `Profiler Action` → `Optimus Action`
+    - `Profiler Finding` → `Optimus Finding`
+    - `Profiler Phase Two Run` → `Optimus Phase Two Run`
+    - `Profiler Session` → `Optimus Session`
+    - `Profiler Settings` → `Optimus Settings`
+    - `Profiler Tracked App` → `Optimus Tracked App`
+    Under the hood `rename_doc` rewrites every `tab<DocType>` SQL
+    table name plus child-table `parenttype` columns.
+  - **Role** renamed: `Profiler User` → `Optimus User`. Every
+    `tabHas Role` row carrying the old role keeps its user assignment
+    through the rename.
+  - **`Optimus Tracked App.app_name`** child rows updated:
+    `frappe_profiler` → `optimus` if present.
+  - **Realtime channels** renamed: `profiler_session_*` →
+    `optimus_session_*`, `profiler_progress` → `optimus_progress`.
+    Live widget pages reconnect to the new channels on reload.
+  - **HTTP header** renamed: `X-Profiler-Recording-Id` →
+    `X-Optimus-Recording-Id`. External integrations reading the
+    header must update.
+  - **`frappe.local.profiler_*` attributes** and **`frappe.conf.get
+    ("profiler_*")` keys** renamed to `optimus_*`. Users who set
+    `profiler_max_recordings_per_session` / `profiler_sampler_
+    interval_ms` / etc. in `site_config.json` need to rename those
+    keys manually.
+
+### User-side upgrade (from v0.5.x or v0.6.x)
+
+```bash
+bench stop
+sed -i.bak 's/^frappe_profiler$/optimus/' sites/apps.txt
+mv apps/frappe_profiler apps/optimus
+cd apps/optimus && git remote set-url origin https://github.com/Aerele-RnD/optimus.git && git pull origin main
+bench start  # in another terminal
+bench --site <yoursite> migrate
+```
+
+The `git remote set-url` step picks up the renamed GitHub repo;
+GitHub auto-redirects the old URL indefinitely so the step is
+optional but cleaner.
+
+### Added (rolled in from v0.6.x development)
+
+  - Line-profile Phase 2 drilldown — pick a hot function, profile it
+    line-by-line on a second recording, render hit/per-hit timing
+    next to the source.
+  - Per-finding drill-down chain — walks the pyinstrument tree from
+    a finding's origin frame down to the first leaf below the
+    signal floor (10% of origin cumulative_ms), rendered as a chain
+    of indented call-site links.
+  - AI fix suggestions — `Suggest a fix (AI)` action on every finding
+    sends the smoking-gun source window + recorded SQL evidence to
+    the configured LLM endpoint and renders the response inline.
+
+### Changed
+
+  - DocType name `Profiler Phase 2 Run` → `Profiler Phase Two Run`
+    (intermediate v0.6.0 rename) → `Optimus Phase Two Run` (v0.7.0).
+  - `redundant_cache_threshold` default bumped 10 → 50 (lab data
+    showed the lower default fired on benign hooks).
+
+### Fixed
+
+  - Suite isolation: per-test `sys.modules` fence in `conftest.py`
+    snapshots and restores per test, so stub-installer tests don't
+    pollute downstream tests in the same pytest session.
+  - `frappe.db` is a Werkzeug Local proxy — tests now replace it
+    wholesale via `monkeypatch.setattr` instead of patching its
+    attributes (which the proxy intercepts inconsistently).
+
+### CI
+
+  - GitHub Actions workflow runs ruff + pytest matrix (Python 3.12 +
+    3.14) on every push. The baseline frappe stub in conftest.py
+    lets the suite collect on a non-bench Python without installing
+    frappe.
 
 ---
 
@@ -58,9 +162,9 @@ and correctness work.
   `print`) so only actual docnames get stripped.
 
 - **`_inject_correlation_header` uses tokenwise idempotency check,
-  not substring match.** Previously the `X-Profiler-Recording-Id not
+  not substring match.** Previously the `X-Optimus-Recording-Id not
   in existing` check was a substring compare. If another app had
-  already set `Access-Control-Expose-Headers: X-Profiler-Recording-Id-Legacy`
+  already set `Access-Control-Expose-Headers: X-Optimus-Recording-Id-Legacy`
   (or similar), the substring match would falsely think our header
   was already present and skip appending it — silently breaking
   the entire frontend correlation feature because the browser would
@@ -69,13 +173,13 @@ and correctness work.
 
 - **Correlation header gated on active profiler session, not just
   recorder presence.** The `after_request` hook previously injected
-  `X-Profiler-Recording-Id` whenever `frappe.local._recorder` had a
+  `X-Optimus-Recording-Id` whenever `frappe.local._recorder` had a
   `.uuid` — which is true any time the standalone Frappe Recorder UI
   is running, even for users who have no profiler session. The header
   was leaking onto every recorded response site-wide, and
-  `profiler_frontend.js` was buffering XHRs tagged to a recording
+  `optimus_frontend.js` was buffering XHRs tagged to a recording
   that no session could claim. Now gated on
-  `frappe.local.profiler_session_id` which is only set by our own
+  `frappe.local.optimus_session_id` which is only set by our own
   `before_request` hook.
 
 ### Fixed — production bugs that tests were covering for
@@ -102,7 +206,7 @@ matching.
 
 - **Cap-exceeded failure path wrote to phantom `analyze_error`
   field.** v0.5.0's inline-analyze safety cap (default 50 recordings)
-  called `frappe.db.set_value("Profiler Session", docname,
+  called `frappe.db.set_value("Optimus Session", docname,
   {"analyze_error": "..."})` — but that field does NOT exist on the
   doctype. The real field is `analyzer_warnings` (plural). On
   scheduler-disabled sites with ≥51 recordings, clicking Stop
@@ -151,7 +255,7 @@ matching.
   mismatching the `payload` signature and failing with `TypeError`
   deep in the request router, logged into Frappe's internal error
   log and never reaching our own. Every `beforeunload` beacon was
-  silently failing. Fixed client-side: `profiler_frontend.js` now
+  silently failing. Fixed client-side: `optimus_frontend.js` now
   wraps the beacon body as `JSON.stringify({payload: body})` so
   Frappe's flattening produces `{"payload": "..."}` which matches
   the endpoint signature.
@@ -266,7 +370,7 @@ matching.
      retried click after a network blip on the first stop — the
      callback fell into the else branch and transitioned the
      widget to "Analyzing…" despite nothing being analyzed
-     server-side. No `profiler_session_ready` realtime event would
+     server-side. No `optimus_session_ready` realtime event would
      ever fire, so the widget hung on Analyzing forever. v0.5.1
      checks `data.stopped === false` explicitly and resets the
      widget to inactive with a gray toast, clearing
@@ -297,7 +401,7 @@ matching.
 - **Diagnostic logging added.** `confirmAndStop` now logs at entry,
   in the success callback (with the full response dict), and in
   the error callback (with the full error object). Log lines use
-  the `[frappe_profiler]` prefix so they're easy to filter in
+  the `[optimus]` prefix so they're easy to filter in
   devtools. Makes future "widget doesn't work" reports debuggable
   without adding ad-hoc logging after the fact.
 
@@ -338,13 +442,13 @@ matching.
 
 - **`v5_aggregate_json` tail-preferring caps.** On a 200-recording
   session with rich frontend data, the v0.5.0 aggregate JSON
-  could balloon to 1 MB+, slowing Profiler Session form loads
+  could balloon to 1 MB+, slowing Optimus Session form loads
   for every viewer. v0.5.1 adds tail-preferring caps in
   `_persist`: `infra_timeline` at 200, `frontend_xhr_matched` at
   500, `frontend_orphans` at 100. Truncation surfaces a warning
   via `analyzer_warnings` so operators can see the drop.
 
-- **`profiler_frontend.js` watchdog is a no-op when inactive.**
+- **`optimus_frontend.js` watchdog is a no-op when inactive.**
   Previously the 60-second watchdog interval checked
   `xhrBuffer.length > 200` every tick regardless of session
   state. v0.5.1 adds an early `if (!currentSessionUuid()) return;`
@@ -372,7 +476,7 @@ matching.
 
 - `__version__` bumped from `0.5.0` to `0.5.1`. Cache-buster
   rotates; browsers re-fetch `floating_widget.js` and
-  `profiler_frontend.js` on the next Desk load.
+  `optimus_frontend.js` on the next Desk load.
 - Widget now exposes a `WIDGET_BUILD_ID` constant, logged to the
   browser console at script load and set as `title` +
   `data-build-id` attributes on the widget element so users can
@@ -404,11 +508,11 @@ frontend_frontend fixes take effect.
 
 **Browser-side**: all active Desk users must hard-refresh
 (Cmd+Shift+R / Ctrl+Shift+R) after `bench restart` to discard
-cached `floating_widget.js` and `profiler_frontend.js`.
+cached `floating_widget.js` and `optimus_frontend.js`.
 
 **Verification**: after restart + refresh, open devtools →
 Console and look for
-`[frappe_profiler] floating_widget.js LOADED build=2026-04-15-stop-fix-v3`.
+`[optimus] floating_widget.js LOADED build=2026-04-15-stop-fix-v3`.
 If the build ID is different or the log line is missing, the
 browser is still serving cached JS and more cache invalidation
 is needed.
@@ -468,23 +572,23 @@ earlier.
   - **Background Queue Backlog** — any RQ queue (`default`, `short`,
     `long`) peaked above 50 during the session. Signals that the
     flow enqueued work that's waiting behind other jobs.
-- **Browser-side metrics shim** — new `profiler_frontend.js` wraps
+- **Browser-side metrics shim** — new `optimus_frontend.js` wraps
   `window.fetch` and `XMLHttpRequest.prototype.open/send` to capture
   per-XHR timings (URL, method, duration, status, response size)
-  whenever the server returns an `X-Profiler-Recording-Id` response
+  whenever the server returns an `X-Optimus-Recording-Id` response
   header. Uses `PerformanceObserver` with `buffered: true` to capture
   Web Vitals (FCP, LCP, CLS, navigation timing). Wraps WHATWG
   primitives instead of application-level APIs so instrumentation
   survives future Frappe upgrades — jQuery `$.ajax` is caught via XHR
   automatically. This is the approach every production APM library
   uses (OpenTelemetry JS, Sentry Browser, Datadog RUM).
-- **`X-Profiler-Recording-Id` correlation header** — `after_request`
+- **`X-Optimus-Recording-Id` correlation header** — `after_request`
   injects the recording UUID as a custom response header AND appends
   it to `Access-Control-Expose-Headers` so browsers actually surface
   it to JavaScript. The expose header is load-bearing: without it,
-  `xhr.getResponseHeader("X-Profiler-Recording-Id")` returns `null`
+  `xhr.getResponseHeader("X-Optimus-Recording-Id")` returns `null`
   even for same-origin requests.
-- **`frappe_profiler.api.submit_frontend_metrics` endpoint** —
+- **`optimus.api.submit_frontend_metrics` endpoint** —
   receives batched XHR + Web Vitals payloads from the browser shim
   at stop time (via `frappe.call`) or at `beforeunload` (via
   `navigator.sendBeacon`). Accepts a JSON string payload because
@@ -523,11 +627,11 @@ earlier.
   code identifiers, not PII. Applied to every URL rendered in the
   Frontend panel when `mode == "safe"`. Mirrors SQL normalization:
   full text stored, redacted form emitted.
-- **Seven new `Profiler Finding.finding_type` Select options**:
+- **Seven new `Optimus Finding.finding_type` Select options**:
   Resource Contention, Memory Pressure, DB Pool Saturation,
   Background Queue Backlog, Slow Frontend Render, Network Overhead,
   Heavy Response.
-- **Upgraded `notes` field on Profiler Session** from plain `Text` to
+- **Upgraded `notes` field on Optimus Session** from plain `Text` to
   `Text Editor` (rich HTML), relabeled as **"Steps to Reproduce /
   Notes"**. Rendered at the top of the report above findings so any
   reviewer reads the reproduction context before the technical
@@ -538,14 +642,14 @@ earlier.
   steps"); v0.5.0 upgrades it in place rather than adding a duplicate
   `steps_to_reproduce` field, avoiding DB schema bloat and data
   migration.
-- **`v5_aggregate_json` field on Profiler Session** — hidden Long
+- **`v5_aggregate_json` field on Optimus Session** — hidden Long
   Text field that serializes the v0.5.0 `infra_pressure` and
   `frontend_timings` aggregates as a single JSON dict. Persisted by
   `_persist` alongside the existing `top_queries_json` and
   `table_breakdown_json`, read by `renderer.render()`.
 - **`data-session-uuid` attribute on the floating widget DOM element**
   — set when a session is active, cleared when it ends. Read by
-  `profiler_frontend.js` to tag its flush payloads, keeping the two
+  `optimus_frontend.js` to tag its flush payloads, keeping the two
   modules loosely coupled without a shared global.
 - **Test coverage:** 65+ new tests across:
   - `test_scheduler_inline_fallback.py` — 5 tests
@@ -573,7 +677,7 @@ earlier.
   hang in the **"Stopping"** state. v0.5.0 detects
   `is_scheduler_disabled()` and passes `now=True` to `frappe.enqueue`
   so analyze runs synchronously inside the stop request. A new
-  `profiler_inline_analyze_limit` site config (default 50) hard-caps
+  `optimus_inline_analyze_limit` site config (default 50) hard-caps
   the recording count for inline analyze — sessions above the cap
   are marked Failed with an actionable error directing the user to
   `bench enable-scheduler` and the **Retry Analyze** button. Prevents
@@ -585,10 +689,10 @@ earlier.
   already completed inline, the report is attached by the time stop
   returns).
 - **`api.start()` accepts an optional `notes` kwarg** (default `""`)
-  and persists it into the new Profiler Session row. Backward
+  and persists it into the new Optimus Session row. Backward
   compatible with callers that don't pass notes.
 - **`floating_widget.js:confirmAndStop`** now calls
-  `window.frappe_profiler_frontend.flush()` before firing the stop
+  `window.optimus_frontend.flush()` before firing the stop
   API so buffered browser metrics land in Redis before analyze runs.
   Best-effort — a failed flush never blocks stop.
 - **`_stop_session` signature changed** from `(user, session_uuid) -> str | None`
@@ -598,7 +702,7 @@ earlier.
   discards it.
 - **`before_request` / `before_job` / `after_request` / `after_job`
   hooks** now take an infra snapshot into
-  `frappe.local.profiler_infra_start` at the start of the action and
+  `frappe.local.optimus_infra_start` at the start of the action and
   diff it against an end snapshot in the `finally` block, writing
   the result under `profiler:infra:<recording_uuid>` with the same
   TTL as other session keys. All work happens inside the existing
@@ -614,7 +718,7 @@ earlier.
   `RECORDER_REQUEST_HASH` entries when analyze walks the recording
   list.
 - **`hooks.py:app_include_js`** converted from a string to a list
-  and now includes `profiler_frontend.js` alongside `floating_widget.js`.
+  and now includes `optimus_frontend.js` alongside `floating_widget.js`.
   Both entries carry the version cache-buster.
 - **`analyze.run`** now loads `profiler:frontend:<session_uuid>`
   into `context.frontend_data` and attaches per-recording infra
@@ -642,11 +746,11 @@ earlier.
 
 Running `bench --site <site> migrate` will:
 
-1. Apply `frappe_profiler.patches.v0_5_0.add_metrics_finding_types`
-   which reloads the Profiler Finding DocType so the seven new
+1. Apply `optimus.patches.v0_5_0.add_metrics_finding_types`
+   which reloads the Optimus Finding DocType so the seven new
    `finding_type` Select options become available. Idempotent.
-2. Apply `frappe_profiler.patches.v0_5_0.upgrade_notes_to_text_editor`
-   which reloads the Profiler Session DocType to pick up the
+2. Apply `optimus.patches.v0_5_0.upgrade_notes_to_text_editor`
+   which reloads the Optimus Session DocType to pick up the
    upgraded `notes` field (now Text Editor) and the new
    `v5_aggregate_json` Long Text field. Existing `notes` values
    carry over unchanged because plain-text content is valid Text
@@ -682,7 +786,7 @@ are empty.
   hedge for tab-close scenarios.
 - `navigator.sendBeacon` calls made from *other* apps are not
   captured (beacons can't return response headers, so our shim
-  can't see the `X-Profiler-Recording-Id`).
+  can't see the `X-Optimus-Recording-Id`).
 
 To disable the new pyinstrument + infra capture for a specific
 session, uncheck **"Capture Python call tree"** in the start
@@ -717,19 +821,19 @@ handoff workflow is faster and the report is more actionable.
   matchers, fixture-testable, no Frappe DB access.
 - **PDF export of the safe report** — lazy-generated on first
   download click via `frappe.utils.pdf.get_pdf` (wkhtmltopdf), cached
-  to a private File attachment on the Profiler Session. Subsequent
+  to a private File attachment on the Optimus Session. Subsequent
   downloads serve from cache. Generation cost is kept out of the
   analyze pipeline.
 - **`pdf_export.py` module** — `get_or_generate_pdf` and
   `clear_cached_pdf` helpers.
-- **PDF download button** on the Profiler Session form (lazy generation
+- **PDF download button** on the Optimus Session form (lazy generation
   with progress alert).
-- **Auto-assign `Profiler User` role to System Managers** on install
+- **Auto-assign `Optimus User` role to System Managers** on install
   via `after_install`. Also wires a `User.validate` doc_event so new
-  System Managers automatically get the Profiler User role.
+  System Managers automatically get the Optimus User role.
 - **One-time onboarding toast** on first Desk visit after install,
   pointing the user at the floating Profiler pill. Suppressed for
-  experienced users (anyone with a Ready Profiler Session row).
+  experienced users (anyone with a Ready Optimus Session row).
   Tracked via `profiler:onboarding_seen:<user>` in Redis.
 - **Version-driven asset cache buster** — `app_include_js` and
   `app_include_css` now read `?v={__version__}` so every release
@@ -737,7 +841,7 @@ handoff workflow is faster and the report is more actionable.
 - **6 new whitelisted API endpoints** —
   `check_onboarding_seen`, `mark_onboarding_seen`, `pin_baseline`,
   `unpin_baseline`, `set_comparison`, `download_pdf`.
-- **3 new fields on Profiler Session** — `compared_to_session`
+- **3 new fields on Optimus Session** — `compared_to_session`
   (Link), `is_baseline` (Check), `safe_report_pdf_file` (Attach).
 - **SVG donut fallback for PDF mode** — wkhtmltopdf doesn't handle
   `conic-gradient` reliably; the renderer now produces an inline SVG
@@ -770,16 +874,16 @@ handoff workflow is faster and the report is more actionable.
 
 Running `bench --site <site> migrate` will:
 
-1. Apply patch `frappe_profiler.patches.v0_4_0.add_comparison_and_pdf_fields`
-   which reloads the Profiler Session DocType.
-2. Add 3 new fields to `tabProfiler Session`: `compared_to_session`,
+1. Apply patch `optimus.patches.v0_4_0.add_comparison_and_pdf_fields`
+   which reloads the Optimus Session DocType.
+2. Add 3 new fields to `tabOptimus Session`: `compared_to_session`,
    `is_baseline`, `safe_report_pdf_file`. All nullable / default 0.
 
 No breaking API changes. v0.3.0 sessions render unchanged in v0.4.0
 because all new fields default to NULL/0 and the renderer skips the
 comparison and PDF paths when fields are unset.
 
-To pin a session as a baseline, open it in the Profiler Session form
+To pin a session as a baseline, open it in the Optimus Session form
 view (Status: Ready) and click **Pin as baseline**. Subsequent
 recordings of the same flow (matching session title) will auto-include
 comparison sections in their safe + raw reports.
@@ -799,7 +903,7 @@ for the full design spec.
 
 - **pyinstrument-based Python call tree capture** per recording. Sampled
   at 1ms intervals (configurable via
-  `site_config.json: profiler_sampler_interval_ms`). Scoped per request
+  `site_config.json: optimus_sampler_interval_ms`). Scoped per request
   so non-recording users are unaffected.
 - **Reconciled unified call tree** — each captured SQL call is grafted
   onto the deepest user-code frame in the pyinstrument tree, so the
@@ -848,14 +952,14 @@ for the full design spec.
   `call_tree`, `hot_frames`, `session_time_breakdown`, `total_python_ms`,
   `total_sql_ms`.
 - **New site config keys:**
-  - `profiler_sampler_interval_ms` — pyinstrument sample interval (default 1).
-  - `profiler_tree_prune_threshold_pct` — drop frames below N% of action time (default 0.005).
-  - `profiler_tree_node_cap` — max nodes per persisted tree (default 500, hot path always preserved).
-  - `profiler_redundant_doc_threshold` (default 5).
-  - `profiler_redundant_cache_threshold` (default 10).
-  - `profiler_redundant_perm_threshold` (default 10).
-  - `profiler_redundant_high_multiplier` (default 5).
-  - `profiler_safe_extra_allowed_apps` — extra app prefixes whose function names are kept un-redacted in safe mode.
+  - `optimus_sampler_interval_ms` — pyinstrument sample interval (default 1).
+  - `optimus_tree_prune_threshold_pct` — drop frames below N% of action time (default 0.005).
+  - `optimus_tree_node_cap` — max nodes per persisted tree (default 500, hot path always preserved).
+  - `optimus_redundant_doc_threshold` (default 5).
+  - `optimus_redundant_cache_threshold` (default 10).
+  - `optimus_redundant_perm_threshold` (default 10).
+  - `optimus_redundant_high_multiplier` (default 5).
+  - `optimus_safe_extra_allowed_apps` — extra app prefixes whose function names are kept un-redacted in safe mode.
 
 ### Changed
 
@@ -893,12 +997,12 @@ for the full design spec.
 
 Running `bench --site <site> migrate` will:
 
-1. Apply patch `frappe_profiler.patches.v0_3_0.add_call_tree_fields`,
-   which reloads `Profiler Action` and `Profiler Session` to pick up
+1. Apply patch `optimus.patches.v0_3_0.add_call_tree_fields`,
+   which reloads `Optimus Action` and `Optimus Session` to pick up
    the new nullable columns.
-2. Add 3 new fields to `tabProfiler Action`: `call_tree_json`,
+2. Add 3 new fields to `tabOptimus Action`: `call_tree_json`,
    `call_tree_size_bytes`, `call_tree_overflow_file`.
-3. Add 4 new fields to `tabProfiler Session`: `total_python_ms`,
+3. Add 4 new fields to `tabOptimus Session`: `total_python_ms`,
    `total_sql_ms`, `hot_frames_json`, `session_time_breakdown_json`.
 
 No breaking API changes — `start`, `stop`, `status`, `get_active_session`,
@@ -924,32 +1028,32 @@ extensibility, and housekeeping. See
 
 ### Added
 
-- **JSON export endpoint** — `frappe_profiler.api.export_session(uuid)`
+- **JSON export endpoint** — `optimus.api.export_session(uuid)`
   returns a structured blob (session + actions + findings + top queries +
   table breakdown) for programmatic consumption by dev-shop tools.
-- **Health / metrics endpoint** — `frappe_profiler.api.health()` returns
+- **Health / metrics endpoint** — `optimus.api.health()` returns
   counts by status and analyze-pipeline performance over the last 24 hours.
   Intended for Prometheus/Grafana/Datadog scrapers.
 - **Custom analyzer hook** — third-party Frappe apps can contribute
-  analyzers via `hooks.py: profiler_analyzers = ["my_app.analyzers.custom.analyze"]`.
+  analyzers via `hooks.py: optimus_analyzers = ["my_app.analyzers.custom.analyze"]`.
   Hooks run after the builtins and share the same `AnalyzeContext`.
 - **Cross-session EXPLAIN cache** — EXPLAIN results are now cached in
   Redis with a 1-hour TTL (configurable via
-  `site_config.json: profiler_explain_cache_ttl_seconds`). Two consecutive
+  `site_config.json: optimus_explain_cache_ttl_seconds`). Two consecutive
   analyze runs on a stable schema skip the DB roundtrip entirely.
-- **Notes field on Profiler Session** — customers can annotate sessions
+- **Notes field on Optimus Session** — customers can annotate sessions
   with reproduction steps, ticket refs, context. Editable even on Ready
   sessions. Rendered in the HTML report header.
 - **Progress updates during analyze** — the analyze pipeline emits
-  `frappe.publish_realtime("profiler_progress", ...)` events at each
+  `frappe.publish_realtime("optimus_progress", ...)` events at each
   phase (5% fetching, 20% EXPLAIN, 50% analyzers, 80% persist, 90%
   render, 100% done). The floating widget subscribes and displays a live
   percentage instead of a bare "Analyzing…".
 - **Retention-policy cleanup** — daily janitor deletes Ready/Failed
   sessions older than 90 days (configurable via
-  `site_config.json: profiler_session_retention_days`).
+  `site_config.json: optimus_session_retention_days`).
 - **Orphan Redis cleanup** — the daily janitor also sweeps
-  `profiler:session:*` Redis keys whose parent Profiler Session row no
+  `profiler:session:*` Redis keys whose parent Optimus Session row no
   longer exists (e.g. failed analyzes that never retried).
 - **Sensitive-field redactor** — raw report now redacts known-sensitive
   fields from headers and form_dict before rendering. Redacts: password,
@@ -965,15 +1069,15 @@ extensibility, and housekeeping. See
   confused about UTC vs. local.
 - **Retry Analyze button** — Failed sessions now have a "Retry Analyze"
   custom button in the form view that re-enqueues the analyze job. New
-  `frappe_profiler.api.retry_analyze(session_uuid)` whitelisted endpoint.
-- **Fixture builder helpers** — `frappe_profiler.tests.fixture_builders`
+  `optimus.api.retry_analyze(session_uuid)` whitelisted endpoint.
+- **Fixture builder helpers** — `optimus.tests.fixture_builders`
   provides `build_call`, `build_recording`, `build_explain_row` to
   reduce boilerplate in analyzer tests.
 
 ### Fixed
 
 - **N+1 attribution blamed frappe framework code** — `_callsite()` now
-  walks the stack skipping `frappe/` and `frappe_profiler/` prefixes so
+  walks the stack skipping `frappe/` and `optimus/` prefixes so
   N+1 findings point at customer business logic (e.g.
   `erpnext/accounts/sales_invoice.py:212`) instead of framework helpers
   (`frappe/database/database.py:742`). Single most impactful fix in
@@ -988,10 +1092,10 @@ extensibility, and housekeeping. See
   `frappe.local._recorder` and piggybacks instead of overwriting it.
 - **`api.start()` had no role check** — any authenticated user could
   POST to the endpoint and start a session on themselves. Now requires
-  `Profiler User` or `System Manager` role (enforced at the HTTP level,
+  `Optimus User` or `System Manager` role (enforced at the HTTP level,
   not just the UI).
 - **N+1 threshold of 5 was too low** — raised default to 10 with a
-  `profiler_n_plus_one_threshold` site config override. Also requires
+  `optimus_n_plus_one_threshold` site config override. Also requires
   minimum total time (default 20ms) so 10×0.1ms queries no longer
   trigger false positives.
 - **`_enrich_recordings` had no EXPLAIN cap** — now caps at 2000
@@ -1017,12 +1121,12 @@ extensibility, and housekeeping. See
 - **Session list view had no severity indicator** — new `top_severity`
   field populated by analyze, color-coded in the list view via a custom
   `listview_settings.get_indicator`.
-- **`track_changes=1` on Profiler Session caused storage bloat** —
+- **`track_changes=1` on Optimus Session caused storage bloat** —
   every analyze created 10+ tabVersion rows. Disabled track_changes;
   patch `v0_2_0.remove_version_tracking` cleans up existing rows on
   `bench migrate`.
 - **Potential recursive analyze** — `analyze.run()` now sets
-  `frappe.local.profiler_analyzing = True` so hooks skip activation on
+  `frappe.local.optimus_analyzing = True` so hooks skip activation on
   the analyze pipeline's own DocType writes.
 - **`_optimize_query` errors could leak query literals in the error
   log** — added a paranoia scrub (`'foo'` → `'?'`, long numbers → `?`)
@@ -1050,14 +1154,14 @@ extensibility, and housekeeping. See
 
 Running `bench --site <site> migrate` will:
 
-1. Apply the `profiler_session.status` and `profiler_session.started_at`
+1. Apply the `optimus_session.status` and `optimus_session.started_at`
    database indexes.
 2. Run `patches.v0_2_0.remove_version_tracking` to delete existing
-   `tabVersion` rows for Profiler Session (freeing storage; no data loss
+   `tabVersion` rows for Optimus Session (freeing storage; no data loss
    because these versions weren't useful anyway).
 3. Add the new `notes`, `top_severity`, `analyze_duration_ms` fields to
-   `tabProfiler Session`.
-4. Add the new `Low Filter Ratio` value to the `Profiler Finding.finding_type`
+   `tabOptimus Session`.
+4. Add the new `Low Filter Ratio` value to the `Optimus Finding.finding_type`
    select.
 
 No breaking API changes — existing calls to `start`, `stop`, `status`,
@@ -1074,7 +1178,7 @@ rationale.
 ### Added
 
 - Scaffold (Phase 0): installable Frappe app with three DocTypes
-  (`Profiler Session`, `Profiler Action`, `Profiler Finding`).
+  (`Optimus Session`, `Optimus Action`, `Optimus Finding`).
 - Session lifecycle (Phase 1): whitelisted `start`/`stop`/`status`/
   `get_active_session` API, Redis-backed per-user session tracking,
   before/after request hooks that activate the recorder only for users
@@ -1087,7 +1191,7 @@ rationale.
   temporary table), aggregated index suggestions, per-table breakdown.
 - HTML report renderer (Phase 4): safe and raw modes from a single
   Jinja template. Self-contained HTML with inline CSS.
-- UI (Phase 5): floating start/stop widget, Profiler Session form
+- UI (Phase 5): floating start/stop widget, Optimus Session form
   customization with status indicator, download buttons, findings
   dashboard.
 - Production hardening (Phase 6): 200-recording cap per session, stale

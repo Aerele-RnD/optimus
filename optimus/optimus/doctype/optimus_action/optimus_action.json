@@ -1,0 +1,120 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-04-08 18:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "action_label",
+  "event_type",
+  "http_method",
+  "path",
+  "recording_uuid",
+  "duration_ms",
+  "queries_count",
+  "query_time_ms",
+  "slowest_query_ms",
+  "call_tree_json",
+  "call_tree_size_bytes",
+  "call_tree_overflow_file"
+ ],
+ "fields": [
+  {
+   "fieldname": "action_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Action",
+   "read_only": 1
+  },
+  {
+   "fieldname": "event_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Event Type",
+   "options": "HTTP Request\nBackground Job",
+   "read_only": 1
+  },
+  {
+   "fieldname": "http_method",
+   "fieldtype": "Data",
+   "label": "HTTP Method",
+   "read_only": 1
+  },
+  {
+   "fieldname": "path",
+   "fieldtype": "Data",
+   "label": "Path / Job Method",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recording_uuid",
+   "fieldtype": "Data",
+   "label": "Recording UUID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Duration (ms)",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "queries_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Queries",
+   "read_only": 1
+  },
+  {
+   "fieldname": "query_time_ms",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Query Time (ms)",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "slowest_query_ms",
+   "fieldtype": "Float",
+   "label": "Slowest Query (ms)",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "call_tree_json",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Call Tree (JSON)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "call_tree_size_bytes",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Call Tree Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "call_tree_overflow_file",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Call Tree Overflow File URL",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-08 18:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Optimus",
+ "name": "Optimus Action",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

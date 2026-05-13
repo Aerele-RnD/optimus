@@ -1,0 +1,124 @@
+# Copyright (c) 2026, Optimus contributors
+# For license information, please see license.txt
+
+import frappe
+from frappe.model.document import Document
+
+
+class OptimusSettings(Document):
+	"""Site-wide configuration for Optimus.
+
+	A Single DocType. The cached reader in ``optimus.settings``
+	is what analyzers and hooks actually call — this controller only
+	handles validation + cache invalidation when an admin saves.
+	"""
+
+	def validate(self):
+		self._normalize_tracked_apps()
+		self._warn_on_framework_apps_in_tracked()
+		self._warn_on_incomplete_ai_config()
+
+	def on_update(self):
+		# Settings are read on every request (via the `enabled` gate in
+		# hooks_callbacks), so the cache version bumps on every save.
+		# The settings module's reader respects the cache version.
+		frappe.cache.delete_value("optimus_settings_cached")
+
+	def _normalize_tracked_apps(self):
+		"""Trim whitespace and deduplicate app names, preserving order.
+
+		Saves the admin from pasting ``myapp`` and ``myapp `` (trailing
+		space) and getting two rows that both fail to match.
+		"""
+		if not self.tracked_apps:
+			return
+		seen = set()
+		normalized = []
+		for row in self.tracked_apps:
+			name = (row.app_name or "").strip()
+			if not name or name in seen:
+				continue
+			seen.add(name)
+			row.app_name = name
+			normalized.append(row)
+		# Rebuild the child-table list preserving order.
+		self.tracked_apps = normalized
+
+	def _warn_on_framework_apps_in_tracked(self):
+		"""Flash a non-blocking warning when the admin adds a
+		known-framework app (frappe / erpnext / hrms / …) to Tracked
+		Apps.
+
+		Most users misread "Tracked Apps" as "apps to monitor" and
+		add frappe + erpnext — which has the OPPOSITE effect of what
+		they want: it flips the classifier into inclusion mode where
+		framework code becomes "user code", and their actionable
+		findings list gets flooded with framework noise.
+
+		We don't HARD-block the save (ERPNext contributors may
+		legitimately want framework findings as actionable) — just
+		flash a clear warning so the common misconfiguration surfaces
+		itself.
+		"""
+		if not self.tracked_apps:
+			return
+		# Local import to avoid a top-level dependency on analyzers/.
+		from optimus.analyzers.base import FRAMEWORK_APPS
+		offenders = sorted({
+			(row.app_name or "").strip()
+			for row in self.tracked_apps
+			if (row.app_name or "").strip() in FRAMEWORK_APPS
+			and (row.app_name or "").strip() != "optimus"
+		})
+		if not offenders:
+			return
+		msg = (
+			"<b>Heads up:</b> you added "
+			+ ", ".join(f"<code>{a}</code>" for a in offenders)
+			+ " to Tracked Apps. These are framework/first-party apps — "
+			"adding them here flips the filter into <i>inclusion mode</i>, "
+			"so their findings will now show up as <b>actionable</b> "
+			"instead of in the collapsed Framework observations section. "
+			"<br><br>"
+			"If you want the default behavior (frappe + erpnext + stock "
+			"apps treated as framework), <b>remove these rows and leave "
+			"the table empty</b>. Only add your own custom app here if "
+			"you want to narrow the actionable list to just that app."
+		)
+		frappe.msgprint(
+			msg,
+			title="Tracked Apps — possible misconfiguration",
+			indicator="orange",
+		)
+
+	def _warn_on_incomplete_ai_config(self):
+		"""Non-blocking warning when AI fix suggestions are enabled but
+		the config is incomplete (no model, or no API key for a provider
+		that needs one). The feature stays enabled — the operator just
+		sees a clear hint instead of a cryptic error on first use."""
+		if not self.get("ai_enabled"):
+			return
+		provider = (self.get("ai_provider") or "Anthropic").strip()
+		needs_key = provider != "OpenAI-compatible"
+		# ai_model can be blank when a hosted default exists for the
+		# provider; only "OpenAI-compatible" truly requires it (no
+		# default to fall back to). We still nudge if it's blank for the
+		# custom provider.
+		missing = []
+		if provider == "OpenAI-compatible":
+			if not (self.get("ai_base_url") or "").strip():
+				missing.append("Base URL")
+			if not (self.get("ai_model") or "").strip():
+				missing.append("Model")
+		if needs_key and not (self.get("ai_api_key") or "").strip():
+			missing.append("API Key")
+		if not missing:
+			return
+		frappe.msgprint(
+			"AI Fix Suggestions are enabled but " + ", ".join(missing)
+			+ (" is" if len(missing) == 1 else " are")
+			+ " not set — the <b>Suggest a fix (AI)</b> button will report a "
+			"configuration error until you fill these in.",
+			title="AI Fix Suggestions — incomplete config",
+			indicator="orange",
+		)

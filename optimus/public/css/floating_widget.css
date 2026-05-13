@@ -1,0 +1,96 @@
+/* Optimus — Floating start/stop widget
+ *
+ * Injected into Desk via app_include_css in hooks.py.
+ * Lives in the bottom-right corner of every Desk page.
+ */
+
+#frappe-profiler-widget {
+	position: fixed;
+	right: 20px;
+	bottom: 20px;
+	z-index: 1040;
+	display: none; /* hidden until JS confirms the user has permission */
+	min-width: 140px;
+	padding: 10px 16px;
+	border-radius: 24px;
+	border: 1px solid rgba(0, 0, 0, 0.1);
+	background: #ffffff;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	font-size: 0.85rem;
+	font-weight: 500;
+	color: #1f2937;
+	cursor: pointer;
+	user-select: none;
+	transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+#frappe-profiler-widget:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
+}
+
+#frappe-profiler-widget .fp-dot {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: middle;
+	background: #d1d5db;
+}
+
+#frappe-profiler-widget.fp-state-inactive .fp-dot {
+	background: #9ca3af;
+}
+
+#frappe-profiler-widget.fp-state-recording {
+	border-color: #16a34a;
+	color: #15803d;
+}
+#frappe-profiler-widget.fp-state-recording .fp-dot {
+	background: #16a34a;
+	animation: fp-pulse 1.6s ease-in-out infinite;
+}
+
+#frappe-profiler-widget.fp-state-stopping,
+#frappe-profiler-widget.fp-state-analyzing {
+	border-color: #d97706;
+	color: #b45309;
+}
+#frappe-profiler-widget.fp-state-stopping .fp-dot,
+#frappe-profiler-widget.fp-state-analyzing .fp-dot {
+	background: #d97706;
+}
+
+#frappe-profiler-widget.fp-state-ready {
+	border-color: #2563eb;
+	color: #1d4ed8;
+}
+#frappe-profiler-widget.fp-state-ready .fp-dot {
+	background: #2563eb;
+}
+
+@keyframes fp-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+#frappe-profiler-widget .fp-label {
+	vertical-align: middle;
+}
+
+#frappe-profiler-widget .fp-elapsed {
+	margin-left: 8px;
+	font-variant-numeric: tabular-nums;
+	color: inherit;
+	opacity: 0.8;
+}
+
+@media (max-width: 600px) {
+	#frappe-profiler-widget {
+		right: 12px;
+		bottom: 12px;
+		font-size: 0.78rem;
+	}
+}

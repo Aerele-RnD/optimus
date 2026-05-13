@@ -1,5 +1,5 @@
 [project]
-name = "frappe_profiler"
+name = "optimus"
 description = "Flow-aware performance profiler for Frappe and ERPNext"
 requires-python = ">=3.10"
 readme = "README.md"

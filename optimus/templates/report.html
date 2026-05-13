@@ -1,0 +1,1833 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Profiler Report — {{ session.title or session.session_uuid }}</title>
+<style>
+  /* ---------- Reset & base ---------- */
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #1f2937;
+    background: #f9fafb;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+  h1 { font-size: 1.75rem; margin: 0 0 4px 0; font-weight: 700; color: #111827; }
+  h2 { font-size: 1.25rem; margin: 32px 0 12px 0; font-weight: 700; color: #111827; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+  h3 { font-size: 1rem; margin: 16px 0 8px 0; font-weight: 600; color: #374151; }
+  p { margin: 8px 0; }
+  code, pre {
+    font-family: "SF Mono", "Monaco", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+  }
+  pre {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 6px 0;
+  }
+  /* Multi-line SQL inside a table cell needs to stay bounded */
+  .sql-inline {
+    max-height: 140px;
+    overflow: auto;
+    margin: 0;
+    padding: 6px 8px;
+    font-size: 0.78rem;
+  }
+  .muted { color: #6b7280; }
+  .small { font-size: 0.85rem; }
+
+  /* ---------- Header card ---------- */
+  .report-header {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    padding: 24px 28px;
+    margin-bottom: 24px;
+  }
+  .report-header .meta {
+    margin-top: 6px;
+    color: #6b7280;
+    font-size: 0.9rem;
+  }
+  /* The header metadata as a compact key/value table — overrides the
+     full-width / bordered / hover-highlighted global table styling. */
+  .report-header .meta-table {
+    width: auto;
+    margin: 6px 0 0;
+  }
+  .report-header .meta-table td {
+    padding: 2px 16px 2px 0;
+    border: none;
+    vertical-align: top;
+  }
+  .report-header .meta-table td:first-child {
+    color: #6b7280;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .report-header .meta-table td:last-child {
+    color: #374151;
+  }
+  .report-header .meta-table tr:hover td {
+    background: transparent;
+  }
+  /* ---------- Stat cards ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat {
+    background: white;
+    border-radius: 8px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .stat .label { font-size: 0.75rem; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; font-weight: 600; }
+  .stat .value { font-size: 1.5rem; font-weight: 700; color: #111827; margin-top: 4px; }
+  .stat .sub   { font-size: 0.8rem; color: #6b7280; margin-top: 2px; }
+
+  /* ---------- Section card ---------- */
+  .section {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .section > h2:first-child { margin-top: 0; }
+
+  /* v0.5.2: collapsible <details> sections. Native HTML5 — no JS
+     required, fully keyboard + screen-reader accessible. Default
+     expanded for primary sections (via `open` attribute in the
+     template); nested sub-sections (e.g., framework-level
+     observations under Findings) default collapsed so the main
+     list isn't buried in noise by default. */
+  details.section > summary,
+  details.subsection > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+  }
+  details.section > summary::-webkit-details-marker,
+  details.subsection > summary::-webkit-details-marker {
+    display: none;
+  }
+  details.section > summary h2 {
+    display: inline-block;
+    margin: 0;
+  }
+  /* Chevron that rotates when the details is open. */
+  details.section > summary::before,
+  details.subsection > summary::before {
+    content: "";
+    display: inline-block;
+    width: 0;
+    height: 0;
+    margin-right: 8px;
+    vertical-align: middle;
+    border-left: 6px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 0.15s ease;
+    transform-origin: center;
+  }
+  details.section[open] > summary::before,
+  details.subsection[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  details.section > summary:hover h2 {
+    color: #2563eb;
+  }
+  details.subsection {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px dashed #e5e7eb;
+  }
+  details.subsection > summary h3 {
+    display: inline-block;
+    margin: 0;
+    font-size: 0.95rem;
+    color: #6b7280;
+  }
+  details.subsection > summary:hover h3 {
+    color: #2563eb;
+  }
+
+  /* v0.5.2: per-app bucket header — the <h3> inside a subsection
+     <summary> renders as "myapp · 3 findings · ~420ms". The app name
+     is the primary emphasis; count + impact are muted so they read
+     as secondary metadata without competing for attention. */
+  .app-bucket-name {
+    color: #111827;
+    font-weight: 600;
+  }
+  .app-bucket-meta {
+    font-weight: 400;
+    color: #6b7280;
+    margin-left: 4px;
+  }
+
+  /* v0.5.3: projected post-fix timing line. Renders as a subtle green
+     pill directly under the "occurrences / avg / total" line so the
+     reader sees current vs projected at a glance and can prioritize
+     by ceiling-of-value (worth a few hours for a 20× speedup vs a
+     1.5× speedup). Green = "this is the win"; uses the severity-low
+     palette so it doesn't compete with severity badges. */
+  .projected-after-fix {
+    color: #065f46;
+    background: #f0fdf4;
+    border-left: 3px solid #10b981;
+    padding: 4px 10px;
+    margin-top: 6px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+  .projected-after-fix .projected-label {
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .projected-after-fix .projected-speedup {
+    color: #047857;
+    font-weight: 600;
+    margin-left: 4px;
+  }
+
+  /* v0.5.2 round 4: clickable callsite → editor. Subtle style — looks
+     like the plain <code> block but with a dotted underline that
+     signals interactivity, and a hover color lift. We don't use the
+     default-link blue because the callsite is already inline code
+     and shouldn't compete for attention with surrounding text. */
+  a.callsite-link {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dotted #9ca3af;
+    cursor: pointer;
+  }
+  a.callsite-link:hover {
+    border-bottom-color: #2563eb;
+  }
+  a.callsite-link:hover code {
+    color: #1d4ed8;
+  }
+  /* Print mode: drop the editor-link decoration — a PDF reader can't
+     click vscode:// handlers. */
+  @media print {
+    a.callsite-link { border-bottom: none; }
+  }
+
+  /* v0.5.3: Truncation banner — sits above the exec-summary when the
+     per-recording cap was exceeded. Red-bordered, full-width, with
+     bold header so nobody can claim they didn't see it. Mirrors the
+     pattern APM tools use for "data sampled at X%" warnings. */
+  .truncation-banner {
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    border-left: 6px solid #dc2626;
+    border-radius: 8px;
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+  .truncation-banner-title {
+    color: #991b1b;
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 6px;
+  }
+  .truncation-banner-body {
+    color: #7f1d1d;
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+  .truncation-banner-body b {
+    color: #991b1b;
+  }
+
+  /* v0.5.2 round 3: Executive summary card. The visual weight signals
+     "read this first" — colored left border flags session pace
+     (green / amber / red), generous padding, bullets styled like an
+     agenda. A non-developer should get the punch without scrolling. */
+  .exec-summary {
+    background: white;
+    border-radius: 8px;
+    border-left: 6px solid #10b981;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    padding: 18px 22px;
+    margin-bottom: 20px;
+  }
+  .exec-summary.pace-moderate { border-left-color: #f59e0b; }
+  .exec-summary.pace-slow { border-left-color: #dc2626; }
+  .exec-summary h2 { margin: 0 0 8px 0; border: 0; padding: 0; }
+  .exec-headline {
+    font-size: 1.05rem;
+    color: #111827;
+    margin: 0 0 12px 0;
+  }
+  .exec-bullets { margin-top: 8px; }
+  .exec-bullets ol {
+    margin: 8px 0 0 0;
+    padding-left: 24px;
+  }
+  .exec-bullets li {
+    padding: 6px 0;
+    color: #374151;
+    line-height: 1.5;
+  }
+  .exec-bullet-severity {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .exec-bullet-severity.severity-high {
+    background: #fee2e2; color: #991b1b;
+  }
+  .exec-bullet-severity.severity-medium {
+    background: #fef3c7; color: #92400e;
+  }
+  .exec-bullet-severity.severity-low {
+    background: #dbeafe; color: #1e40af;
+  }
+  .exec-bullet-text { font-weight: 500; }
+  .exec-bullet-impact {
+    color: #6b7280;
+    margin-left: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .exec-infra {
+    margin: 10px 0 0 0;
+    padding-top: 10px;
+    border-top: 1px dashed #e5e7eb;
+    color: #374151;
+    font-size: 0.9rem;
+  }
+
+  /* ---------- Tables ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+  }
+  th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+    vertical-align: top;
+  }
+  th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: #6b7280;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    background: #f9fafb;
+  }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  tr:hover td { background: #f9fafb; }
+
+  /* v0.5.3: dedicated layout for the Top Queries + Queries-per-action
+     tables. Without fixed layout, a single long callsite path (e.g.
+     "frappe/frappe/model/db_query.py:255") can dominate the Callsite
+     column and squeeze the Query column into a single-character
+     sliver. Fixed column widths guarantee a readable layout even
+     when one row has unusually long text in a single column. */
+  table.query-table { table-layout: fixed; }
+  table.query-table th,
+  table.query-table td {
+    vertical-align: top;
+    overflow: hidden;
+  }
+  /* Width scheme:
+     #/Copies  (very narrow — single-digit or short number)
+     Duration  (narrow — e.g. "1374ms")
+     Callsite  (medium — allow ~25% for path, with word-break)
+     Query     (takes the rest) */
+  table.query-table col.col-index     { width: 44px; }
+  table.query-table col.col-copies    { width: 64px; }
+  table.query-table col.col-duration  { width: 88px; }
+  table.query-table col.col-callsite  { width: 25%; }
+  /* col.col-query uses the remaining width implicitly (auto) */
+
+  /* Long callsite paths must wrap rather than overflow. Using
+     ``break-all`` because file paths are slash-separated with no
+     natural word boundaries; ``break-word`` alone often leaves a
+     long single token un-split. */
+  table.query-table td code {
+    display: inline-block;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+  /* SQL cells retain their own scroll container so very long
+     queries don't push the row height absurdly. max-height caps
+     visible vertical space; overflow-x: auto handles wide lines. */
+  table.query-table pre.sql-inline {
+    max-height: 200px;
+    overflow: auto;
+  }
+
+  /* ---------- Findings ---------- */
+  .finding {
+    border-left: 4px solid #d1d5db;
+    padding: 14px 18px;
+    margin: 12px 0;
+    background: #f9fafb;
+    border-radius: 0 6px 6px 0;
+  }
+  .finding.severity-high   { border-left-color: #dc2626; background: #fef2f2; }
+  .finding.severity-medium { border-left-color: #d97706; background: #fffbeb; }
+  .finding.severity-low    { border-left-color: #2563eb; background: #eff6ff; }
+
+  .finding-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .severity-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .severity-badge.high   { background: #dc2626; color: white; }
+  .severity-badge.medium { background: #d97706; color: white; }
+  .severity-badge.low    { background: #2563eb; color: white; }
+  .finding-title { font-weight: 600; font-size: 1rem; color: #111827; flex: 1; }
+  .finding-impact { font-size: 0.85rem; color: #6b7280; font-variant-numeric: tabular-nums; }
+  .finding-description { color: #374151; margin: 6px 0 10px 0; }
+  .finding-detail {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    font-size: 0.85rem;
+  }
+  .finding-detail .label {
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #6b7280;
+    letter-spacing: 0.5px;
+    display: block;
+    margin-top: 8px;
+    margin-bottom: 2px;
+  }
+  .finding-detail .label:first-child { margin-top: 0; }
+
+  /* v0.6.0 — AI-suggested fix block (on-demand; rendered when present) */
+  .ai-fix {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: #f5f3ff;
+    border-left: 3px solid #7c3aed;
+    border-radius: 0 4px 4px 0;
+  }
+  .ai-fix .ai-fix-header {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6d28d9;
+    margin-bottom: 6px;
+  }
+  .ai-fix .ai-fix-caution {
+    font-size: 0.75rem;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 5px 8px;
+    margin-bottom: 8px;
+  }
+  .ai-fix .ai-fix-body { font-size: 0.85rem; color: #1f2937; }
+  .ai-fix .ai-fix-body p { margin: 6px 0; }
+  .ai-fix .ai-fix-body ul, .ai-fix .ai-fix-body ol { margin: 6px 0 6px 18px; padding: 0; }
+  .ai-fix .ai-fix-body pre {
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 4px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ai-fix .ai-fix-body code { word-break: break-word; }
+  /* before/after highlighting for fenced ```diff``` blocks (see
+     renderer._highlight_diff_html) */
+  .ai-fix .ai-fix-body pre.dh { padding: 6px 0; }
+  .ai-fix .ai-fix-body pre.dh .dh-line {
+    display: block;
+    padding: 0 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ai-fix .ai-fix-body pre.dh .dh-add { background: #e6ffec; color: #116329; }
+  .ai-fix .ai-fix-body pre.dh .dh-del { background: #ffebe9; color: #a40e26; }
+  .ai-fix .ai-fix-body pre.dh .dh-meta { background: #f2effd; color: #6639ba; }
+  .ai-fix .ai-fix-foot {
+    font-size: 0.7rem;
+    color: #6b7280;
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px dashed #ddd6fe;
+  }
+
+  /* ---------- Footer ---------- */
+  .footer {
+    text-align: center;
+    color: #6b7280;
+    font-size: 0.85rem;
+    margin: 32px 0 16px 0;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .empty {
+    color: #6b7280;
+    font-style: italic;
+    padding: 12px 0;
+  }
+
+  /* Print-friendly */
+  @media print {
+    body { background: white; }
+    .section, .stat, .report-header { box-shadow: none; border: 1px solid #e5e7eb; }
+    .finding { page-break-inside: avoid; }
+
+    /* v0.5.2 round 4: force-expand every collapsible section for PDF
+       / print output. Without this, wkhtmltopdf (and Chrome's print
+       engine) only render disclosure-element content when the
+       element has the open attribute — so the Observations subsection
+       and any collapsed app buckets disappear entirely from the
+       exported PDF. The print-media
+       override keeps parity between what the reader sees in the
+       browser and what ends up in the PDF. */
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::before { display: none !important; }
+    details > *:not(summary) {
+      display: revert !important;
+    }
+    /* Collapse the interactive cursor since PDF readers can't click. */
+    details > summary { cursor: default; }
+    /* Ensure subsection borders still visually separate app buckets
+       when everything is expanded at once. */
+    details.subsection { border-top: 1px dashed #e5e7eb; margin-top: 12px; padding-top: 10px; }
+  }
+
+  @media (max-width: 700px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .container { padding: 12px; }
+  }
+
+  /* v0.4.0 — donut: SVG for print, conic-gradient for screen */
+  .svg-donut { display: none; }
+  @media print {
+    .conic-donut { display: none !important; }
+    .svg-donut { display: block !important; }
+  }
+</style>
+</head>
+<body>
+
+{# v0.5.2: shared finding-card macro used by both Findings and
+   Observations sections. DRYs out the ~40-line card markup so the
+   per-app bucket loop stays readable. `show_fix_hint_label` toggles
+   "How to fix" (actionable Findings) vs "Context" (Observations). #}
+{% macro finding_card(f, show_fix_hint_label="How to fix") %}
+  <div class="finding severity-{{ f.severity | lower }}">
+    <div class="finding-header">
+      <span class="severity-badge {{ f.severity | lower }}">{{ f.severity }}</span>
+      <span class="finding-title">{{ f.title }}</span>
+      <span class="finding-impact">~{{ fmt_ms(f.estimated_impact_ms) }}{% if f.affected_count > 1 %} &middot; {{ f.affected_count }}×{% endif %}</span>
+    </div>
+    {# v0.6.0 Round 3: customer_description dropped from rendering — it
+       repeated what the title + smoking-gun block already convey, reading
+       as redundant prose. The data is still produced by analyzers and
+       persisted on the Optimus Finding row, so API consumers still have
+       access to it. #}
+
+    {% set detail = f.technical_detail or {} %}
+    {% set callsite = detail.callsite or {} %}
+
+    {# v0.6.0 smoking-gun block — file:line + ±1 source snippet + phase-2
+       hot-line callout (when the same function was instrumented). Hoisted
+       above the technical-detail block so the developer sees the offending
+       line directly under the title. The vscode://file link uses the
+       callsite's absolute path (``_abs``) when we have one. For SQL red-flag
+       findings (Missing Index, Full Table Scan, …) the callsite is a
+       *representative* one — the hottest user-app frame that ran the query —
+       flagged with ``is_representative``. #}
+    {% if callsite.filename and callsite.lineno %}
+    {% set _link = callsite._abs or (callsite.filename if callsite.filename and callsite.filename.startswith("/") else None) %}
+    <div class="smoking-gun" style="margin: 8px 0; padding: 8px 10px; background: #f9fafb; border-left: 3px solid #2563eb; border-radius: 0 4px 4px 0;">
+      <div style="margin-bottom: 6px;">
+        {% if callsite.is_representative %}<span class="muted">Most-called from:</span> {% endif %}
+        {% if _link %}
+          <a class="callsite-link"
+             href="vscode://file{{ _link }}:{{ callsite.lineno }}"
+             title="Open in VS Code / Cursor">
+            <code>{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} <span class="muted">({{ callsite.function }})</span>{% endif %}</code>
+          </a>
+        {% else %}
+          <code>{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} <span class="muted">({{ callsite.function }})</span>{% endif %}</code>
+        {% endif %}
+        {% if callsite.is_representative %}<div class="small muted" style="margin-top: 3px;">Representative callsite &mdash; this query runs from several places; this is the hottest one.</div>{% endif %}
+      </div>
+
+      {% if callsite.source_snippet %}
+        <table style="border-collapse: collapse; font-family: ui-monospace, Menlo, monospace; font-size: 12px; width: 100%; margin: 0;">
+          {% for sl in callsite.source_snippet %}
+          <tr{% if sl.lineno == callsite.lineno %} style="background: #fef3c7;"{% endif %}>
+            <td style="padding: 1px 8px; color: #6b7280; text-align: right; user-select: none; width: 1%; white-space: nowrap;">{{ sl.lineno }}</td>
+            <td style="padding: 1px 8px;"><code style="white-space: pre;">{{ sl.content }}</code></td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% endif %}
+
+      {# Hot Line findings ARE the phase-2 hot line — re-stating
+         "Phase 2: hottest line N" inside their own card would read as
+         self-referential. Suppress for that finding type only. #}
+      {% if f.finding_type != "Hot Line" %}
+        {% set p2_hot = phase2_for_callsite(callsite.filename, callsite.function) %}
+        {% if p2_hot %}
+        <div style="margin-top: 6px; font-size: 12px; padding-top: 6px; border-top: 1px dashed #d1d5db;">
+          <strong style="color: #1d4ed8;">Phase 2:</strong>
+          hottest line {{ p2_hot.lineno }} &mdash; {{ fmt_ms(p2_hot.total_ms) }}{% if p2_hot.hits %} / {{ p2_hot.hits }} hit{{ "s" if p2_hot.hits != 1 else "" }}{% endif %}
+          {% if p2_hot.content %}
+          <code style="margin-left: 6px; padding: 1px 6px; background: #fef3c7; border-radius: 2px;">{{ p2_hot.content | trim }}</code>
+          {% endif %}
+        </div>
+        {% endif %}
+      {% endif %}
+      {# v0.6.x: deterministic call-tree drill-down. Walks from the finding's
+         origin function down to the deepest user-code frame. Hidden when the
+         chain is empty (origin is already a leaf, or the next frame is
+         framework code). Complements the AI fix block below — gives non-LLM
+         users the same actionable trail. #}
+      {% set _drilldown = (f.technical_detail or {}).get("drilldown_chain") if f.technical_detail else None %}
+      {% if _drilldown %}
+      <div style="margin-top: 6px; font-size: 12px; padding-top: 6px; border-top: 1px dashed #d1d5db;">
+        <strong style="color: #1d4ed8;">Drill-down:</strong>
+        time inside <code>{{ callsite.function }}</code> walked through &mdash;
+        <div style="margin-top: 4px;">
+        {% for level in _drilldown %}
+          <div style="padding: 1px 0 1px {{ (loop.index0 + 1) * 12 }}px; color: #374151;">
+            <span class="muted">&#x21B3;</span>
+            <code>{{ level.filename }}:{{ level.lineno }}</code>
+            <span class="muted">({{ level.function }})</span>
+            &mdash; {{ fmt_ms(level.cumulative_ms) }}{% if level.pct_of_origin %} <span class="muted">&middot; {{ level.pct_of_origin }}% of parent</span>{% endif %}
+          </div>
+        {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {# v0.6.x: hoisted from .finding-detail — the target document + the
+         doc-event lifecycle hook breadcrumb live at the same visual level
+         as the Phase 2 / Drill-down callouts inside the smoking-gun box,
+         so all three context cues stay together. #}
+      {% if detail.target_doc or detail.hook_events %}
+      <div style="margin-top: 6px; font-size: 12px; padding-top: 6px; border-top: 1px dashed #d1d5db; color: #374151;">
+        {% if detail.target_doc %}<span class="muted">Document:</span> <strong>{{ detail.target_doc.doctype }}</strong>{% if detail.target_doc.name %} <code>{{ detail.target_doc.name }}</code>{% endif %}{% endif %}{% if detail.target_doc and detail.hook_events %} &middot; {% endif %}{% if detail.hook_events %}<span class="muted">Doc-event hook:</span> {% for he in detail.hook_events %}<code>{{ he.doctype }} &#9656; {{ he.event }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if f.technical_detail %}
+    <div class="finding-detail">
+      {# Callsite was hoisted above into the smoking-gun block. The
+         remaining detail rows (query, DDL, fix hint, etc.) live here as
+         supporting context. #}
+
+      {# v0.6.x: target document + doc-event hook breadcrumb is rendered
+         INSIDE the smoking-gun box for callsite-bearing findings (which is
+         every Slow-Hot-Path / N+1 / Hot-Line finding). For the rare finding
+         without a callsite, fall back to rendering it here so the breadcrumb
+         isn't dropped. #}
+      {% if (not callsite.filename or not callsite.lineno) and (detail.target_doc or detail.hook_events) %}
+        <p class="small" style="margin: 0 0 10px; color: #374151;">
+          {% if detail.target_doc %}<span class="muted">Document:</span> <strong>{{ detail.target_doc.doctype }}</strong>{% if detail.target_doc.name %} <code>{{ detail.target_doc.name }}</code>{% endif %}{% endif %}{% if detail.target_doc and detail.hook_events %} &middot; {% endif %}{% if detail.hook_events %}<span class="muted">Doc-event hook:</span> {% for he in detail.hook_events %}<code>{{ he.doctype }} &#9656; {{ he.event }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+        </p>
+      {% endif %}
+
+      {% if detail.normalized_query %}
+        <span class="label">Query (normalized)</span>
+        <pre>{{ detail.normalized_query }}</pre>
+      {% endif %}
+
+      {% if detail.suggested_ddl %}
+        <span class="label">Suggested DDL</span>
+        <pre>{{ detail.suggested_ddl }}</pre>
+      {% endif %}
+
+      {% if detail.example_queries %}
+        <span class="label">Affected queries (first {{ detail.example_queries|length }})</span>
+        {% for q in detail.example_queries %}
+          <pre>{{ q }}</pre>
+        {% endfor %}
+      {% endif %}
+
+      {% if detail.explain_row %}
+        <span class="label">EXPLAIN row</span>
+        <pre>{{ detail.explain_row }}</pre>
+      {% endif %}
+
+      {% if detail.fix_hint %}
+        <span class="label">{{ show_fix_hint_label }}</span>
+        <p>{{ detail.fix_hint }}</p>
+      {% endif %}
+
+      {% if detail.validation_note %}
+        <p class="small muted"><em>{{ detail.validation_note }}</em></p>
+      {% endif %}
+
+      {% if detail.occurrences %}
+        <p class="small muted">
+          {{ detail.occurrences }} occurrences
+          {% if detail.average_time_ms %} &middot; ~{{ fmt_ms(detail.average_time_ms, 1) }} each{% endif %}
+          {% if detail.total_time_ms %} &middot; {{ fmt_ms(detail.total_time_ms) }} total{% endif %}
+        </p>
+      {% endif %}
+
+      {# v0.5.3: projected post-fix timing. Analyzers (explain_flags
+         + n_plus_one) set projected_avg_time_ms / projected_total_ms
+         when there's a credible estimate — see base.project_post_fix_ms
+         for the per-finding-type heuristics. #}
+      {% if detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms %}
+        <p class="small projected-after-fix">
+          <span class="projected-label">Projected after fix:</span>
+          ~{{ fmt_ms(detail.projected_avg_time_ms, 1) }} each
+          {% if detail.projected_total_ms %} &middot; ~{{ fmt_ms(detail.projected_total_ms) }} total{% endif %}
+          {% if detail.projected_speedup_label %} <span class="projected-speedup">({{ detail.projected_speedup_label }})</span>{% endif %}
+        </p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# v0.6.0: AI-suggested fix. Populated on demand via the "Suggest a
+       fix (AI)" action on the Optimus Session form, then carried into
+       the report on the next regenerate. suggestion_html is already
+       Markdown-rendered + bleach-sanitized by renderer._finding_to_dict,
+       so |safe is valid here (and there are no external assets in it, so
+       the offline-report guarantee holds). #}
+    {% if f.llm_fix and f.llm_fix.suggestion_html %}
+    <div class="ai-fix">
+      <div class="ai-fix-header">Suggested fix (AI{% if f.llm_fix.model %} &mdash; {{ f.llm_fix.model }}{% endif %})</div>
+      {% if not f.llm_fix.source_available %}
+      <div class="ai-fix-caution">The profiler couldn&rsquo;t show the AI this finding&rsquo;s source code (or SQL) &mdash; treat the suggestion below as directional guidance, not a verified code fix.</div>
+      {% endif %}
+      <div class="ai-fix-body">{{ f.llm_fix.suggestion_html | safe }}</div>
+      <div class="ai-fix-foot">Machine-generated{% if f.llm_fix.generated_at %} &middot; {{ fmt_dt(f.llm_fix.generated_at) }}{% endif %} &mdash; review before applying.</div>
+    </div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{# v0.5.2: per-app bucket header — "myapp (3 findings, ~420ms)". #}
+{% macro app_bucket_header(bucket) %}
+  <span class="app-bucket-name">{{ bucket.app }}</span>
+  <span class="app-bucket-meta small muted">
+    &middot; {{ bucket.count }} finding{{ "s" if bucket.count != 1 else "" }}
+    {% if bucket.total_impact_ms %}
+      &middot; ~{{ fmt_ms(bucket.total_impact_ms) }}
+    {% endif %}
+  </span>
+{% endmacro %}
+
+{# v0.6.x: entry-point source-location block — shown under each row in the
+   per-action breakdown and the Background Jobs section. ``cs`` is renderer's
+   _action_entry_callsite() output: {filename (bench-relative display path),
+   _abs (absolute path, for the editor link), lineno, function, source_snippet}.
+   Mirrors the finding_card smoking-gun visual (mono table, line-number gutter,
+   target line on a #fef3c7 highlight). Renders nothing without a file:line. #}
+{% macro entry_callsite_block(cs) %}
+  {% if cs and cs.filename and cs.lineno %}
+  <div style="margin: 4px 0 8px;">
+    <div style="font-size: 12px; margin-bottom: 3px;">
+      {% if cs._abs %}
+        <a class="callsite-link" href="vscode://file{{ cs._abs }}:{{ cs.lineno }}" title="Open in VS Code / Cursor"><code>{{ cs.filename }}:{{ cs.lineno }}{% if cs.function %} <span class="muted">({{ cs.function }})</span>{% endif %}</code></a>
+      {% else %}
+        <code>{{ cs.filename }}:{{ cs.lineno }}{% if cs.function %} <span class="muted">({{ cs.function }})</span>{% endif %}</code>
+      {% endif %}
+    </div>
+    {% if cs.source_snippet %}
+      <table style="border-collapse: collapse; font-family: ui-monospace, Menlo, monospace; font-size: 12px; width: 100%; margin: 0;">
+        {% for sl in cs.source_snippet %}
+        <tr{% if sl.lineno == cs.lineno %} style="background: #fef3c7;"{% endif %}>
+          <td style="padding: 1px 8px; color: #6b7280; text-align: right; user-select: none; width: 1%; white-space: nowrap;">{{ sl.lineno }}</td>
+          <td style="padding: 1px 8px;"><code style="white-space: pre;">{{ sl.content }}</code></td>
+        </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{# v0.6.x: per-row macros for the 4 leaderboard sections (per-action, top
+   queries, background jobs, hot frames). Each section renders custom-app
+   rows in its primary table and framework-app rows in a collapsed
+   "subsection" details sub-block below; both call the same macro so the
+   row markup lives in one place. #}
+{% macro action_row(action, idx) %}
+  <tr>
+    <td>{{ idx }}</td>
+    <td>
+      <strong>{{ action.action_label }}</strong>
+      {% if action.path %}
+        <br><span class="small muted">{{ action.http_method }} {{ action.path }}</span>
+      {% endif %}
+      {% if action.target_doc %}
+        <br><span class="small muted">&rarr; {{ action.target_doc.doctype }}{% if action.target_doc.name %} <code>{{ action.target_doc.name }}</code>{% endif %}</span>
+      {% endif %}
+    </td>
+    <td><span class="small">{{ action.event_type }}</span></td>
+    <td class="num">{{ fmt_ms(action.duration_ms) }}</td>
+    <td class="num">{{ action.queries_count }}</td>
+    <td class="num">{{ fmt_ms(action.query_time_ms) }}</td>
+    <td class="num">{{ fmt_ms(action.slowest_query_ms) }}</td>
+  </tr>
+  {% if action.entry_callsite %}
+  <tr>
+    <td colspan="7" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;">
+      {{ entry_callsite_block(action.entry_callsite) }}
+    </td>
+  </tr>
+  {% endif %}
+{% endmacro %}
+
+{% macro bg_job_row(job, idx, cols, any_findings_counted) %}
+  <tr>
+    <td>{{ idx }}</td>
+    <td><code>{{ job.method }}</code></td>
+    <td class="num">{{ fmt_ms(job.duration_ms) }}</td>
+    <td class="num">{{ job.queries_count }}</td>
+    <td class="num">{{ fmt_ms(job.query_time_ms) }}</td>
+    <td class="num">{{ fmt_ms(job.slowest_query_ms) }}</td>
+    {% if any_findings_counted %}
+      <td class="num">{{ job.findings_count if job.findings_count is not none else '&mdash;' | safe }}</td>
+    {% endif %}
+  </tr>
+  <tr>
+    <td colspan="{{ cols }}" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;">
+      {% if job.entry_callsite %}{{ entry_callsite_block(job.entry_callsite) }}{% endif %}
+      <details>
+        <summary class="small muted">Slowest queries for this job</summary>
+        {% if job.top_queries %}
+          {% for q in job.top_queries %}
+            <div style="margin:8px 0;padding:8px 10px;background:#ffffff;border:1px solid #e5e7eb;border-radius:4px;">
+              <div class="small muted" style="margin-bottom:4px;">
+                {% if q.index is not none %}#{{ q.index }} &middot; {% endif %}{{ fmt_ms(q.duration, 2) }}
+                {% if q.exact_copies and q.exact_copies > 1 %} &middot; {{ q.exact_copies }} exact copies{% endif %}
+              </div>
+              <pre style="margin:0;white-space:pre-wrap;word-break:break-word;">{{ q.query }}</pre>
+            </div>
+          {% endfor %}
+        {% elif not job.recording_available %}
+          <p class="small muted">The recording for this job has expired from Redis (kept ~10&nbsp;min after analyze) &mdash; expand the matching action in <strong>Full recordings</strong> below if it's still listed.</p>
+        {% else %}
+          <p class="empty">No queries were recorded for this job.</p>
+        {% endif %}
+      </details>
+    </td>
+  </tr>
+{% endmacro %}
+
+{% macro hot_frame_row(row) %}
+  <tr>
+    <td><code>{{ row.display_name }}</code></td>
+    <td class="num">{{ fmt_ms(row.total_ms) }}</td>
+    <td class="num">{{ row.occurrences }}</td>
+    <td class="num">{{ row.distinct_actions }}</td>
+  </tr>
+{% endmacro %}
+
+{% macro top_query_row(q, idx) %}
+  <tr>
+    <td>{{ idx }}</td>
+    <td class="num">{{ fmt_ms(q.duration_ms or 0) }}</td>
+    <td><code class="small">{{ q.callsite or "" }}</code></td>
+    <td><pre class="sql-inline">{{ (q.normalized_query or "") }}</pre></td>
+  </tr>
+{% endmacro %}
+
+<div class="container">
+
+  {# --------------- HEADER --------------- #}
+  <div class="report-header">
+    <h1>
+      {{ session.title or "Optimus Session" }}
+    </h1>
+    <div class="meta">
+      <table class="meta-table">
+        <tbody>
+          <tr><td>Recorded by</td><td><strong>{{ session.user }}</strong></td></tr>
+          <tr><td>Started</td><td><time datetime="{{ session.started_at }}">{{ fmt_dt(session.started_at) }}</time></td></tr>
+          {% if session.stopped_at %}<tr><td>Stopped</td><td><time datetime="{{ session.stopped_at }}">{{ fmt_dt(session.stopped_at) }}</time></td></tr>{% endif %}
+          <tr><td>Report generated</td><td>{{ fmt_dt(generated_at) }}</td></tr>
+          <tr><td>Server timezone</td><td>{{ server_tz or "UTC" }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# v0.6.0: orientation for someone seeing this report for the first time.
+     Collapsed by default — the summary line alone tells repeat readers it's
+     here. #}
+  <details class="section" style="background:#f8fafc;">
+    <summary><h2>How to read this report</h2></summary>
+    <ul class="small" style="margin:6px 0 0 18px;padding:0;line-height:1.7;">
+      <li>Start with <strong>Findings</strong> &mdash; that's the punch list of what to fix. The <em>Observations</em> sub-list under it is FYI signal (framework-level issues, system pressure) with no concrete fix you can ship.</li>
+      <li>The per-action table below lists every request the session captured, sorted by duration; the background-jobs section lists the jobs those requests enqueued (captured and analyzed too).</li>
+      <li>The database-tables section shows where DB time went, with an index candidate per table; the <em>tables written to</em> line at the top of it lists every table the session wrote &mdash; writes are cheap, so they rank low by time. The slowest-queries section covers your own app's code only.</li>
+      <li>The server-resource and frontend panels show CPU / memory / queue pressure and browser timings &mdash; only when captured.</li>
+      <li>The full-recordings and queries-per-action sections (collapsed) hold the raw SQL, headers, form data and stack traces &mdash; for deep dives.</li>
+      <li>Hover any <code>file.py:123</code> callsite to open it in VS&nbsp;Code. Anything starting with <code>tab</code> is a database table; the DocType is the part after <code>tab</code>.</li>
+    </ul>
+  </details>
+
+  {# v0.6.0: compact in-page navigation. Conditional sections (Background
+     jobs / Server Resource / Frontend) link only when they'll render. #}
+  <div class="section small" style="padding:10px 16px;">
+    <strong>Jump to:</strong>
+    {% if phase2_html %}<a href="#phase2">Phase 2 line drill-down</a> · {% endif %}<a href="#findings">Findings</a> ·
+    <a href="#per-action">Per-action</a>{% if background_jobs and background_jobs.count %} · <a href="#background-jobs">Background jobs</a>{% endif %}{% if doc_event_breakdown and doc_event_breakdown.count %} · <a href="#doc-event-lifecycle">Doc events</a>{% endif %}{% if infra_timeline %} · <a href="#server-resource">Server resource</a>{% endif %}{% if frontend_xhr_matched or frontend_vitals_by_page %} · <a href="#frontend">Frontend</a>{% endif %} ·
+    <a href="#top-queries">Top queries</a> ·
+    <a href="#db-tables">DB tables</a>
+  </div>
+
+  {# v0.5.3: TRUNCATION BANNER — prominent at the top when analyze
+     truncated queries beyond the per-recording cap. Previously only
+     surfaced in the collapsed Analyzer Notes at the bottom, where
+     developers missed it and read incomplete reports. Deliberately
+     placed ABOVE the exec-summary card so it's impossible to miss. #}
+  {% if truncation_banner %}
+  <div class="truncation-banner">
+    <div class="truncation-banner-title">⚠ Report is partial</div>
+    <div class="truncation-banner-body">{{ truncation_banner | safe }}</div>
+  </div>
+  {% endif %}
+
+  {# v0.5.2 round 3: EXECUTIVE SUMMARY — TL;DR readable in 30 seconds.
+     Placed above the stat-cards so a non-developer sees the "what's
+     wrong + what to fix" narrative before the raw numbers. #}
+  {% if executive_summary.show %}
+  <div class="exec-summary pace-{{ executive_summary.pace }}">
+    <h2>At a glance</h2>
+    <p class="exec-headline">{{ executive_summary.headline }}</p>
+
+    {% if executive_summary.bullets %}
+    <div class="exec-bullets">
+      <p class="small muted">Top {{ executive_summary.bullets | length }} highest-impact finding{{ "s" if executive_summary.bullets | length != 1 else "" }}{% if executive_summary.total_impact_ms %} ({{ fmt_ms(executive_summary.total_impact_ms) }} combined){% endif %}:</p>
+      <ol>
+        {% for b in executive_summary.bullets %}
+        <li>
+          <span class="exec-bullet-severity severity-{{ b.severity | lower }}">{{ b.severity }}</span>
+          <span class="exec-bullet-text">{{ b.text }}</span>
+          {% if b.impact_ms %}<span class="exec-bullet-impact">~{{ fmt_ms(b.impact_ms) }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+    {% endif %}
+
+    {% if executive_summary.infra_note %}
+    <p class="exec-infra"><strong>Infra:</strong> {{ executive_summary.infra_note }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# v0.5.0: Steps to Reproduce / Notes. Content is pre-sanitized by
+     renderer.py via frappe.utils.html_utils.sanitize_html (bleach) so
+     harmless rich-text renders while <script>/onclick/javascript: are
+     stripped. |safe below is only valid because notes_html is already
+     bleach-cleaned — do NOT change to `session.notes | safe` without
+     re-adding sanitization, that's a stored-XSS sink. #}
+  {% if notes_html %}
+  <details class="section" open style="background: #f0f9ff; border-left: 4px solid #2563eb;">
+    <summary><h2 style="margin-top: 0;">Steps to Reproduce</h2></summary>
+    <div class="notes-content">
+      {{ notes_html | safe }}
+    </div>
+  </details>
+  {% endif %}
+
+  {# --------------- STAT CARDS --------------- #}
+  {% set total_findings = (all_findings | length) if all_findings is defined else (findings | length) %}
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Total time</div>
+      <div class="value">{{ fmt_ms(session.total_duration_ms or 0) }}</div>
+      <div class="sub">{{ fmt_ms((session.total_duration_ms or 0) - (session.total_query_time_ms or 0)) }} server code &middot; {{ fmt_ms(session.total_query_time_ms or 0) }} database</div>
+    </div>
+    <div class="stat">
+      <div class="label">Database queries</div>
+      <div class="value">{{ session.total_queries or 0 }}</div>
+      <div class="sub">across {{ session.total_requests or 0 }} operation{{ "s" if (session.total_requests or 0) != 1 else "" }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Operations</div>
+      <div class="value">{{ session.total_requests or 0 }}</div>
+      <div class="sub">page loads, saves &amp; background jobs</div>
+    </div>
+    <div class="stat">
+      <div class="label">Issues found</div>
+      <div class="value">{% if severity_counts.High %}<span style="color:#dc2626">{{ total_findings }}</span>{% else %}{{ total_findings }}{% endif %}</div>
+      <div class="sub">
+        {% if total_findings %}{% if severity_counts.High %}{{ severity_counts.High }} high{% endif %}{% if severity_counts.Medium %}{% if severity_counts.High %} &middot; {% endif %}{{ severity_counts.Medium }} medium{% endif %}{% if severity_counts.Low %}{% if severity_counts.High or severity_counts.Medium %} &middot; {% endif %}{{ severity_counts.Low }} low{% endif %}{% else %}none detected{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# v0.6.x: Ignored Apps note — surfaces the count of findings the renderer
+     dropped because their blame app is in Optimus Settings ▸ Apps ▸ Ignored
+     Apps. Keeps the stat card's count honest (severity_counts shows the kept
+     set). Hidden when nothing was dropped. #}
+  {% if ignored_findings_count %}
+    <p class="small muted" style="margin: -16px 0 20px; padding: 8px 12px; background: #f9fafb; border-radius: 6px;">
+      <strong>{{ ignored_findings_count }}</strong> finding{{ "s" if ignored_findings_count != 1 else "" }}
+      hidden from ignored apps:
+      {% for a in ignored_apps %}<code>{{ a }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+      Edit the list under <em>Optimus Settings &rsaquo; Apps</em>.
+    </p>
+  {% endif %}
+
+  {# --------------- SUMMARY --------------- #}
+  <details class="section" open>
+    <summary><h2>Summary</h2></summary>
+    {% if session.summary_html %}
+      {{ session.summary_html | safe }}
+    {% else %}
+      <p class="empty">No summary available.</p>
+    {% endif %}
+  </details>
+
+  {# v0.6.x: hoisted above Findings — the line-level drill-down is the
+     report's most distinctive section, so it lands first after the
+     Summary narrative. The panel is pre-rendered by
+     _render_phase2_panel(session_doc) in renderer.py and returns "" when
+     the session has no phase-2 runs, so the section silently disappears
+     for sessions that never had drill-down. The HTML is fully self-
+     contained (inline styles, no external assets) so the safe-report
+     self-containment canary still passes. The <div id="phase2"> wrapper
+     is purely for the in-page jump-nav anchor. #}
+  {% if phase2_html %}
+  <div id="phase2">
+    {{ phase2_html | safe }}
+  </div>
+  {% endif %}
+
+  {# --------------- FINDINGS (v0.5.2: per-app sub-grouping) --------------- #}
+  <details class="section" open id="findings">
+    <summary><h2>Findings &mdash; what to fix</h2></summary>
+    {% if findings_by_app %}
+      <p class="small muted">Sorted by severity, then by impact. Grouped by app so you can focus on your custom code without scanning through framework noise.</p>
+
+      {% if findings_by_app | length == 1 %}
+        {# Single app → skip the wrapper, render flat to avoid a
+           pointless "myapp (N findings)" that wraps the whole list. #}
+        {% for f in findings_by_app[0].findings %}
+          {{ finding_card(f, "How to fix") }}
+        {% endfor %}
+      {% else %}
+        {% for bucket in findings_by_app %}
+        <details class="subsection" open>
+          <summary><h3>{{ app_bucket_header(bucket) }}</h3></summary>
+          {% for f in bucket.findings %}
+            {{ finding_card(f, "How to fix") }}
+          {% endfor %}
+        </details>
+        {% endfor %}
+      {% endif %}
+    {% else %}
+      <p class="empty">No significant performance issues detected.</p>
+    {% endif %}
+
+    {# Framework-level / observational findings live INSIDE Findings
+       as a collapsed subsection, and within THAT, bucket by app so a
+       site with 50 framework observations spread across frappe +
+       erpnext + werkzeug doesn't read as one giant blob. User's
+       rationale: "the framework and other 1 party app's scripts can
+       be easily avoided and focus on their custom app". #}
+    {% if observational_findings_by_app %}
+    <details class="subsection">
+      <summary><h3>Framework-level observations (not user-actionable)</h3></summary>
+      <p class="small muted">
+        Informational signals without a concrete fix in your application code —
+        framework-level activity, infrastructure pressure, and hot-frame
+        observations. Listed for transparency; investigate if something here surprises you.
+      </p>
+
+      {% if observational_findings_by_app | length == 1 %}
+        {% for f in observational_findings_by_app[0].findings %}
+          {{ finding_card(f, "Context") }}
+        {% endfor %}
+      {% else %}
+        {% for bucket in observational_findings_by_app %}
+        <details class="subsection">
+          <summary><h3>{{ app_bucket_header(bucket) }}</h3></summary>
+          {% for f in bucket.findings %}
+            {{ finding_card(f, "Context") }}
+          {% endfor %}
+        </details>
+        {% endfor %}
+      {% endif %}
+    </details>
+    {% endif %}
+  </details>
+
+  {# --------------- PER-ACTION BREAKDOWN --------------- #}
+  <details class="section" open id="per-action">
+    <summary><h2>Per-action breakdown</h2></summary>
+    {% if actions or actions_framework %}
+      <p class="small muted">Sorted by duration. Your app's actions first; framework actions are collapsed below. Click on the action to drill into its queries.</p>
+      {% if actions %}
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Action</th>
+            <th>Type</th>
+            <th class="num">Duration</th>
+            <th class="num">Queries</th>
+            <th class="num">DB time</th>
+            <th class="num">Slowest query</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for action in actions %}
+          {{ action_row(action, loop.index) }}
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p class="small muted">No actions from your own app's code in this session &mdash; everything ran in framework code. Expand the block below to see what.</p>
+      {% endif %}
+      {% if actions_framework %}
+      <details class="subsection">
+        <summary class="small muted"><strong>{{ actions_framework | length }}</strong> framework action{{ "s" if actions_framework | length != 1 else "" }} (click to expand) &mdash; entry points in <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Action</th>
+              <th>Type</th>
+              <th class="num">Duration</th>
+              <th class="num">Queries</th>
+              <th class="num">DB time</th>
+              <th class="num">Slowest query</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for action in actions_framework %}
+            {{ action_row(action, loop.index) }}
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+      {% endif %}
+    {% else %}
+      <p class="empty">No actions were recorded in this session.</p>
+    {% endif %}
+  </details>
+
+  {# --------------- v0.6.0: BACKGROUND JOBS --------------- #}
+  {# The background jobs the profiled flow enqueued — captured (the profiler
+     waits for them to finish before analyzing) and analyzed like requests.
+     They also appear in the per-action breakdown above; this is a focused
+     view with each job's slowest queries. Section omitted entirely when the
+     flow enqueued nothing. #}
+  {% if background_jobs and background_jobs.count %}
+  <details class="section" open id="background-jobs">
+    <summary><h2>Background jobs</h2></summary>
+    <p class="small muted">
+      {{ background_jobs.count }} background job{{ 's' if background_jobs.count != 1 else '' }}
+      ran during this flow &mdash; {{ fmt_ms(background_jobs.total_ms) }} total,
+      {{ background_jobs.total_queries }} quer{{ 'ies' if background_jobs.total_queries != 1 else 'y' }}.
+      These also appear in the per-action breakdown above.
+    </p>
+    <p class="small muted">
+      Jobs are captured until they finish (up to the configured wait). If a worker
+      wasn't running, or a job ran longer than the wait, it may be missing &mdash;
+      click <em>Retry Analyze</em> once it's done to pick it up.
+    </p>
+    {% set cols = 7 if background_jobs.any_findings_counted else 6 %}
+    {% if background_jobs.jobs %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Method</th>
+          <th class="num">Duration</th>
+          <th class="num">Queries</th>
+          <th class="num">DB time</th>
+          <th class="num">Slowest query</th>
+          {% if background_jobs.any_findings_counted %}<th class="num">Findings</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for job in background_jobs.jobs %}
+        {{ bg_job_row(job, loop.index, cols, background_jobs.any_findings_counted) }}
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="small muted">No background jobs from your own app's code &mdash; all jobs ran in framework code. Expand the block below to see what.</p>
+    {% endif %}
+    {% if background_jobs.jobs_framework %}
+    <details class="subsection">
+      <summary class="small muted"><strong>{{ background_jobs.framework_count }}</strong> framework job{{ "s" if background_jobs.framework_count != 1 else "" }} (click to expand) &mdash; <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Method</th>
+            <th class="num">Duration</th>
+            <th class="num">Queries</th>
+            <th class="num">DB time</th>
+            <th class="num">Slowest query</th>
+            {% if background_jobs.any_findings_counted %}<th class="num">Findings</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+        {% for job in background_jobs.jobs_framework %}
+          {{ bg_job_row(job, loop.index, cols, background_jobs.any_findings_counted) }}
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {# --------------- v0.6.x: DOC-EVENT LIFECYCLE --------------- #}
+  {# The slow call-tree findings re-grouped by DocType → lifecycle event
+     (validate / on_submit / …), tagging each as a registered doc_events hook
+     or a controller method override, and surfacing cascaded DocTypes (e.g. a
+     GL Entry created during a Sales Invoice submit). Omitted when no save/
+     submit action had a slow lifecycle method. #}
+  {% if doc_event_breakdown and doc_event_breakdown.count %}
+  <details class="section" open id="doc-event-lifecycle">
+    <summary><h2>Doc-event lifecycle</h2></summary>
+    <p class="small muted">
+      Slow lifecycle methods (validate, on_submit, …) and registered doc-event
+      hooks that ran during this session's save/submit actions, grouped by DocType
+      &mdash; including documents created by cascading hooks. Times are approximate
+      (a method's time includes its callees).
+    </p>
+    {% for g in doc_event_breakdown.doctypes %}
+    <div style="margin: 14px 0; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px;">
+      <div style="font-weight: 600;">
+        {{ g.doctype }}
+        <span class="small muted" style="font-weight: 400;">
+          {% if g.is_save_target %}&middot; saved/submitted directly{% endif %}
+          {% if g.touched_during %}&middot; touched during {{ g.touched_during | join(", ") }} save/submit{% endif %}
+          &middot; {{ g.method_count }} hot method{{ "s" if g.method_count != 1 else "" }}
+          &middot; ~{{ fmt_ms(g.total_ms) }}
+        </span>
+      </div>
+      {% for ev in g.events %}
+      <div style="margin: 8px 0 0 14px;">
+        <div class="small"><strong>{{ ev.event }}</strong> <span class="muted">&mdash; ~{{ fmt_ms(ev.total_ms) }}</span></div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 0.84rem; margin: 2px 0 0;">
+          {% for m in ev.methods %}
+          <tr>
+            <td style="padding: 2px 8px 2px 14px; border: none;">
+              {% if m._abs %}<a class="callsite-link" href="vscode://file{{ m._abs }}:{{ m.lineno }}" title="Open in VS Code / Cursor"><code>{{ m.function }}</code></a>{% else %}<code>{{ m.function }}</code>{% endif %}
+              <span class="small muted">{{ m.filename }}{% if m.lineno %}:{{ m.lineno }}{% endif %}</span>
+              <span class="small muted">[{{ m.kind }}]</span>
+            </td>
+            <td style="padding: 2px 8px; border: none; text-align: right; white-space: nowrap;">~{{ fmt_ms(m.ms) }}{% if m.count > 1 %} &times;{{ m.count }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+
+  {# --------------- v0.5.0: SERVER RESOURCE PANEL --------------- #}
+  {% if infra_timeline %}
+  <details class="section" open id="server-resource">
+    <summary><h2>Server Resource</h2></summary>
+    <p class="small muted">
+      CPU, memory, load average, DB and Redis pressure, and background
+      queue depth sampled at each action boundary. Use this to tell code-slow
+      from server-slow.
+    </p>
+    <div class="stats" style="margin-bottom: 12px;">
+      <div class="stat">
+        <div class="label">CPU avg / peak</div>
+        <div class="value">
+          {{ "%.0f" | format(infra_summary.cpu_avg or 0) }}%
+          <span class="sub" style="font-size: 1rem">/ {{ "%.0f" | format(infra_summary.cpu_peak or 0) }}%</span>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Worker RSS delta</div>
+        <div class="value">
+          {{ ((infra_summary.rss_delta or 0) / 1000000) | round(0) | int }}<span class="sub" style="font-size: 1rem">MB</span>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Load peak</div>
+        <div class="value">{{ "%.2f" | format(infra_summary.load_peak or 0) }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Swap peak</div>
+        <div class="value">
+          {{ infra_summary.swap_peak_mb or 0 }}<span class="sub" style="font-size: 1rem">MB</span>
+        </div>
+      </div>
+    </div>
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+      <thead>
+        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
+          <th style="padding: 6px 8px; text-align: left;">#</th>
+          <th style="padding: 6px 8px; text-align: left;">Action</th>
+          <th style="padding: 6px 8px; text-align: right;">CPU</th>
+          <th style="padding: 6px 8px; text-align: right;">RSS</th>
+          <th style="padding: 6px 8px; text-align: right;">Load</th>
+          <th style="padding: 6px 8px; text-align: right;">DB run/conn</th>
+          <th style="padding: 6px 8px; text-align: right;">RQ def/short/long</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in infra_timeline %}
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 4px 8px;">{{ row.action_idx }}</td>
+          <td style="padding: 4px 8px;">{{ row.action_label }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ "%.0f" | format(row.cpu or 0) }}%</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ ((row.rss or 0) / 1000000) | round(0) | int }}MB</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ "%.2f" | format(row.load_1min or 0) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ (row.db_threads_running or 0) | int }}/{{ (row.db_threads_connected or 0) | int }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ (row.rq_default or 0) | int }}/{{ (row.rq_short or 0) | int }}/{{ (row.rq_long or 0) | int }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+
+  {# --------------- v0.5.0: FRONTEND PANEL --------------- #}
+  {% if frontend_xhr_matched or frontend_vitals_by_page %}
+  <details class="section" open id="frontend">
+    <summary><h2>Frontend</h2></summary>
+    <p class="small muted">
+      Per-XHR timings from the browser joined to the matching server recording,
+      plus Web Vitals (FCP, LCP, CLS) per page. Shows what the user actually
+      felt — network overhead and page paint time that the server alone can't see.
+    </p>
+    <div class="stats" style="margin-bottom: 12px;">
+      <div class="stat">
+        <div class="label">Total XHRs</div>
+        <div class="value">{{ frontend_summary.total_xhrs or 0 }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Browser wall time</div>
+        <div class="value">
+          {{ (frontend_summary.total_xhr_ms or 0) | int }}<span class="sub" style="font-size: 1rem">ms</span>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Backend time</div>
+        <div class="value">
+          {{ (frontend_summary.total_backend_ms or 0) | int }}<span class="sub" style="font-size: 1rem">ms</span>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Network overhead</div>
+        <div class="value">
+          {{ (frontend_summary.network_overhead_ms or 0) | int }}<span class="sub" style="font-size: 1rem">ms</span>
+        </div>
+      </div>
+    </div>
+
+    {% if frontend_xhr_matched %}
+    <h3 style="margin-bottom: 8px;">Per-action XHR timing</h3>
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+      <thead>
+        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
+          <th style="padding: 6px 8px; text-align: left;">Action</th>
+          <th style="padding: 6px 8px; text-align: right;">Backend</th>
+          <th style="padding: 6px 8px; text-align: right;">Browser</th>
+          <th style="padding: 6px 8px; text-align: right;">Network Δ</th>
+          <th style="padding: 6px 8px; text-align: right;">Status</th>
+          <th style="padding: 6px 8px; text-align: right;">Size</th>
+          <th style="padding: 6px 8px; text-align: left;">URL</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in frontend_xhr_matched %}
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 4px 8px;">{{ m.action_label }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.backend_ms) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.xhr_ms) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.network_delta_ms) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ m.status }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ ((m.response_size_bytes or 0) / 1024) | round(1) }}KB</td>
+          <td style="padding: 4px 8px;">
+            <code style="font-size: 0.75rem;">{{ m.url }}</code>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if frontend_vitals_by_page %}
+    <h3 style="margin-top: 16px; margin-bottom: 8px;">Web Vitals by page</h3>
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+      <thead>
+        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
+          <th style="padding: 6px 8px; text-align: left;">Page</th>
+          <th style="padding: 6px 8px; text-align: right;">FCP</th>
+          <th style="padding: 6px 8px; text-align: right;">LCP</th>
+          <th style="padding: 6px 8px; text-align: right;">CLS</th>
+          <th style="padding: 6px 8px; text-align: right;">TTFB</th>
+          <th style="padding: 6px 8px; text-align: right;">DCL</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for page, v in frontend_vitals_by_page.items() %}
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 4px 8px;">
+            <code style="font-size: 0.75rem;">{{ page }}</code>
+          </td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.fcp_ms or 0) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.lcp_ms or 0) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ "%.3f" | format(v.cls or 0) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.ttfb_ms or 0) }}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.dom_content_loaded_ms or 0) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if frontend_orphans %}
+    <details style="margin-top: 16px;">
+      <summary class="small muted" style="cursor: pointer;">
+        Orphaned XHRs ({{ frontend_orphans | length }}) — no matching server recording
+      </summary>
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px;">
+        <thead>
+          <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
+            <th style="padding: 6px 8px; text-align: left;">URL</th>
+            <th style="padding: 6px 8px; text-align: right;">Duration</th>
+            <th style="padding: 6px 8px; text-align: left;">Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in frontend_orphans %}
+          <tr style="border-bottom: 1px solid #f3f4f6;">
+            <td style="padding: 4px 8px;"><code style="font-size: 0.75rem;">{{ o.url }}</code></td>
+            <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(o.duration_ms or 0) }}</td>
+            <td style="padding: 4px 8px;">{{ o.reason }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {# --------------- v0.3.0: HOT FRAMES LEADERBOARD --------------- #}
+  {% if hot_frames_rows or hot_frames_rows_framework %}
+  <details class="section" open>
+    <summary><h2>Hot frames (top {{ ((hot_frames_rows or []) | length) + ((hot_frames_rows_framework or []) | length) }})</h2></summary>
+    {% if hot_frames_rows %}
+    <table>
+      <thead>
+        <tr>
+          <th>Function</th>
+          <th class="num">Total time</th>
+          <th class="num">Occurrences</th>
+          <th class="num">Distinct actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in hot_frames_rows %}
+          {{ hot_frame_row(row) }}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="small muted">No hot frames in your own app's code &mdash; all frames ran in framework code. Expand the block below to see what.</p>
+    {% endif %}
+    {% if hot_frames_rows_framework %}
+    <details class="subsection">
+      <summary class="small muted"><strong>{{ hot_frames_rows_framework | length }}</strong> framework frame{{ "s" if hot_frames_rows_framework | length != 1 else "" }} (click to expand) &mdash; <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+      <table>
+        <thead>
+          <tr>
+            <th>Function</th>
+            <th class="num">Total time</th>
+            <th class="num">Occurrences</th>
+            <th class="num">Distinct actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in hot_frames_rows_framework %}
+            {{ hot_frame_row(row) }}
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {# --------------- TOP-N SLOW QUERIES --------------- #}
+  <details class="section" open id="top-queries">
+    <summary><h2>{% if top_queries %}Top {{ top_queries|length }} slowest queries{% else %}Slowest queries{% endif %} &mdash; your app</h2></summary>
+    {% if top_queries %}
+      <p class="small muted">Slowest queries issued from your own app's code. Framework and third-party queries are excluded &mdash; see the per-action breakdown below for the complete list.</p>
+      <table class="query-table">
+        <colgroup>
+          <col class="col-index">
+          <col class="col-duration">
+          <col class="col-callsite">
+          <col class="col-query">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th class="num">Duration</th>
+            <th>Callsite</th>
+            <th>Query (normalized)</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for q in top_queries %}
+          {{ top_query_row(q, loop.index) }}
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">No notably slow queries from your app's own code in this session &mdash; nothing here is worth singling out. The per-action breakdown below lists every query, fast and framework ones included.</p>
+    {% endif %}
+    {% if top_queries_framework %}
+    <details class="subsection">
+      <summary class="small muted"><strong>{{ top_queries_framework | length }}</strong> framework quer{{ "ies" if top_queries_framework | length != 1 else "y" }} (click to expand) &mdash; <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+      <table class="query-table">
+        <colgroup>
+          <col class="col-index">
+          <col class="col-duration">
+          <col class="col-callsite">
+          <col class="col-query">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th class="num">Duration</th>
+            <th>Callsite</th>
+            <th>Query (normalized)</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for q in top_queries_framework %}
+          {{ top_query_row(q, loop.index) }}
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+  </details>
+
+  {# --------------- QUERY BREAKDOWN PER ACTION --------------- #}
+  {% if recordings_by_uuid %}
+  <details class="section">
+    <summary><h2>Queries per action</h2></summary>
+    <p class="small muted">
+      The top queries for each action in this session, with callsites so your
+      developer knows where to look. Actions are ordered by total duration.
+    </p>
+
+    {% for action in (actions + (actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
+      {% set recording = recordings_by_uuid.get(action.recording_uuid) %}
+      {% if recording and recording.calls %}
+      <details{% if loop.index <= 3 %} open{% endif %} style="margin: 12px 0;">
+        <summary style="cursor: pointer; padding: 8px 12px; background: #f3f4f6; border-radius: 4px; user-select: none;">
+          <strong>{{ loop.index }}. {{ action.action_label }}</strong>
+          <span class="small muted">
+            &middot; {{ fmt_ms(action.duration_ms) }}
+            &middot; {{ action.queries_count }} queries
+            &middot; {{ fmt_ms(action.query_time_ms) }} in DB
+          </span>
+        </summary>
+        <div style="padding: 10px 4px;">
+          {# Sort this action's queries by duration desc, take top 10 #}
+          {% set top_in_action = recording.calls | sort(attribute='duration', reverse=True) %}
+          <table class="query-table">
+            <colgroup>
+              <col class="col-duration">
+              <col class="col-copies">
+              <col class="col-callsite">
+              <col class="col-query">
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="num">Duration</th>
+                <th class="num">Copies</th>
+                <th>Callsite</th>
+                <th>Query (normalized)</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for call in top_in_action[:10] %}
+              <tr>
+                <td class="num">{{ fmt_ms(call.duration or 0, 1) }}</td>
+                <td class="num">
+                  {% if call.normalized_copies and call.normalized_copies > 1 %}{{ call.normalized_copies }}×{% endif %}
+                </td>
+                <td>
+                  {% if call.stack %}
+                    {# Use the last frame's filename:lineno as a short callsite hint #}
+                    {% set last_frame = call.stack[-1] if call.stack[-1] is mapping else none %}
+                    {% if last_frame %}
+                      <code class="small">{{ last_frame.filename }}:{{ last_frame.lineno }}</code>
+                    {% endif %}
+                  {% endif %}
+                </td>
+                <td>
+                  <pre class="sql-inline">{{ call.normalized_query or call.query or "" }}</pre>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% if recording.calls | length > 10 %}
+            <p class="small muted"><em>Showing top 10 of {{ recording.calls | length }} queries for this action.</em></p>
+          {% endif %}
+        </div>
+      </details>
+      {% endif %}
+    {% endfor %}
+  </details>
+  {% endif %}
+
+  {# --------------- PER-TABLE BREAKDOWN --------------- #}
+  <details class="section" open id="db-tables">
+    <summary><h2>Time spent per database table</h2></summary>
+    {% if hidden_db_tables_count %}
+      <p class="small muted" style="margin: 4px 0 10px; padding: 8px 12px; background: #f9fafb; border-radius: 6px;"><strong>{{ hidden_db_tables_count }}</strong> framework/internal table{{ "s" if hidden_db_tables_count != 1 else "" }} hidden (DocType / Workspace / Role / Has Role / DefaultValue / <code>information_schema.*</code> and friends). Uncheck <em>"Hide framework / internal database tables"</em> in Optimus Settings to see them.</p>
+    {% endif %}
+    {% if table_breakdown %}
+      {% set written = table_breakdown | selectattr("write_count") | sort(attribute="write_count", reverse=True) | list %}
+      {% if written %}
+      <p class="small muted" style="margin-bottom:10px;">
+        <strong>Tables written to this session</strong> ({{ written | length }}):
+        {% for t in written[:12] %}<code title="{{ t.write_count }} write(s){% if t.get('write_time_ms') %}, {{ fmt_ms(t.write_time_ms) }}{% endif %}">{{ t.table }}</code>&nbsp;({{ t.write_count }}){% if not loop.last %}, {% endif %}{% endfor %}{% if written | length > 12 %} … and {{ written | length - 12 }} more{% endif %}.
+        <br>Writes are usually cheap (a handful of sub-millisecond <code>INSERT</code>&nbsp;/&nbsp;<code>UPDATE</code> rows), so a write-heavy table normally won't be near the top of the time-sorted list below &mdash; that's why a document save doesn't dominate this section. Drill into the <a href="#per-action">per-action breakdown</a> to see exactly what each save / submit wrote.
+      </p>
+      {% endif %}
+      <p class="small muted">Where the time goes, and how each table was used. A query touching multiple tables is counted against each, so the rows sum to more than the session total. <strong>Reads</strong> = <code>SELECT</code>; <strong>Writes</strong> = <code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code>. Sorted by time desc.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th class="num">Time</th>
+            <th class="num">Queries</th>
+            <th class="num">Reads</th>
+            <th class="num">Writes</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for t in table_breakdown %}
+          <tr>
+            <td><code>{{ t.table }}</code></td>
+            <td class="num">{{ fmt_ms(t.duration_ms) }}</td>
+            <td class="num">{{ t.queries }}</td>
+            <td class="num">{{ t.get("read_count", "—") }}{% if t.get("read_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.read_time_ms) }}</span>{% endif %}</td>
+            <td class="num">{{ t.get("write_count", "—") }}{% if t.get("write_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.write_time_ms) }}</span>{% endif %}</td>
+          </tr>
+          {% if t.get("recommended_index") %}
+          {% set rec = t.recommended_index %}
+          <tr>
+            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;font-size:0.82rem;">
+              <span class="muted" style="text-transform:uppercase;font-size:0.68rem;letter-spacing:0.5px;font-weight:600;">Index candidate &mdash; to speed up reads of this table</span><br>
+              The most-used filter on this table was <strong><code>({% for c in rec.columns %}{{ c }}{% if not loop.last %}, {% endif %}{% endfor %})</code></strong> &mdash; those columns were filtered together in {{ rec.together_count }} of {{ rec.read_count }} read{{ 's' if rec.read_count != 1 else '' }}. A composite index on them, leftmost-first, would help those reads:
+              <pre style="margin:6px 0;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:8px 10px;">frappe.db.add_index("{{ rec.doctype }}", [{% for c in rec.columns %}"{{ c }}"{% if not loop.last %}, {% endif %}{% endfor %}])</pre>
+              <span class="small muted">Put that in a patch &mdash; Customize&nbsp;Form ▸ field ▸ <em>Search&nbsp;Index</em> only makes single-column indexes. First run <code>SHOW INDEX FROM `{{ t.table }}`</code>: this may already be covered.</span>
+              {% if t.get("write_count", 0) %}
+                <div style="color:#b45309;margin-top:5px;">&#9888; {{ t.write_count }} write{% if t.write_count != 1 %}s{% endif %} on this table in this session{% if t.get("is_write_hot") %} &mdash; and <code>{{ t.table }}</code> is a write-hot core table (many rows inserted per submitted document in production){% endif %} &mdash; every index also slows writes, so add it only if a query in the per-action breakdown that filters this way is actually slow.</div>
+              {% elif t.get("is_write_hot") %}
+                <div style="color:#b45309;margin-top:5px;">&#9888; No writes in this session, but <code>{{ t.table }}</code> is normally write-hot in production (bulk inserts per submitted document) &mdash; be conservative about adding indexes here.</div>
+              {% else %}
+                <div class="muted" style="margin-top:5px;">No writes recorded &mdash; adding an index here is low-risk.</div>
+              {% endif %}
+              {% if rec.also_filtered %}
+                <div class="muted" style="margin-top:3px;">Other columns this session filtered on (in other / fewer queries) &mdash; index each only if its own query is slow: {% for c in rec.also_filtered %}<code>{{ c }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.</div>
+              {% endif %}
+              {% if t.get("framework_cols_filtered") %}
+                <div class="muted" style="margin-top:3px;">Also filtered on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) &mdash; never indexed (Frappe writes them on every save, or they're auto-indexed).</div>
+              {% endif %}
+              {% if t.get("ai_index") and t.ai_index.suggestion_html %}
+                <div class="ai-fix" style="margin-top:8px;">
+                  <div class="ai-fix-header">Index advice (AI{% if t.ai_index.model %} &mdash; {{ t.ai_index.model }}{% endif %})</div>
+                  <div class="ai-fix-body">{{ t.ai_index.suggestion_html | safe }}</div>
+                  <div class="ai-fix-foot">Machine-generated{% if t.ai_index.generated_at %} &middot; {{ fmt_dt(t.ai_index.generated_at) }}{% endif %} &mdash; verify against <code>SHOW INDEX</code> before applying.</div>
+                </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% elif t.index_candidates %}
+          <tr>
+            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;font-size:0.82rem;">
+              <span class="muted" style="text-transform:uppercase;font-size:0.68rem;letter-spacing:0.5px;font-weight:600;">Index candidates &mdash; to speed up reads of this table</span><br>
+              {% for c in t.index_candidates %}<code title="used in {{ c.sources | join(', ') }} &middot; {{ c.hits }}× this session">{{ c.column }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+              {% if t.get("write_count", 0) %}
+                <span style="color:#b45309;"> &nbsp;&#9888; {{ t.write_count }} write{% if t.write_count != 1 %}s{% endif %} on this table — every index added also slows those writes, so index only the column(s) that meaningfully help reads (one composite index over columns filtered together beats several single-column ones).</span>
+              {% else %}
+                <span class="muted"> &nbsp;&middot; no writes recorded — adding an index here is low-risk.</span>
+              {% endif %}
+              {% if t.get("framework_cols_filtered") %}
+                <div class="muted" style="margin-top:3px;">Also filtered on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) &mdash; those aren't safe index targets (Frappe writes them on every save, or they're auto-indexed), so they're left out.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% elif t.get("is_meta_table") %}
+          <tr>
+            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;font-size:0.78rem;" class="muted">
+              Frappe framework meta table &mdash; <code>bench migrate</code> owns its schema (indexes included), so a hand-added index here is pointless and would be clobbered on the next migrate. Nothing suggested.
+            </td>
+          </tr>
+          {% elif "index_candidates" in t and t.get("framework_cols_filtered") %}
+          <tr>
+            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;font-size:0.78rem;" class="muted">
+              Reads here only filter on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) &mdash; those aren't safe index targets (Frappe writes them on every save, or they're auto-indexed), so nothing's suggested for this table.
+            </td>
+          </tr>
+          {% elif "index_candidates" in t and t.get("read_count") %}
+          <tr>
+            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;font-size:0.78rem;" class="muted">
+              Reads here filter on no single indexable column (full scans or primary-key lookups) &mdash; nothing obvious to add.
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="small muted" style="margin-top:8px;">The <strong>index candidate</strong> for each table is the set of <code>WHERE</code> / <code>JOIN&nbsp;ON</code> columns this session filtered on <em>together</em> most often — a heuristic, not a verdict. Always confirm with the query's <code>EXPLAIN</code> (and a <code>SHOW INDEX FROM …</code>) before adding anything; every index also carries a write cost, and the column order in a composite matters (most-selective / equality columns first). Never suggested: Frappe's standard metadata columns (<code>name</code>, <code>creation</code>, <code>modified</code>, <code>parent</code>, <code>idx</code>, <code>docstatus</code>, …) — written on every save / already indexed; and Frappe's framework meta tables (<code>tabDocType</code>, <code>tabCustom Field</code>, <code>tabSingles</code>, …) — <code>bench&nbsp;migrate</code> owns their schema. ("&mdash;" in Reads/Writes means this session was analyzed before this breakdown was added &mdash; re-run <em>Retry Analyze</em> to populate.)</p>
+    {% else %}
+      <p class="empty">No table breakdown available.</p>
+    {% endif %}
+  </details>
+
+  {# --------------- Full recordings drill-down --------------- #}
+  {% if recordings_by_uuid %}
+  <details class="section">
+    <summary><h2>Full recordings</h2></summary>
+    <p class="small muted">Every action's complete data &mdash; raw SQL with literal values, request headers, form data, and full Python stack traces. <strong>This contains potentially sensitive customer data &mdash; do not share externally.</strong></p>
+    <p class="small muted">Each action is collapsed by default. Click to expand.</p>
+
+    {% for action in (actions + (actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
+      {% set recording = recordings_by_uuid.get(action.recording_uuid) %}
+      {% if recording %}
+      <details style="margin: 12px 0; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+        <summary style="cursor: pointer; font-weight: 600; color: #111827;">
+          {{ loop.index }}. {{ action.action_label }}
+          <span class="small muted" style="font-weight: 400;">({{ fmt_ms(action.duration_ms) }}, {{ action.queries_count }} queries)</span>
+        </summary>
+        <div style="padding-top: 12px;">
+
+          {% if recording.headers %}
+            <p class="small"><strong>Request headers:</strong></p>
+            <pre>{{ recording.headers }}</pre>
+          {% endif %}
+
+          {% if recording.form_dict %}
+            <p class="small"><strong>Form data:</strong></p>
+            <pre>{{ recording.form_dict }}</pre>
+          {% endif %}
+
+          {% if recording.calls %}
+            <p class="small"><strong>SQL queries (in execution order):</strong></p>
+            {% for call in recording.calls[:200] %}
+              <div style="margin: 8px 0; padding: 8px; background: white; border: 1px solid #e5e7eb; border-radius: 4px;">
+                <div class="small muted">
+                  #{{ call.index if call.index is defined else loop.index0 }}
+                  &middot; {{ fmt_ms(call.duration or 0, 2) }}
+                  {% if call.exact_copies and call.exact_copies > 1 %}&middot; {{ call.exact_copies }} exact copies{% endif %}
+                  {% if call.normalized_copies and call.normalized_copies > call.exact_copies %}&middot; {{ call.normalized_copies }} normalized copies{% endif %}
+                </div>
+                <pre style="margin: 4px 0;">{{ call.query }}</pre>
+                {% if call.stack %}
+                  <details>
+                    <summary class="small muted">Stack ({{ call.stack | length }} frames) &mdash; click to expand</summary>
+                    <pre class="small">{% for frame in call.stack %}{{ frame.filename }}:{{ frame.lineno }} ({{ frame.function }})
+{% endfor %}</pre>
+                  </details>
+                {% endif %}
+              </div>
+            {% endfor %}
+            {% if recording.calls | length > 200 %}
+              <p class="small muted"><em>(+ {{ recording.calls|length - 200 }} more queries truncated for readability)</em></p>
+            {% endif %}
+          {% endif %}
+        </div>
+      </details>
+      {% endif %}
+    {% endfor %}
+  </details>
+  {% endif %}
+
+  {# --------------- FOOTER --------------- #}
+  <div class="footer">
+    <p>
+      Generated by <strong>Optimus</strong> &middot;
+      <span style="color:#dc2626">Admin report &mdash; contains sensitive data, internal use only</span>
+    </p>
+    <p class="small" style="margin-top: 8px; color: #9ca3af;">
+      Do NOT email, upload, or share this file externally without redacting
+      it yourself. Query literals, request headers, form data, and full
+      stack traces are all included verbatim.
+    </p>
+    {% if render_config %}
+    <p class="small" style="margin-top: 10px; color: #9ca3af;">
+      <strong>Rendered with:</strong>
+      hide_framework_tables = <code>{{ "on" if render_config.hide_framework_tables else "off" }}</code> &middot;
+      tracked_apps = <code>{{ render_config.tracked_apps | join(", ") if render_config.tracked_apps else "(none)" }}</code> &middot;
+      ignored_apps = <code>{{ render_config.ignored_apps | join(", ") if render_config.ignored_apps else "(none)" }}</code> &middot;
+      ai_suggest_findings = <code>{{ "on" if render_config.ai_suggest_findings else "off" }}</code> &middot;
+      ai_suggest_indexes = <code>{{ "on" if render_config.ai_suggest_indexes else "off" }}</code> &middot;
+      min_action_duration_ms = <code>{{ render_config.min_action_duration_ms | round(0) | int }}</code> &middot;
+      large_duration_threshold_ms = <code>{{ render_config.large_duration_threshold_ms | round(0) | int }}</code>.
+      Settings affect FUTURE renders only &mdash; click <em>Regenerate Reports</em> on the Optimus Session after a settings change.
+    </p>
+    {% endif %}
+  </div>
+
+</div>
+
+</body>
+</html>
