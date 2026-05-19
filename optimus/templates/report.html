@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Profiler Report — {{ session.title or session.session_uuid }}</title>
+<title>Profiler Report - {{ session.title or session.session_uuid }}</title>
 <style>
   /* ---------- Reset & base ---------- */
   *, *::before, *::after { box-sizing: border-box; }
@@ -46,57 +46,10 @@
   .muted { color: #6b7280; }
   .small { font-size: 0.85rem; }
 
-  /* ---------- Header card ---------- */
-  .report-header {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    padding: 24px 28px;
-    margin-bottom: 24px;
-  }
-  .report-header .meta {
-    margin-top: 6px;
-    color: #6b7280;
-    font-size: 0.9rem;
-  }
-  /* The header metadata as a compact key/value table — overrides the
-     full-width / bordered / hover-highlighted global table styling. */
-  .report-header .meta-table {
-    width: auto;
-    margin: 6px 0 0;
-  }
-  .report-header .meta-table td {
-    padding: 2px 16px 2px 0;
-    border: none;
-    vertical-align: top;
-  }
-  .report-header .meta-table td:first-child {
-    color: #6b7280;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-  .report-header .meta-table td:last-child {
-    color: #374151;
-  }
-  .report-header .meta-table tr:hover td {
-    background: transparent;
-  }
-  /* ---------- Stat cards ---------- */
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .stat {
-    background: white;
-    border-radius: 8px;
-    padding: 12px 14px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-  }
-  .stat .label { font-size: 0.72rem; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; font-weight: 600; }
-  .stat .value { font-size: 1.4rem; font-weight: 700; color: #111827; margin-top: 2px; }
-  .stat .sub   { font-size: 0.78rem; color: #6b7280; margin-top: 1px; }
+  /* v0.7.x Phase H: `.report-header` / `.stats` / `.stat` were
+     superseded by `.masthead` (Phase A) and `.kpis` / `.kpi` +
+     `.resource-grid` / `.resource-card` (Phase A/G/H). The orphaned
+     rules have been removed. */
 
   /* ---------- Section card ---------- */
   .section {
@@ -108,7 +61,7 @@
   }
   .section > h2:first-child { margin-top: 0; }
 
-  /* v0.5.2: collapsible <details> sections. Native HTML5 — no JS
+  /* v0.5.2: collapsible <details> sections. Native HTML5 - no JS
      required, fully keyboard + screen-reader accessible. Default
      expanded for primary sections (via `open` attribute in the
      template); nested sub-sections (e.g., framework-level
@@ -165,7 +118,7 @@
     color: #2563eb;
   }
 
-  /* v0.5.2: per-app bucket header — the <h3> inside a subsection
+  /* v0.5.2: per-app bucket header - the <h3> inside a subsection
      <summary> renders as "myapp · 3 findings · ~420ms". The app name
      is the primary emphasis; count + impact are muted so they read
      as secondary metadata without competing for attention. */
@@ -204,7 +157,7 @@
     margin-left: 4px;
   }
 
-  /* v0.5.2 round 4: clickable callsite → editor. Subtle style — looks
+  /* v0.5.2 round 4: clickable callsite → editor. Subtle style - looks
      like the plain <code> block but with a dotted underline that
      signals interactivity, and a hover color lift. We don't use the
      default-link blue because the callsite is already inline code
@@ -221,13 +174,13 @@
   a.callsite-link:hover code {
     color: #1d4ed8;
   }
-  /* Print mode: drop the editor-link decoration — a PDF reader can't
+  /* Print mode: drop the editor-link decoration - a PDF reader can't
      click vscode:// handlers. */
   @media print {
     a.callsite-link { border-bottom: none; }
   }
 
-  /* v0.5.3: Truncation banner — sits above the exec-summary when the
+  /* v0.5.3: Truncation banner - sits above the exec-summary when the
      per-recording cap was exceeded. Red-bordered, full-width, with
      bold header so nobody can claim they didn't see it. Mirrors the
      pattern APM tools use for "data sampled at X%" warnings. */
@@ -255,69 +208,9 @@
     color: #991b1b;
   }
 
-  /* v0.5.2 round 3: Executive summary card. The visual weight signals
-     "read this first" — colored left border flags session pace
-     (green / amber / red), generous padding, bullets styled like an
-     agenda. A non-developer should get the punch without scrolling. */
-  .exec-summary {
-    background: white;
-    border-radius: 8px;
-    border-left: 6px solid #10b981;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-    padding: 14px 18px;
-    margin-bottom: 16px;
-  }
-  .exec-summary.pace-moderate { border-left-color: #f59e0b; }
-  .exec-summary.pace-slow { border-left-color: #dc2626; }
-  .exec-summary h2 { margin: 0 0 8px 0; border: 0; padding: 0; }
-  .exec-headline {
-    font-size: 1.05rem;
-    color: #111827;
-    margin: 0 0 12px 0;
-  }
-  .exec-bullets { margin-top: 8px; }
-  .exec-bullets ol {
-    margin: 8px 0 0 0;
-    padding-left: 24px;
-  }
-  .exec-bullets li {
-    padding: 6px 0;
-    color: #374151;
-    line-height: 1.5;
-  }
-  .exec-bullet-severity {
-    display: inline-block;
-    padding: 1px 8px;
-    border-radius: 3px;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    margin-right: 8px;
-    vertical-align: middle;
-  }
-  .exec-bullet-severity.severity-high {
-    background: #fee2e2; color: #991b1b;
-  }
-  .exec-bullet-severity.severity-medium {
-    background: #fef3c7; color: #92400e;
-  }
-  .exec-bullet-severity.severity-low {
-    background: #dbeafe; color: #1e40af;
-  }
-  .exec-bullet-text { font-weight: 500; }
-  .exec-bullet-impact {
-    color: #6b7280;
-    margin-left: 8px;
-    font-variant-numeric: tabular-nums;
-  }
-  .exec-infra {
-    margin: 10px 0 0 0;
-    padding-top: 10px;
-    border-top: 1px dashed #e5e7eb;
-    color: #374151;
-    font-size: 0.9rem;
-  }
+  /* v0.7.x Phase H: the v0.5.2 "Executive summary" card (.exec-*)
+     was replaced by the .tldr hero in Phase B; its orphaned rules
+     have been removed. */
 
   /* ---------- Tables ---------- */
   table {
@@ -356,9 +249,9 @@
     overflow: hidden;
   }
   /* Width scheme:
-     #/Copies  (very narrow — single-digit or short number)
-     Duration  (narrow — e.g. "1374ms")
-     Callsite  (medium — allow ~25% for path, with word-break)
+     #/Copies  (very narrow - single-digit or short number)
+     Duration  (narrow - e.g. "1374ms")
+     Callsite  (medium - allow ~25% for path, with word-break)
      Query     (takes the rest) */
   table.query-table col.col-index     { width: 44px; }
   table.query-table col.col-copies    { width: 64px; }
@@ -435,27 +328,10 @@
   .finding.severity-medium { border-left-color: #d97706; background: #fffbeb; }
   .finding.severity-low    { border-left-color: #2563eb; background: #eff6ff; }
 
-  .finding-header {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 4px;
-  }
-  .finding-header .finding-impact { justify-self: end; white-space: nowrap; }
-  .severity-badge {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 12px;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .severity-badge.high   { background: #dc2626; color: white; }
-  .severity-badge.medium { background: #d97706; color: white; }
-  .severity-badge.low    { background: #2563eb; color: white; }
-  /* v0.7.x: emphasise timing values that cross the 1s threshold —
+  /* v0.7.x Phase H: `.finding-header` + `.severity-badge` were
+     replaced by `.finding-top` + `.severity-pill` in the Phase D
+     finding-card rewrite. Orphaned rules removed. */
+  /* v0.7.x: emphasise timing values that cross the 1s threshold -
      fmt_ms emits this span around the seconds-formatted output. The
      amber + bold draws the eye to slow rows without screaming. Same
      palette as the existing severity-medium / warning indicators. */
@@ -483,7 +359,7 @@
   }
   .finding-detail .label:first-child { margin-top: 0; }
 
-  /* v0.6.0 — AI-suggested fix block (on-demand; rendered when present) */
+  /* v0.6.0 - AI-suggested fix block (on-demand; rendered when present) */
   .ai-fix {
     margin-top: 8px;
     padding: 8px 10px;
@@ -542,13 +418,19 @@
   }
 
   /* ---------- Footer ---------- */
+  /* FOOTER - Phase G polish. Quiet bottom-rule, design-token palette. */
   .footer {
+    margin-top: 48px; padding-top: 22px;
+    border-top: 1px solid var(--rule);
     text-align: center;
-    color: #6b7280;
-    font-size: 0.85rem;
-    margin: 32px 0 16px 0;
-    padding-top: 16px;
-    border-top: 1px solid #e5e7eb;
+    font-size: 11px; color: var(--ink-mute);
+    line-height: 1.7;
+  }
+  .footer p { margin: 4px 0; }
+  .footer .warn-line { color: var(--accent); font-weight: 600; margin-top: 6px; }
+  .footer code {
+    font-family: var(--mono); font-size: 10.5px;
+    color: var(--ink-soft);
   }
 
   .empty {
@@ -566,7 +448,7 @@
     /* v0.5.2 round 4: force-expand every collapsible section for PDF
        / print output. Without this, wkhtmltopdf (and Chrome's print
        engine) only render disclosure-element content when the
-       element has the open attribute — so the Observations subsection
+       element has the open attribute - so the Observations subsection
        and any collapsed app buckets disappear entirely from the
        exported PDF. The print-media
        override keeps parity between what the reader sees in the
@@ -585,15 +467,1038 @@
   }
 
   @media (max-width: 700px) {
-    .stats { grid-template-columns: repeat(2, 1fr); }
     .container { padding: 12px; }
   }
 
-  /* v0.4.0 — donut: SVG for print, conic-gradient for screen */
-  .svg-donut { display: none; }
+  /* v0.7.x Phase H: the v0.4.0 donut chart (`.conic-donut` /
+     `.svg-donut`) was folded into the Total-time stat card before
+     v0.7.x and its rules survived as orphans - removed. */
+
+  /* ===================================================================
+     v0.7.x report redesign - Phase A foundation
+     -----------------------------------------------------------------
+     Design tokens + new prelude components (masthead / KPI strip /
+     nav pills). The existing .container / .section / .finding / etc.
+     rules above stay in place for now; later phases migrate the rest
+     of the template onto this token system. No remote fonts - the
+     --display / --sans / --mono stacks fall through to system fonts
+     to preserve the self-contained-HTML acceptance test.
+     =================================================================== */
+
+  :root {
+    --bg: #fafaf7;
+    --bg-paper: #ffffff;
+    --bg-tint: #f5f3ec;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-mute: #8a8580;
+    --rule: #e8e3d8;
+    --rule-strong: #d8d2c2;
+    --accent: #c5392b;
+    --accent-soft: #fde8e5;
+    --warn: #b8761e;
+    --warn-soft: #fcf2dd;
+    --ok: #2d6a3c;
+    --ok-soft: #e3f0e6;
+    --info: #2f5d8a;
+    --info-soft: #e3edf6;
+    --hot: #fef3c7;
+    --hot-strong: #fbbf24;
+    --display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  /* TL;DR HERO - replaces the "At a glance" exec-summary card */
+  .tldr {
+    background: var(--ink); color: var(--bg);
+    padding: 30px 34px; border-radius: 4px; margin-bottom: 28px;
+    position: relative; overflow: hidden;
+  }
+  .tldr::before {
+    content: ''; position: absolute; top: 0; right: 0;
+    width: 240px; height: 100%;
+    background: radial-gradient(circle at 80% 50%, rgba(197,57,43,0.25), transparent 70%);
+    pointer-events: none;
+  }
+  .tldr-label {
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: rgba(255,255,255,0.55); font-weight: 600; margin-bottom: 12px;
+  }
+  .tldr-headline {
+    font-family: var(--display); font-size: 26px; line-height: 1.3;
+    font-weight: 500; margin: 0 0 14px; letter-spacing: -0.005em;
+    max-width: 880px; color: var(--bg);
+  }
+  .tldr-headline .hot { color: #ff8a7d; font-style: italic; }
+  .tldr-headline code {
+    font-family: var(--mono); font-size: 0.85em;
+    background: rgba(255,255,255,0.08); padding: 1px 6px;
+    border-radius: 2px; color: var(--bg);
+  }
+  .tldr-sub {
+    font-size: 13px; color: rgba(255,255,255,0.75);
+    max-width: 720px; margin: 0; line-height: 1.6;
+  }
+  .tldr-sub code {
+    font-family: var(--mono); font-size: 0.92em;
+    background: rgba(255,255,255,0.08); padding: 1px 5px;
+    border-radius: 2px; color: rgba(255,255,255,0.85);
+  }
+
+  /* MASTHEAD - replaces .report-header */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 20px;
+    margin-bottom: 32px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+  }
+  .masthead-eyebrow {
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink-mute); margin-bottom: 6px; font-weight: 600;
+  }
+  .masthead h1 {
+    font-family: var(--display); font-weight: 600; font-size: 44px;
+    line-height: 1.05; letter-spacing: -0.02em; margin: 0;
+    border-bottom: none; padding-bottom: 0;
+    color: var(--ink);
+  }
+  .masthead h1 em { font-style: italic; font-weight: 400; color: var(--accent); }
+  .masthead-meta {
+    text-align: right; font-size: 12px; color: var(--ink-soft); line-height: 1.7;
+  }
+  .masthead-meta b { color: var(--ink); font-weight: 600; }
+  .masthead-meta .badge {
+    display: inline-block; padding: 2px 8px; background: var(--ink);
+    color: var(--bg); font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.05em; border-radius: 2px; margin-bottom: 4px;
+  }
+
+  /* KPI strip - replaces .stats / .stat */
+  .kpis {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
+    margin-bottom: 24px;
+    border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+    background: var(--bg-paper);
+  }
+  .kpi { padding: 18px 22px; border-right: 1px solid var(--rule); position: relative; }
+  .kpi:last-child { border-right: none; }
+  .kpi-label {
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 600; margin-bottom: 8px;
+  }
+  .kpi-value {
+    font-family: var(--display); font-size: 34px; line-height: 1;
+    font-weight: 600; letter-spacing: -0.02em; color: var(--ink);
+  }
+  .kpi-value.danger { color: var(--accent); }
+  .kpi-unit { font-size: 14px; color: var(--ink-mute); font-weight: 400; margin-left: 2px; }
+  .kpi-sub { font-size: 12px; color: var(--ink-soft); margin-top: 6px; line-height: 1.45; }
+
+  /* NAV PILLS - replaces the Jump-to .section.small block. Phase K.2:
+     sticky-top so the jump-to nav stays accessible when the reader
+     scrolls into deep tables. */
+  nav.nav-pills {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
+    padding: 10px 14px; background: var(--bg-paper);
+    border: 1px solid var(--rule); border-radius: 4px;
+    position: sticky; top: 0; z-index: 50;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  nav.nav-pills .jump-label {
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 700; align-self: center;
+    margin-right: 8px;
+  }
+  nav.nav-pills a {
+    padding: 4px 10px; font-size: 11.5px; letter-spacing: 0.04em;
+    text-decoration: none; color: var(--ink-soft); border-radius: 3px;
+    transition: background 0.15s, color 0.15s; font-weight: 500;
+  }
+  nav.nav-pills a:hover { background: var(--ink); color: var(--bg); }
+  @media print { nav.nav-pills { position: static; box-shadow: none; } }
+
+  /* Responsive - masthead stacks, KPI strip becomes 2x2 */
+  @media (max-width: 760px) {
+    .masthead { grid-template-columns: 1fr; }
+    .masthead-meta { text-align: left; }
+    .masthead h1 { font-size: 32px; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .kpi:nth-child(2) { border-right: none; }
+    .kpi:nth-child(-n+2) { border-bottom: 1px solid var(--rule); }
+  }
+
+  /* SECTION HEAD - used by new redesign sections (action plan,
+     waterfall, …). Pre-existing collapsible-section markup
+     ("details.section") keeps its styling above; this is for the
+     editorial-style `section[id]` + `div.section-head` pattern
+     introduced by the Phase C+ redesign. */
+  section[id] { margin-bottom: 48px; scroll-margin-top: 20px; }
+  .section-head {
+    display: flex; align-items: baseline; gap: 16px;
+    margin-bottom: 18px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .section-head h2 {
+    font-family: var(--display); font-size: 26px; font-weight: 600;
+    letter-spacing: -0.01em; margin: 0; flex: 1;
+    border-bottom: none; padding-bottom: 0; color: var(--ink);
+  }
+  .section-head .section-tag {
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 600;
+  }
+  .section-intro {
+    font-size: 14px; color: var(--ink-soft); max-width: 720px;
+    margin: 0 0 20px; line-height: 1.65;
+  }
+
+  /* ACTION PLAN - Phase C */
+  .action-plan {
+    background: linear-gradient(180deg, var(--bg-paper) 0%, var(--bg-tint) 100%);
+    border: 1px solid var(--rule); border-radius: 6px;
+    padding: 22px 26px;
+  }
+  .action-plan h3 {
+    font-family: var(--display); font-size: 22px; font-weight: 600;
+    margin: 0 0 4px; letter-spacing: -0.01em;
+    border-bottom: none; padding-bottom: 0;
+  }
+  .action-plan p.lead {
+    font-size: 13px; color: var(--ink-soft); margin: 0 0 18px;
+  }
+  .action-step {
+    display: grid; grid-template-columns: 36px 1fr auto;
+    gap: 14px; padding: 14px 0;
+    border-top: 1px solid var(--rule); align-items: start;
+  }
+  .action-step:first-of-type { border-top: 1px solid var(--ink); }
+  .action-step .num {
+    font-family: var(--display); font-size: 28px; font-weight: 600;
+    font-style: italic; color: var(--accent); line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .action-step .title {
+    font-family: var(--display); font-size: 17px; font-weight: 600;
+    margin: 0 0 4px; line-height: 1.3;
+  }
+  .action-step .desc {
+    font-size: 13px; color: var(--ink-soft); margin: 0; line-height: 1.55;
+  }
+  .action-step .desc code, .action-step .callsite code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--bg-paper); padding: 1px 5px; border-radius: 2px;
+    color: var(--ink);
+  }
+  .action-step .callsite {
+    font-size: 11.5px; color: var(--ink-mute); margin-top: 4px;
+  }
+  .action-step .gain { text-align: right; white-space: nowrap; }
+  .action-step .gain .num-big {
+    font-family: var(--display); font-size: 20px; font-weight: 600;
+    color: var(--ok); display: block; line-height: 1;
+  }
+  .action-step .gain .gain-label {
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-mute); margin-top: 4px; font-weight: 600;
+    display: block;
+  }
+
+  /* WATERFALL - Phase C */
+  .waterfall {
+    background: var(--bg-paper); border: 1px solid var(--rule);
+    border-radius: 6px; padding: 18px 20px;
+  }
+  .waterfall-row {
+    display: grid; grid-template-columns: 240px 1fr 88px;
+    gap: 12px; align-items: center; padding: 6px 0; font-size: 12.5px;
+  }
+  .waterfall-row + .waterfall-row { border-top: 1px solid var(--rule); }
+  .waterfall-name {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .waterfall-track {
+    height: 18px; background: var(--bg-tint);
+    border-radius: 3px; position: relative; overflow: hidden;
+  }
+  .waterfall-bar {
+    position: absolute; height: 100%; background: var(--info);
+    border-radius: 3px; left: 0; top: 0;
+  }
+  .waterfall-bar.hot { background: var(--accent); }
+  .waterfall-bar.bg  { background: var(--warn); }
+  .waterfall-time {
+    font-family: var(--mono); font-size: 12px; text-align: right;
+    color: var(--ink-soft); font-variant-numeric: tabular-nums;
+  }
+  .waterfall-time.hot { color: var(--accent); font-weight: 600; }
+
+  /* Responsive - Phase C: stack the waterfall + action plan rows. */
+  @media (max-width: 760px) {
+    .waterfall-row { grid-template-columns: 1fr; gap: 4px; }
+    .action-step { grid-template-columns: 30px 1fr; }
+    .action-step .gain {
+      grid-column: 1 / -1; text-align: left; margin-top: 4px;
+    }
+  }
+
+  /* FINDING CARD - Phase D rewrite.
+     Editorial card: paper white background, 1px rule border, 6px
+     radius. Severity colour moves from a left rail to a small pill
+     in the top-left. Title is serif 18px. Impact is large red serif
+     pushed to the right. Body holds the smoking-gun + call chain +
+     fix box. The old `.finding-header` / `.severity-badge` /
+     `.smoking-gun` / `.ai-fix` rules above are orphaned but left in
+     place - clean up in a later phase. */
+  .finding {
+    background: var(--bg-paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    margin-bottom: 18px;
+    overflow: hidden;
+    border-left: 1px solid var(--rule);  /* override the old severity-coloured left rail */
+  }
+  .finding.severity-high,
+  .finding.severity-medium,
+  .finding.severity-low {
+    background: var(--bg-paper);
+    border-left: 1px solid var(--rule);
+  }
+  .finding-top {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 16px;
+    align-items: start;
+  }
+  .severity-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 700;
+    border-radius: 2px; height: fit-content;
+  }
+  .severity-pill.high { background: var(--accent-soft); color: var(--accent); }
+  .severity-pill.medium { background: var(--warn-soft); color: var(--warn); }
+  .severity-pill.low { background: var(--info-soft); color: var(--info); }
+  .severity-pill::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+  }
+  h3.finding-title, .finding-top .finding-title {
+    font-family: var(--display); font-size: 18px; font-weight: 600;
+    line-height: 1.35; color: var(--ink); margin: 0;
+    letter-spacing: -0.005em;
+    border-bottom: none; padding-bottom: 0;
+  }
+  .finding-meta {
+    font-size: 12px; color: var(--ink-mute);
+    margin-top: 4px; font-family: var(--mono);
+    word-break: break-all;
+  }
+  .finding-meta a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--rule-strong); }
+  .finding-meta a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  .finding-top .finding-impact {
+    text-align: right; white-space: nowrap;
+  }
+  .finding-top .finding-impact .big {
+    font-family: var(--display); font-size: 22px; font-weight: 600;
+    color: var(--accent); letter-spacing: -0.01em;
+    display: block; line-height: 1;
+  }
+  .finding-top .finding-impact .small {
+    font-size: 11px; color: var(--ink-mute); margin-top: 4px;
+    font-family: var(--sans);
+  }
+  .finding-body { padding: 16px 20px; }
+
+  /* SMOKING block - yellow-tinted left-rail card with the dark
+     code-block inside. Replaces the old `.smoking-gun` panel. */
+  .smoking {
+    background: var(--bg-tint);
+    border-left: 3px solid var(--accent);
+    padding: 12px 14px; margin: 0 0 14px;
+    border-radius: 0 4px 4px 0;
+  }
+  .smoking-label {
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 600; margin-bottom: 8px;
+  }
+  .code-block {
+    font-family: var(--mono); font-size: 12.5px;
+    background: #f6f8fa; color: #1f2328;
+    padding: 12px 16px; border-radius: 4px;
+    overflow-x: auto; line-height: 1.6;
+    margin: 0;
+    white-space: pre;
+    border: 1px solid #d0d7de;
+  }
+  .code-block .line { display: block; margin: 0 -16px; padding: 0 16px; }
+  .code-block .ln {
+    color: #8c959f; margin-right: 14px; user-select: none;
+    display: inline-block; width: 32px; text-align: right;
+  }
+  .code-block .hot-line {
+    display: block;
+    background: #fff8c5;
+    margin: 0 -16px; padding: 0 16px;
+  }
+  .code-block .added { color: #1a7f37; }
+  .code-block .removed { color: #cf222e; text-decoration: line-through; opacity: 0.8; }
+
+  /* GitHub Light token palette for Pygments-highlighted Python snippets.
+     Pygments classes (with our ``tok-`` prefix) - applied to both the
+     smoking-gun .code-block and the Line-Level Drilldown .line-prof
+     table's source column. The hot-line yellow wrapper sits OUTSIDE
+     these per-token spans so the highlight composes correctly. */
+  .code-block .tok-k, .code-block .tok-kn, .code-block .tok-kc,
+  .code-block .tok-kd, .code-block .tok-kr,
+  .code-block .tok-ow,
+  .line-prof .tok-k, .line-prof .tok-kn, .line-prof .tok-kc,
+  .line-prof .tok-kd, .line-prof .tok-kr,
+  .line-prof .tok-ow                       { color: #cf222e; }
+  .code-block .tok-bp,
+  .line-prof .tok-bp                       { color: #cf222e; font-style: italic; }
+  .code-block .tok-nb,
+  .line-prof .tok-nb                       { color: #0550ae; }
+  .code-block .tok-nf, .code-block .tok-nd, .code-block .tok-fm,
+  .line-prof .tok-nf, .line-prof .tok-nd, .line-prof .tok-fm   { color: #8250df; }
+  .code-block .tok-nc,
+  .line-prof .tok-nc                       { color: #953800; }
+  .code-block .tok-n,
+  .line-prof .tok-n                        { color: #1f2328; }
+  .code-block .tok-s, .code-block .tok-s1, .code-block .tok-s2,
+  .code-block .tok-sb,
+  .line-prof .tok-s, .line-prof .tok-s1, .line-prof .tok-s2,
+  .line-prof .tok-sb                       { color: #0a3069; }
+  .code-block .tok-sa,
+  .line-prof .tok-sa                       { color: #cf222e; }
+  .code-block .tok-se,
+  .line-prof .tok-se                       { color: #0550ae; }
+  .code-block .tok-si,
+  .line-prof .tok-si                       { color: #1f2328; }
+  .code-block .tok-m, .code-block .tok-mi, .code-block .tok-mf,
+  .code-block .tok-mh, .code-block .tok-mo,
+  .line-prof .tok-m, .line-prof .tok-mi, .line-prof .tok-mf,
+  .line-prof .tok-mh, .line-prof .tok-mo   { color: #0550ae; }
+  .code-block .tok-c, .code-block .tok-c1, .code-block .tok-ch,
+  .code-block .tok-cm,
+  .line-prof .tok-c, .line-prof .tok-c1, .line-prof .tok-ch,
+  .line-prof .tok-cm                       { color: #6e7781; font-style: italic; }
+  .code-block .tok-o, .code-block .tok-p,
+  .line-prof .tok-o, .line-prof .tok-p     { color: #1f2328; }
+
+  /* CHAIN - call-chain pill track. Replaces the dashed-border-top
+     Phase 2 / drill-down callouts inside the old smoking-gun panel. */
+  .chain {
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed var(--rule);
+  }
+  .chain-label {
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 600; margin-bottom: 8px;
+  }
+  .chain-track {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .chain-track .step {
+    padding: 3px 8px; background: var(--bg-paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px; color: var(--ink-soft);
+  }
+  .chain-track .step.terminal {
+    background: var(--accent); color: white;
+    border-color: var(--accent);
+  }
+  .chain-track .arrow { color: var(--ink-mute); font-size: 11px; }
+  .chain-foot {
+    font-size: 11px; color: var(--ink-mute); margin-top: 6px;
+    font-family: var(--sans);
+  }
+
+  /* PHASE 2 hottest-line callout - when present and the finding
+     isn't itself a Hot Line. Sits inside the smoking-gun block. */
+  .phase2-line {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px dashed var(--rule);
+    font-size: 12px; color: var(--ink-soft);
+  }
+  .phase2-line strong { color: var(--info); font-weight: 600; }
+  .phase2-line code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--hot); color: var(--ink);
+    padding: 1px 6px; border-radius: 2px; margin-left: 6px;
+  }
+
+  /* CALL-TREE - Phase K.5: nested collapsible groups per stack
+     frame. Indented children, hot-frame highlight when a node consumes
+     >=50% of its parent. Pure HTML + CSS, no JS. */
+  .call-tree {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg-paper);
+    border: 1px solid var(--rule);
+    border-radius: 4px; padding: 4px 0;
+  }
+  details.call-tree-node {
+    border: none; margin: 0; padding: 0;
+  }
+  details.call-tree-node > summary {
+    cursor: pointer; padding: 4px 12px 4px 28px;
+    list-style: none; user-select: none;
+    display: flex; gap: 14px; align-items: baseline;
+    position: relative;
+    border-radius: 0;
+    transition: background 0.1s;
+  }
+  details.call-tree-node > summary:hover { background: var(--bg-tint); }
+  details.call-tree-node > summary::-webkit-details-marker { display: none; }
+  details.call-tree-node > summary::before {
+    content: "\25B8";
+    position: absolute; left: 10px; top: 4px;
+    color: var(--ink-mute); font-size: 10px;
+    transition: transform 0.1s;
+  }
+  details.call-tree-node[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  details.call-tree-node .frame-name {
+    color: var(--ink); font-weight: 600;
+    flex: 0 0 auto;
+  }
+  details.call-tree-node .frame-meta {
+    color: var(--ink-mute); font-size: 11px;
+    font-family: var(--mono); flex: 1 1 auto;
+    text-align: left;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  details.call-tree-node.call-tree-hot > summary {
+    background: var(--hot);
+  }
+  details.call-tree-node.call-tree-hot > summary:hover {
+    background: var(--hot-strong);
+  }
+  details.call-tree-node.call-tree-hot > summary .frame-name {
+    color: var(--accent);
+  }
+  .call-tree-children {
+    padding-left: 16px;
+    border-left: 1px dashed var(--rule);
+    margin-left: 18px;
+  }
+  .call-tree-truncated {
+    padding: 4px 12px;
+    color: var(--ink-mute); font-size: 11px;
+    font-style: italic;
+  }
   @media print {
-    .conic-donut { display: none !important; }
-    .svg-donut { display: block !important; }
+    details.call-tree-node:not([open]) > summary::after {
+      content: " (collapsed)";
+      font-size: 9px; color: var(--ink-mute);
+    }
+  }
+
+  /* FIX-BOX - AI-suggested fix. Replaces the old `.ai-fix` panel. */
+  .fix-box {
+    border: 1px solid var(--rule); border-radius: 4px;
+    margin-top: 14px; overflow: hidden;
+  }
+  .fix-head {
+    background: var(--bg-tint); padding: 8px 14px;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-weight: 600; color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .fix-head .ai-tag {
+    background: var(--ink); color: var(--bg);
+    padding: 2px 7px; border-radius: 2px;
+    font-size: 9px; letter-spacing: 0.08em;
+    font-family: var(--mono);
+  }
+  .fix-body { padding: 14px 16px; font-size: 13.5px; line-height: 1.65; color: var(--ink); }
+  .fix-body p { margin: 0 0 10px; }
+  .fix-body p:last-child { margin-bottom: 0; }
+  .fix-body strong { color: var(--ink); }
+  .fix-body code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg-tint); padding: 1px 5px; border-radius: 2px;
+  }
+  .fix-body pre {
+    background: #ffffff; border: 1px solid var(--rule);
+    border-radius: 4px; padding: 8px 10px;
+    overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  .fix-body pre.dh { padding: 6px 0; border: none; background: var(--bg-tint); }
+  .fix-body pre.dh .dh-line {
+    display: block; padding: 0 10px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .fix-body pre.dh .dh-add { background: #e6ffec; color: #116329; }
+  .fix-body pre.dh .dh-del { background: #ffebe9; color: #a40e26; }
+  .fix-body pre.dh .dh-meta { background: #f2effd; color: #6639ba; }
+  .fix-caution {
+    font-size: 12px; color: var(--warn);
+    background: var(--warn-soft);
+    border: 1px solid var(--rule);
+    border-radius: 4px; padding: 6px 10px;
+    margin: 8px 14px 0; display: block;
+  }
+  .fix-foot {
+    font-size: 11px; color: var(--ink-mute);
+    padding: 8px 14px; border-top: 1px dashed var(--rule);
+    background: var(--bg-paper);
+  }
+
+  /* SUB-FINDINGS - root-cause grouped peers inside a primary card.
+     Indented child list; thin left-rule; smaller pills. */
+  .sub-findings {
+    margin: 14px 0 0 0; padding: 12px 0 0 14px;
+    border-top: 1px dashed var(--rule);
+    border-left: 2px solid var(--rule);
+    margin-left: 0;
+  }
+  .sub-findings-label {
+    font-size: 11px; color: var(--ink-mute);
+    margin: 0 0 8px; line-height: 1.5;
+  }
+  .sub-finding-row {
+    padding: 6px 0; font-size: 12.5px;
+  }
+  .sub-finding-row + .sub-finding-row {
+    border-top: 1px solid var(--rule);
+  }
+  .sub-finding-row summary {
+    cursor: pointer; display: flex; gap: 8px;
+    align-items: center; list-style: none;
+  }
+  .sub-finding-row summary::-webkit-details-marker { display: none; }
+  .sub-finding-row .sub-title {
+    flex: 1; font-weight: 500; color: var(--ink);
+  }
+  .sub-finding-row .sub-impact {
+    font-size: 11px; color: var(--ink-mute);
+    font-family: var(--mono);
+  }
+  .sub-finding-row .sub-desc {
+    margin-top: 6px; color: var(--ink-soft);
+    white-space: pre-wrap; font-size: 12.5px;
+  }
+
+  /* DATA TABLES - Phase E.
+     Editorial table style applied to per-action breakdown, background
+     jobs, hot frames, top queries, and XHR timing. The existing
+     `.tbl-clip` overflow class keeps long URLs/paths wrapping inside
+     cells; `.data` adds typography, dividers, and the inline-bar +
+     row-finding patterns. */
+  table.data {
+    width: 100%; border-collapse: collapse;
+    background: var(--bg-paper);
+    border: 1px solid var(--rule); border-radius: 6px;
+    overflow: hidden; font-size: 13px;
+    margin: 12px 0;
+  }
+  table.data thead th {
+    background: var(--bg-tint);
+    padding: 10px 14px; text-align: left;
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    font-weight: 700; color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  table.data thead th.num { text-align: right; }
+  table.data tbody td {
+    padding: 12px 14px; border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  table.data tbody tr:last-child td { border-bottom: none; }
+  table.data tbody tr:hover { background: var(--bg-tint); }
+  table.data td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+    font-family: var(--mono); font-size: 12.5px;
+  }
+  table.data .action-name {
+    font-weight: 600; color: var(--ink);
+    font-family: var(--mono); font-size: 12.5px;
+    word-break: break-all;
+  }
+  table.data .action-meta {
+    font-size: 11px; color: var(--ink-mute);
+    margin-top: 3px; font-family: var(--mono);
+    word-break: break-all;
+  }
+  table.data .action-meta a {
+    color: inherit; text-decoration: none;
+    border-bottom: 1px dotted var(--rule-strong);
+  }
+  table.data .action-meta a:hover {
+    color: var(--accent); border-bottom-color: var(--accent);
+  }
+  table.data .type-tag {
+    display: inline-block; padding: 2px 7px;
+    border-radius: 2px;
+    font-size: 10px; letter-spacing: 0.05em; font-weight: 600;
+    background: var(--info-soft); color: var(--info);
+    text-transform: uppercase;
+    font-family: var(--sans);
+  }
+  table.data .type-tag.bg {
+    background: var(--warn-soft); color: var(--warn);
+  }
+
+  /* BAR CELL - inline duration bar in the Duration column. */
+  .bar-cell { position: relative; min-width: 110px; }
+  .bar-cell .bar-track {
+    height: 4px; background: var(--rule); border-radius: 2px;
+    margin-top: 4px; overflow: hidden;
+  }
+  .bar-cell .bar-fill {
+    height: 100%; background: var(--accent); border-radius: 2px;
+  }
+  .bar-cell .bar-fill.ok { background: var(--ok); }
+  .bar-cell .bar-fill.warn { background: var(--warn); }
+  .hot-value { color: var(--accent); font-weight: 600; }
+
+  /* ROW-FINDING - colspan sub-row surfaced under an action that
+     has High-severity linked findings. Red-tinted background, red
+     text, prominent. */
+  .row-finding {
+    background: var(--accent-soft) !important;
+    padding: 12px 16px !important;
+    font-size: 12px; color: var(--accent);
+  }
+  .row-finding strong { font-weight: 600; }
+
+  /* HOT-FRAMES - user-code rows get a yellow-tinted background to
+     stand out from the framework rows the developer can't patch. */
+  .hot-frames-table tr.is-hot td {
+    background: rgba(254, 243, 199, 0.4);
+  }
+
+  /* EMPTY-STATE - green "✓ Clear" card shown when slowest-queries
+     (or any future section) has no rows. */
+  .empty-state {
+    background: var(--bg-paper);
+    border: 1px dashed var(--rule-strong);
+    border-radius: 6px;
+    padding: 32px 28px;
+    text-align: center;
+    color: var(--ink-soft);
+    margin: 12px 0;
+  }
+  .empty-state .empty-icon {
+    font-family: var(--display); font-size: 32px; font-style: italic;
+    color: var(--ok); margin-bottom: 8px; font-weight: 500;
+    display: block;
+  }
+  .empty-state p {
+    margin: 0 auto; max-width: 540px;
+    font-size: 14px; line-height: 1.6;
+  }
+
+  /* PHASE 2 PANEL - Phase F.
+     Editorial layout for the line-profiler drilldown: bordered run
+     cards, bordered function blocks with progressive indent for
+     auto-expanded descendants, compact line-prof tables with a tint
+     on hot rows. Replaces the old inline-styled markup the builder
+     used to emit. */
+  .phase2-run {
+    margin: 16px 0; padding: 14px 16px;
+    background: var(--bg-paper);
+    border: 1px solid var(--rule); border-radius: 6px;
+  }
+  .phase2-run + .phase2-run { margin-top: 12px; }
+  .phase2-run-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 8px; gap: 12px;
+  }
+  .phase2-run-head strong {
+    font-family: var(--display); font-size: 16px; font-weight: 600;
+  }
+  .phase2-run-head .meta {
+    font-size: 12px; color: var(--ink-soft);
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+  }
+  .phase2-run-head .status-badge {
+    display: inline-block; padding: 1px 7px; border-radius: 2px;
+    font-size: 10px; letter-spacing: 0.05em; font-weight: 600;
+    text-transform: uppercase; margin-right: 6px;
+  }
+  .phase2-run-head .status-Ready { background: var(--ok-soft); color: var(--ok); }
+  .phase2-run-head .status-Recording { background: var(--info-soft); color: var(--info); }
+  .phase2-run-head .status-Analyzing { background: var(--warn-soft); color: var(--warn); }
+  .phase2-run-head .status-Failed { background: var(--accent-soft); color: var(--accent); }
+  .picks {
+    font-size: 12px; color: var(--ink-mute);
+    margin-bottom: 8px; font-family: var(--mono);
+    word-break: break-all;
+  }
+  .picks em { font-style: italic; }
+  .phase2-func {
+    margin: 12px 0; padding: 10px 12px;
+    border: 1px solid var(--rule); border-radius: 4px;
+    background: var(--bg-paper);
+  }
+  .phase2-func.indent-1 { margin-left: 24px; }
+  .phase2-func.indent-2 { margin-left: 48px; }
+  .phase2-func.indent-3 { margin-left: 72px; }
+  .phase2-func .fn-name {
+    font-family: var(--mono); font-weight: 600; font-size: 13px;
+    color: var(--ink); margin-bottom: 4px; word-break: break-all;
+  }
+  .phase2-func .fn-name .arrow {
+    color: var(--ink-mute); margin-right: 6px;
+  }
+  .phase2-func .fn-path {
+    color: var(--ink-mute); font-size: 11px;
+    margin-bottom: 8px; font-family: var(--mono);
+    word-break: break-all;
+  }
+  table.line-prof {
+    width: 100%; border-collapse: collapse;
+    font-family: var(--mono); font-size: 12px;
+  }
+  table.line-prof thead th {
+    background: var(--bg-tint);
+    padding: 4px 8px; text-align: right;
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-weight: 700; color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--sans); white-space: nowrap;
+  }
+  table.line-prof thead th:last-child { text-align: left; }
+  table.line-prof tbody td {
+    padding: 2px 8px; border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    font-variant-numeric: tabular-nums;
+  }
+  table.line-prof tbody tr:last-child td { border-bottom: none; }
+  table.line-prof tbody td.ln {
+    color: var(--ink-mute); text-align: right;
+    user-select: none; width: 1%; white-space: nowrap;
+  }
+  table.line-prof tbody td.num { text-align: right; }
+  table.line-prof tbody td.src code {
+    white-space: pre; font-family: var(--mono); font-size: 12px;
+  }
+  table.line-prof tbody tr.hot {
+    background: var(--hot);
+  }
+  table.line-prof tbody tr.hot td.num { color: var(--accent); font-weight: 600; }
+  table.line-prof tbody tr.added td { background: rgba(45, 106, 60, 0.12); }
+  table.line-prof tbody tr.removed td { background: rgba(197, 57, 43, 0.12); }
+
+  /* DOC-EVENT LIFECYCLE - Phase F. */
+  .doctype-block {
+    background: var(--bg-paper);
+    border: 1px solid var(--rule); border-radius: 6px;
+    padding: 16px 20px; margin-bottom: 14px;
+  }
+  .doctype-block .dt-head {
+    font-family: var(--display); font-weight: 600; font-size: 17px;
+    color: var(--ink); margin-bottom: 4px;
+  }
+  .doctype-block .dt-meta {
+    font-size: 12px; color: var(--ink-mute);
+    font-weight: 400; margin-left: 6px;
+  }
+  .doctype-block .event-section {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px dashed var(--rule);
+  }
+  .doctype-block .event-name {
+    font-family: var(--display); font-size: 13px; font-weight: 600;
+    color: var(--ink-soft);
+  }
+  .doctype-block .event-time {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--ink-mute); margin-left: 6px;
+  }
+  .doctype-block .method-row {
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 12px; padding: 6px 0 6px 14px;
+  }
+  .doctype-block .method-name {
+    font-family: var(--mono); font-weight: 500; font-size: 12.5px;
+    color: var(--ink); word-break: break-all;
+  }
+  .doctype-block .method-name a {
+    color: inherit; text-decoration: none;
+    border-bottom: 1px dotted var(--rule-strong);
+  }
+  .doctype-block .method-meta {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--ink-mute); margin-left: 6px;
+  }
+  .doctype-block .method-tag {
+    display: inline-block; padding: 1px 6px;
+    background: var(--info-soft); color: var(--info);
+    font-size: 10px; letter-spacing: 0.05em;
+    border-radius: 2px; font-family: var(--sans);
+    margin-left: 6px; font-weight: 600;
+  }
+  .doctype-block .method-time {
+    font-family: var(--mono); font-size: 12.5px;
+    color: var(--accent); font-weight: 600; white-space: nowrap;
+  }
+
+  /* WEB VITALS - Phase F. Per-cell rating classes. */
+  .vitals-table .vital-good { color: var(--ok); font-weight: 600; }
+  .vitals-table .vital-meh  { color: var(--warn); font-weight: 600; }
+  .vitals-table .vital-poor { color: var(--accent); font-weight: 600; }
+  .vitals-table .vital-none { color: var(--ink-mute); }
+
+  /* HOW-TO-READ APPENDIX - Phase F. Italic-serif heading + + / -
+     chevron + muted bullet list. */
+  details.how-to {
+    background: var(--bg-tint);
+    border: 1px solid var(--rule); border-radius: 6px;
+    padding: 14px 20px; margin-top: 48px;
+  }
+  details.how-to summary {
+    font-family: var(--display); font-size: 17px; font-weight: 600;
+    cursor: pointer; padding: 4px 0; outline: none;
+    list-style: none; display: flex; align-items: center; gap: 8px;
+    color: var(--ink);
+  }
+  details.how-to summary::-webkit-details-marker { display: none; }
+  details.how-to summary::before {
+    content: '+'; font-family: var(--mono); color: var(--accent);
+    font-size: 18px;
+  }
+  details.how-to[open] summary::before { content: '−'; }
+  details.how-to summary h2 {
+    display: inline; font: inherit; margin: 0; padding: 0;
+    border-bottom: none; letter-spacing: 0;
+  }
+  details.how-to ul {
+    margin: 16px 0 4px 0; padding-left: 18px;
+    font-size: 13.5px; line-height: 1.75; color: var(--ink-soft);
+  }
+  details.how-to ul li { margin-bottom: 6px; }
+  details.how-to ul li strong { color: var(--ink); font-weight: 600; }
+  details.how-to ul li code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg-paper); padding: 1px 5px; border-radius: 2px;
+  }
+  details.how-to ul li em { font-style: italic; color: var(--ink-soft); }
+
+  /* RESOURCE CARDS - Phase G. Four KPIs at the top of the Server
+     Resource panel; replaces the old .stats/.stat blocks reused
+     there earlier. */
+  .resource-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 14px; margin-bottom: 20px;
+  }
+  .resource-card {
+    background: var(--bg-paper); border: 1px solid var(--rule);
+    border-radius: 6px; padding: 16px 18px;
+  }
+  .resource-card .rc-label {
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 600; margin-bottom: 8px;
+  }
+  .resource-card .rc-value {
+    font-family: var(--display); font-size: 26px; font-weight: 600;
+    line-height: 1; letter-spacing: -0.01em; color: var(--ink);
+  }
+  .resource-card .rc-unit {
+    font-size: 12px; color: var(--ink-mute);
+    margin-left: 2px; font-weight: 400;
+  }
+  .resource-card .rc-sub {
+    font-size: 11px; color: var(--ink-soft); margin-top: 6px;
+  }
+  @media (max-width: 760px) {
+    .resource-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* INDEX-REC CARDS - Phase I. One card per database table that has
+     an actionable recommendation (composite index, candidate columns,
+     meta-table note, framework-cols-only, or no-indexable-column).
+     Lifted out of the time-per-table data table where they used to
+     ride as colspan sub-rows. */
+  .index-recs { margin-top: 24px; }
+  .index-recs-head {
+    font-family: var(--display); font-size: 16px; font-weight: 600;
+    margin: 0 0 10px; color: var(--ink);
+    letter-spacing: -0.005em;
+  }
+  .index-rec {
+    background: var(--bg-paper); border: 1px solid var(--rule);
+    border-radius: 6px; padding: 16px 20px; margin-bottom: 12px;
+  }
+  .index-rec-head {
+    display: flex; justify-content: space-between;
+    align-items: baseline; gap: 12px; margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .index-rec-table {
+    font-family: var(--mono); font-size: 14px; font-weight: 600;
+    color: var(--ink); word-break: break-all;
+  }
+  .index-rec-stats {
+    font-size: 11px; color: var(--ink-mute);
+    font-family: var(--mono); white-space: nowrap;
+  }
+  .index-rec-stats .stat-num { color: var(--ink); font-weight: 600; }
+  .index-rec-label {
+    font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--ink-mute); font-weight: 600; margin-bottom: 6px;
+  }
+  .index-rec p {
+    margin: 6px 0; font-size: 13px; color: var(--ink-soft);
+    line-height: 1.55;
+  }
+  .index-rec p code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg-tint); padding: 1px 5px;
+    border-radius: 2px; color: var(--ink);
+  }
+  .index-rec .warn-text {
+    color: var(--warn); font-size: 12px;
+    padding: 6px 10px; background: var(--warn-soft);
+    border-radius: 3px; margin: 8px 0;
+  }
+  .index-rec .note-text {
+    font-size: 12px; color: var(--ink-mute);
+    margin-top: 6px; line-height: 1.55;
+  }
+  .index-rec .note-text code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--bg-tint); padding: 1px 5px;
+    border-radius: 2px;
+  }
+  .sql-snip {
+    font-family: var(--mono); font-size: 12px;
+    background: #1a1a1a; color: #f4ecd6;
+    padding: 10px 14px; border-radius: 4px;
+    overflow-x: auto; margin: 8px 0; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  /* Print - drop the nav pills (they're useless on paper), invert
+     the TL;DR hero so it survives on white paper. */
+  @media print {
+    nav.nav-pills { display: none; }
+    .tldr {
+      background: var(--bg-paper); color: var(--ink);
+      border: 1px solid var(--rule);
+    }
+    .tldr::before { display: none; }
+    .tldr-label { color: var(--ink-mute); }
+    .tldr-headline { color: var(--ink); }
+    .tldr-headline .hot { color: var(--accent); }
+    .tldr-sub { color: var(--ink-soft); }
+    .tldr-headline code, .tldr-sub code {
+      background: var(--bg-tint); color: var(--ink);
+    }
   }
 </style>
 </head>
@@ -604,176 +1509,148 @@
    per-app bucket loop stays readable. `show_fix_hint_label` toggles
    "How to fix" (actionable Findings) vs "Context" (Observations). #}
 {% macro finding_card(f, show_fix_hint_label="How to fix", hide_ai_fix=False, hide_source_snippet=False) %}
+  {# v0.7.x redesign Phase D: editorial finding card.
+
+     - `.finding-top` 3-zone grid: severity pill | title + meta | impact.
+     - `.finding-body` wraps the smoking-gun (dark code block) + call
+       chain (pill track, last step red) + technical details + AI fix
+       box.
+     - Old `.finding-header` / `.severity-badge` / `.smoking-gun` /
+       `.ai-fix` class names became orphaned; their CSS is still in the
+       stylesheet for backward-compat with anything that might inline
+       the macro elsewhere, but the macro itself emits the new shape.
+
+     Data shapes (f.technical_detail / f.llm_fix / f.sub_findings) are
+     unchanged from Phase B/C. #}
   <div class="finding severity-{{ f.severity | lower }}">
-    <div class="finding-header">
-      <span class="severity-badge {{ f.severity | lower }}">{{ f.severity }}</span>
-      <span class="finding-title">{{ f.title }}</span>
-      <span class="finding-impact">~{{ fmt_ms(f.estimated_impact_ms) }}{% if f.affected_count > 1 %} &middot; {{ f.affected_count }}×{% endif %}</span>
-    </div>
-    {# v0.6.0 Round 3: customer_description dropped from rendering — it
-       repeated what the title + smoking-gun block already convey, reading
-       as redundant prose. The data is still produced by analyzers and
-       persisted on the Optimus Finding row, so API consumers still have
-       access to it. #}
 
     {% set detail = f.technical_detail or {} %}
     {% set callsite = detail.callsite or {} %}
 
-    {# v0.6.0 smoking-gun block — file:line + ±1 source snippet + phase-2
-       hot-line callout (when the same function was instrumented). Hoisted
-       above the technical-detail block so the developer sees the offending
-       line directly under the title. The vscode://file link uses the
-       callsite's absolute path (``_abs``) when we have one. For SQL red-flag
-       findings (Missing Index, Full Table Scan, …) the callsite is a
-       *representative* one — the hottest user-app frame that ran the query —
-       flagged with ``is_representative``.
-
-       v0.7.x: callers that embed finding_card in narrow contexts (per-action
-       row, BG-job row) pass ``hide_source_snippet=True`` to drop the entire
-       smoking-gun block — the row itself already shows the file:line as an
-       inline anchor under the action/job label, making this styled panel
-       redundant clutter. The canonical Findings section keeps the default
-       (False) so the full smoking-gun (header + source snippet + drill-down)
-       still renders there. #}
-    {% if callsite.filename and callsite.lineno and not hide_source_snippet %}
-    {% set _link = callsite._abs or (callsite.filename if callsite.filename and callsite.filename.startswith("/") else None) %}
-    <div class="smoking-gun" style="margin: 6px 0; padding: 6px 8px; background: #f9fafb; border-left: 3px solid #2563eb; border-radius: 0 4px 4px 0;">
-      <div style="margin-bottom: 6px;">
-        {% if callsite.is_representative %}<span class="muted">Most-called from:</span> {% endif %}
-        {% if _link %}
-          <a class="callsite-link"
-             href="vscode://file{{ _link }}:{{ callsite.lineno }}"
-             title="Open in VS Code / Cursor">
-            <code>{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} <span class="muted">({{ callsite.function }})</span>{% endif %}</code>
-          </a>
-        {% else %}
-          <code>{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} <span class="muted">({{ callsite.function }})</span>{% endif %}</code>
-        {% endif %}
-        {% if callsite.is_representative %}<div class="small muted" style="margin-top: 3px;">Representative callsite &mdash; this query runs from several places; this is the hottest one.</div>{% endif %}
-        {# v0.7.x: when phase-2 re-targeted this callsite from a wrapper
-           onto its actual hot leaf, show the original wrapper as a
-           breadcrumb so the reader sees the entry point too. #}
-        {% if callsite.original_wrapper %}
-        <div class="small muted" style="margin-top: 3px;">
-          Time entered through <code>{{ callsite.original_wrapper.function }}</code>{% if callsite.original_wrapper.lineno %} at line {{ callsite.original_wrapper.lineno }}{% endif %} &mdash; pinned here to the actual hot line.
-        </div>
-        {% endif %}
-      </div>
-
-      {% if callsite.source_snippet %}
-        <table style="border-collapse: collapse; font-family: ui-monospace, Menlo, monospace; font-size: 12px; width: 100%; margin: 0;">
-          {% for sl in callsite.source_snippet %}
-          <tr{% if sl.lineno == callsite.lineno %} style="background: #fef3c7;"{% endif %}>
-            <td style="padding: 1px 8px; color: #6b7280; text-align: right; user-select: none; width: 1%; white-space: nowrap;">{{ sl.lineno }}</td>
-            <td style="padding: 1px 8px;"><code style="white-space: pre;">{{ sl.content }}</code></td>
-          </tr>
-          {% endfor %}
-        </table>
-      {% endif %}
-
-      {# Hot Line findings ARE the phase-2 hot line — re-stating
-         "Phase 2: hottest line N" inside their own card would read as
-         self-referential. Suppress for that finding type only.
-
-         For other finding types (including those whose callsite was
-         retargeted to the drill-down's deepest user-code frame via
-         ``original_wrapper``), the Phase 2 callout adds value: the
-         smoking-gun snippet now anchors on the deepest function's
-         ``def`` line, while this callout pinpoints the actually-hot
-         line *inside* that function (a different lineno). #}
-      {% if f.finding_type != "Hot Line" %}
-        {# v0.7.x: when the smoking-gun was retargeted to the call site
-           of a deeper leaf, callsite.function is the PARENT (where the
-           call line lives) but the Phase 2 hot line belongs to the
-           LEAF. Use phase2_lookup_filename / phase2_lookup_function
-           when present so the cross-link still resolves; otherwise
-           fall back to the callsite itself. #}
-        {% set _p2_file = callsite.phase2_lookup_filename or callsite.filename %}
-        {% set _p2_fn = callsite.phase2_lookup_function or callsite.function %}
-        {% set p2_hot = phase2_for_callsite(_p2_file, _p2_fn) %}
-        {% if p2_hot %}
-        <div style="margin-top: 4px; font-size: 12px; padding-top: 4px; border-top: 1px dashed #d1d5db;">
-          <strong style="color: #1d4ed8;">Phase 2:</strong>
-          hottest line {{ p2_hot.lineno }} &mdash; {{ fmt_ms(p2_hot.total_ms) }}{% if p2_hot.hits %} / {{ p2_hot.hits }} hit{{ "s" if p2_hot.hits != 1 else "" }}{% endif %}
-          {% if p2_hot.content %}
-          <code style="margin-left: 6px; padding: 1px 6px; background: #fef3c7; border-radius: 2px;">{{ p2_hot.content | trim }}</code>
+    <div class="finding-top">
+      <span class="severity-pill {{ f.severity | lower }}">{{ f.severity }}</span>
+      <div>
+        <h3 class="finding-title">{{ f.title }}</h3>
+        {% if callsite.filename and callsite.lineno %}
+        {% set _link = callsite._abs or (callsite.filename if callsite.filename and callsite.filename.startswith("/") else None) %}
+        <div class="finding-meta">
+          {% if callsite.is_representative %}<span class="muted">most-called from</span> {% endif %}
+          {% if _link %}
+            <a class="callsite-link" href="vscode://file{{ _link }}:{{ callsite.lineno }}" title="Open in VS Code / Cursor">{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}</a>
+          {% else %}
+            {{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}
           {% endif %}
         </div>
         {% endif %}
+      </div>
+      <div class="finding-impact">
+        <span class="big">~{{ fmt_ms(f.estimated_impact_ms) }}</span>
+        {% if f.affected_count and f.affected_count > 1 %}
+        <div class="small">{{ f.affected_count }}× hits</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="finding-body">
+
+    {# v0.6.0 Round 3: customer_description dropped from rendering -
+       it repeats the title + smoking-gun block, reading as redundant
+       prose. Data still persisted for API consumers. #}
+
+    {# v0.7.x redesign Phase D: smoking-gun block. The file:line
+       callsite header moved into `.finding-meta` under the title; this
+       block is now purely the dark code-block + chain pills + Phase 2
+       crosslink + target-doc breadcrumb.
+
+       Callers embedding the macro in narrow contexts (per-action row,
+       BG-job row) pass ``hide_source_snippet=True`` to drop the entire
+       block. #}
+    {% if callsite.filename and callsite.lineno and not hide_source_snippet %}
+    <div class="smoking">
+      {% if callsite.is_representative %}
+      <div class="smoking-label">most-called from this callsite - this query runs from several places; the hottest one shown.</div>
       {% endif %}
-      {# v0.7.x: Phase-2 call-chain breadcrumb. Present on a Hot Line
-         finding when auto_expand instrumented a chain of functions and
-         the deepest leaf is what's being shown. The chain reads outer →
-         leaf (last step is the leaf finding's own location), so a reader
-         can see at a glance which wrapper(s) the time entered through. #}
+      {% if callsite.original_wrapper %}
+      <div class="smoking-label">Time entered through <code>{{ callsite.original_wrapper.function }}</code>{% if callsite.original_wrapper.lineno %} at line {{ callsite.original_wrapper.lineno }}{% endif %} - pinned here to the actual hot line.</div>
+      {% endif %}
+
+      {% if callsite.source_snippet %}
+      {# Drop blank context lines (PEP-8 spacers); always keep the target.
+         The `-` whitespace-control on else / endif strips the literal `\n`
+         after each emitted </span> - those newlines render as visible
+         blank lines inside <pre> on top of the `display: block` span,
+         doubling every source line's height. #}
+      <pre class="code-block">{% for sl in callsite.source_snippet -%}
+{% if (sl.content | trim) or sl.lineno == callsite.lineno %}{% if sl.lineno == callsite.lineno %}<span class="hot-line"><span class="ln">{{ sl.lineno }}</span>{% if sl.content_html %}{{ sl.content_html | safe }}{% else %}{{ sl.content }}{% endif %}</span>
+{%- else %}<span class="line"><span class="ln">{{ sl.lineno }}</span>{% if sl.content_html %}{{ sl.content_html | safe }}{% else %}{{ sl.content }}{% endif %}</span>
+{%- endif %}{% endif %}{%- endfor %}</pre>
+      {% endif %}
+
+      {# Phase 2 hottest-line callout - when the finding isn't itself
+         a Hot Line. Demoted to a one-liner below the snippet. #}
+      {% if f.finding_type != "Hot Line" %}
+        {% set _p2_file = callsite.phase2_lookup_filename or callsite.filename %}
+        {% set _p2_fn = callsite.phase2_lookup_function or callsite.function %}
+        {% set p2_hot = line_drilldown_for_callsite(_p2_file, _p2_fn) %}
+        {% if p2_hot %}
+        <div class="phase2-line">
+          <strong>Line-Level Drilldown:</strong>
+          hottest line {{ p2_hot.lineno }} - {{ fmt_ms(p2_hot.total_ms) }}{% if p2_hot.hits %} / {{ p2_hot.hits }} hit{{ "s" if p2_hot.hits != 1 else "" }}{% endif %}
+          {% if p2_hot.content %}<code>{{ p2_hot.content | trim }}</code>{% endif %}
+        </div>
+        {% endif %}
+      {% endif %}
+
+      {# Call chain (Phase 2 instrumented chain). Pills, terminal red. #}
       {% set _phase2_chain = (f.technical_detail or {}).get("call_chain") if f.technical_detail else None %}
       {% if _phase2_chain and _phase2_chain | length > 1 %}
-      <div style="margin-top: 4px; font-size: 12px; padding-top: 4px; border-top: 1px dashed #d1d5db;">
-        <strong style="color: #1d4ed8;">Call chain:</strong>
-        <span style="color: #374151;">
-        {% for step in _phase2_chain %}<code>{{ step.qualname }}:{{ step.lineno }}</code>{% if not loop.last %} <span class="muted">&rarr;</span> {% endif %}{% endfor %}
-        </span>
-        <span class="muted">&middot; deepest line is where the cost is incurred</span>
+      <div class="chain">
+        <div class="chain-label">Call chain</div>
+        <div class="chain-track">
+          {% for step in _phase2_chain %}<span class="step{% if loop.last %} terminal{% endif %}">{{ step.qualname }}:{{ step.lineno }}</span>{% if not loop.last %}<span class="arrow">&rarr;</span>{% endif %}{% endfor %}
+        </div>
+        <div class="chain-foot">deepest line is where the cost is incurred</div>
       </div>
       {% endif %}
-      {# v0.7.x: Phase-1 fallback hint. Present on a Hot Line finding
-         when the leaf's hot line still looks like a call into code we
-         didn't instrument; points the developer at the next user-code
-         descendant from phase-1's tree so they can re-pick it. #}
+
+      {# Phase-1 fallback hint. Hot Line findings whose hot line is a
+         call into uninstrumented framework code. #}
       {% set _phase1_hint = (f.technical_detail or {}).get("phase1_hint") if f.technical_detail else None %}
       {% if _phase1_hint %}
-      <div style="margin-top: 4px; font-size: 12px; padding-top: 4px; border-top: 1px dashed #d1d5db; color: #374151;">
-        <strong style="color: #1d4ed8;">Hint:</strong>
+      <div class="phase2-line">
+        <strong>Hint:</strong>
         time flows into <code>{{ _phase1_hint.next_hot_callee }}</code>
         ({{ fmt_ms(_phase1_hint.phase1_cumulative_ms) }} in phase&nbsp;1).
-        <span class="muted">Pick this function for a line-level breakdown.</span>
+        Pick this function for a line-level breakdown.
       </div>
       {% endif %}
-      {# v0.6.x: deterministic call-tree drill-down. Walks from the finding's
-         origin function down to the deepest user-code frame. Complements the
-         AI fix block below — gives non-LLM users the same actionable trail.
 
-         v0.7.x: when the chain is empty (key present but list is []), render
-         a placeholder explaining why — the origin function calls framework
-         code directly, so there's no deeper user-code frame to descend into.
-         When the key is absent entirely (no callsite/action/tree, e.g. SQL
-         red-flag findings), render nothing at all. #}
+      {# Drill-down chain. Renders as a pill track ending in red
+         (terminal = deepest user-code frame). Empty chain renders
+         the placeholder. #}
       {% set _drilldown = (f.technical_detail or {}).get("drilldown_chain") if f.technical_detail else None %}
-      {# v0.7.x: the drill-down chain is rooted at the **original**
-         wrapper frame (the finding's entry point), so the narrative
-         heading must name that wrapper — not the retargeted callsite
-         function. When the smoking gun was relocated to a deeper user-
-         code frame, ``callsite.original_wrapper.function`` holds the
-         wrapper's name; otherwise the current ``callsite.function`` is
-         the wrapper. #}
       {% set _drill_root_fn = callsite.original_wrapper.function if callsite.original_wrapper else callsite.function %}
       {% if _drilldown %}
-      <div style="margin-top: 4px; font-size: 12px; padding-top: 4px; border-top: 1px dashed #d1d5db;">
-        <strong style="color: #1d4ed8;">Drill-down:</strong>
-        time inside <code>{{ _drill_root_fn }}</code> walked through &mdash;
-        <div style="margin-top: 4px;">
-        {% for level in _drilldown %}
-          <div style="padding: 1px 0 1px {{ (loop.index0 + 1) * 12 }}px; color: #374151;">
-            <span class="muted">&#x21B3;</span>
-            <code>{{ level.filename }}:{{ level.lineno }}</code>
-            <span class="muted">({{ level.function }})</span>
-            &mdash; {{ fmt_ms(level.cumulative_ms) }}{% if level.pct_of_origin %} <span class="muted">&middot; {{ level.pct_of_origin }}% of parent</span>{% endif %}
-          </div>
-        {% endfor %}
+      <div class="chain">
+        <div class="chain-label">Drill-down</div>
+        <div class="chain-track">
+          <span class="step">{{ _drill_root_fn }}</span>
+          {% for level in _drilldown %}<span class="arrow">&rarr;</span><span class="step{% if loop.last %} terminal{% endif %}">{{ level.function }}:{{ level.lineno }}</span>{% endfor %}
         </div>
+        <div class="chain-foot">time inside <code>{{ _drill_root_fn }}</code> walked through</div>
       </div>
       {% elif _drilldown is not none %}
-      <div style="margin-top: 4px; font-size: 12px; padding-top: 4px; border-top: 1px dashed #d1d5db; color: #6b7280;">
-        <strong style="color: #1d4ed8;">Drill-down:</strong>
-        no deeper user-code frame &mdash; <code>{{ _drill_root_fn }}</code> calls framework code directly. Check the N+1 Query or related findings for inner-loop details.
+      <div class="chain">
+        <div class="chain-label">Drill-down</div>
+        <div class="chain-foot">no deeper user-code frame - <code>{{ _drill_root_fn }}</code> calls framework code directly. Check the N+1 Query or related findings for inner-loop details.</div>
       </div>
       {% endif %}
-      {# v0.6.x: hoisted from .finding-detail — the target document + the
-         doc-event lifecycle hook breadcrumb live at the same visual level
-         as the Phase 2 / Drill-down callouts inside the smoking-gun box,
-         so all three context cues stay together. #}
+
+      {# Target document + doc-event lifecycle hook breadcrumb.
+         Stays inside the smoking block, sitting at the same visual
+         level as the chain callouts. #}
       {% if detail.target_doc or detail.hook_events %}
-      <div style="margin-top: 4px; font-size: 12px; padding-top: 4px; border-top: 1px dashed #d1d5db; color: #374151;">
+      <div class="phase2-line">
         {% if detail.target_doc %}<span class="muted">Document:</span> <strong>{{ detail.target_doc.doctype }}</strong>{% if detail.target_doc.name %} <code>{{ detail.target_doc.name }}</code>{% endif %}{% endif %}{% if detail.target_doc and detail.hook_events %} &middot; {% endif %}{% if detail.hook_events %}<span class="muted">Doc-event hook:</span> {% for he in detail.hook_events %}<code>{{ he.doctype }} &#9656; {{ he.event }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
       </div>
       {% endif %}
@@ -781,11 +1658,11 @@
     {% endif %}
 
     {# v0.7.x: keep this OR list in sync with the inner {% if %} branches
-       below — it's a conservative early exit so the styled ``.finding-detail``
+       below - it's a conservative early exit so the styled ``.finding-detail``
        container (white background + border + padding) doesn't render as an
        empty box for finding types whose technical_detail carries no rows
        that this block displays (Slow Hot Path / Hook Bottleneck / Hot Line
-       / Function Not Invoked — their meaningful content lives in the
+       / Function Not Invoked - their meaningful content lives in the
        smoking-gun block above, not here). #}
     {% set _has_detail_rows = (
          detail.normalized_query
@@ -856,7 +1733,7 @@
 
       {# v0.5.3: projected post-fix timing. Analyzers (explain_flags
          + n_plus_one) set projected_avg_time_ms / projected_total_ms
-         when there's a credible estimate — see base.project_post_fix_ms
+         when there's a credible estimate - see base.project_post_fix_ms
          for the per-finding-type heuristics. #}
       {% if detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms %}
         <p class="small projected-after-fix">
@@ -869,54 +1746,55 @@
     </div>
     {% endif %}
 
-    {# v0.6.0: AI-suggested fix. Populated on demand via the "Suggest a
-       fix (AI)" action on the Optimus Session form, then carried into
-       the report on the next regenerate. suggestion_html is already
-       Markdown-rendered + bleach-sanitized by renderer._finding_to_dict,
-       so |safe is valid here (and there are no external assets in it, so
-       the offline-report guarantee holds). #}
+    {# v0.6.0: AI-suggested fix. v0.7.x Phase D: restyled as `.fix-box`
+       (editorial card with `.fix-head` + `AI · model` tag, `.fix-body`
+       with the existing markdown-rendered HTML, `.fix-foot` with the
+       review-disclaimer). suggestion_html is already Markdown-rendered
+       + bleach-sanitized; |safe is valid. #}
     {% if f.llm_fix and f.llm_fix.suggestion_html and not hide_ai_fix %}
-    <div class="ai-fix">
-      <div class="ai-fix-header">Suggested fix (AI{% if f.llm_fix.model %} &mdash; {{ f.llm_fix.model }}{% endif %})</div>
+    <div class="fix-box">
+      <div class="fix-head">
+        <span>Suggested fix</span>
+        <span class="ai-tag">AI{% if f.llm_fix.model %} &middot; {{ f.llm_fix.model }}{% endif %}</span>
+      </div>
       {% if not f.llm_fix.source_available %}
-      <div class="ai-fix-caution">The profiler couldn&rsquo;t show the AI this finding&rsquo;s source code (or SQL) &mdash; treat the suggestion below as directional guidance, not a verified code fix.</div>
+      <div class="fix-caution">The profiler couldn&rsquo;t show the AI this finding&rsquo;s source code (or SQL) - treat the suggestion below as directional guidance, not a verified code fix.</div>
       {% endif %}
-      <div class="ai-fix-body">{{ f.llm_fix.suggestion_html | safe }}</div>
-      <div class="ai-fix-foot">Machine-generated{% if f.llm_fix.generated_at %} &middot; {{ fmt_dt(f.llm_fix.generated_at) }}{% endif %} &mdash; review before applying.</div>
+      <div class="fix-body">{{ f.llm_fix.suggestion_html | safe }}</div>
+      <div class="fix-foot">Machine-generated{% if f.llm_fix.generated_at %} &middot; {{ fmt_dt(f.llm_fix.generated_at) }}{% endif %} - review before applying.</div>
     </div>
     {% endif %}
 
-    {# v0.7.x: related findings grouped by root cause. When several
-       analyzers flag the same deepest user-code anchor — e.g. a Hot
-       Line, a Redundant doc fetch, and a Redundant permission check
-       all landing on the same get_doc-in-a-loop site — they collapse
-       into THIS card and appear as small collapsible rows beneath the
-       primary card's AI fix block. One fix at the top resolves all
-       of them; the sub-rows preserve the per-angle context for
-       readers who want to verify each. #}
+    {# v0.7.x: related findings grouped by root cause. v0.7.x Phase D:
+       restyled as `.sub-findings` with a left-rule indent and
+       `.severity-pill`-based rows. Each row uses a collapsible
+       disclosure element so readers can expand the description per
+       finding. #}
     {% if f.sub_findings %}
-    <div class="grouped-findings" style="margin: 10px 0 0 12px; border-left: 2px solid #e5e7eb; padding: 0 0 0 10px;">
-      <div class="small muted" style="margin-bottom: 6px;">
-        Related on the same root cause &mdash; {{ f.sub_findings | length }} other finding{{ "s" if f.sub_findings | length != 1 else "" }}, one fix resolves all of them.
-      </div>
+    <div class="sub-findings">
+      <p class="sub-findings-label">
+        Related on the same root cause - {{ f.sub_findings | length }} other finding{{ "s" if f.sub_findings | length != 1 else "" }}; one fix resolves all of them.
+      </p>
       {% for s in f.sub_findings %}
-      <details style="margin: 4px 0; padding: 6px 10px; background: #f9fafb; border-left: 3px solid #d1d5db; border-radius: 0 4px 4px 0;">
-        <summary style="cursor: pointer; display: flex; gap: 8px; align-items: center;">
-          <span class="severity-badge {{ s.severity | lower }}">{{ s.severity }}</span>
-          <span style="flex: 1; font-weight: 500; font-size: 0.92rem;">{{ s.title }}</span>
-          {% if s.estimated_impact_ms %}<span class="small muted">~{{ fmt_ms(s.estimated_impact_ms) }}{% if s.affected_count %} &middot; {{ s.affected_count }}{% endif %}</span>{% endif %}
+      <details class="sub-finding-row">
+        <summary>
+          <span class="severity-pill {{ s.severity | lower }}">{{ s.severity }}</span>
+          <span class="sub-title">{{ s.title }}</span>
+          {% if s.estimated_impact_ms %}<span class="sub-impact">~{{ fmt_ms(s.estimated_impact_ms) }}{% if s.affected_count %} &middot; {{ s.affected_count }}{% endif %}</span>{% endif %}
         </summary>
         {% if s.customer_description %}
-        <div class="small" style="margin-top: 6px; color: #374151; white-space: pre-wrap;">{{ s.customer_description }}</div>
+        <div class="sub-desc">{{ s.customer_description }}</div>
         {% endif %}
       </details>
       {% endfor %}
     </div>
     {% endif %}
-  </div>
+
+    </div>{# /.finding-body #}
+  </div>{# /.finding #}
 {% endmacro %}
 
-{# v0.5.2: per-app bucket header — "myapp (3 findings, ~420ms)". #}
+{# v0.5.2: per-app bucket header - "myapp (3 findings, ~420ms)". #}
 {% macro app_bucket_header(bucket) %}
   <span class="app-bucket-name">{{ bucket.app }}</span>
   <span class="app-bucket-meta small muted">
@@ -927,8 +1805,8 @@
   </span>
 {% endmacro %}
 
-{# v0.6.x: entry-point source-location block — shown under each row in the
-   per-action breakdown and the Background Jobs section. ``cs`` is renderer's
+{# v0.6.x: entry-point source-location block - shown under each row in the
+   per-action breakdown and the RQ Jobs section. ``cs`` is renderer's
    _action_entry_callsite() output: {filename (bench-relative display path),
    _abs (absolute path, for the editor link), lineno, function, source_snippet}.
    Mirrors the finding_card smoking-gun visual (mono table, line-number gutter,
@@ -945,11 +1823,16 @@
     </div>
     {% if cs.source_snippet %}
       <table style="border-collapse: collapse; font-family: ui-monospace, Menlo, monospace; font-size: 12px; width: 100%; margin: 0;">
+        {# Drop blank context lines (PEP-8 spacers above/below a def). The
+           target line is always rendered even if empty, so the highlight
+           anchor never disappears. #}
         {% for sl in cs.source_snippet %}
+        {% if (sl.content | trim) or sl.lineno == cs.lineno %}
         <tr{% if sl.lineno == cs.lineno %} style="background: #fef3c7;"{% endif %}>
           <td style="padding: 1px 8px; color: #6b7280; text-align: right; user-select: none; width: 1%; white-space: nowrap;">{{ sl.lineno }}</td>
-          <td style="padding: 1px 8px;"><code style="white-space: pre;">{{ sl.content }}</code></td>
+          <td style="padding: 1px 8px;"><code style="white-space: pre;">{% if sl.content_html %}{{ sl.content_html | safe }}{% else %}{{ sl.content }}{% endif %}</code></td>
         </tr>
+        {% endif %}
         {% endfor %}
       </table>
     {% endif %}
@@ -958,57 +1841,60 @@
 {% endmacro %}
 
 {# v0.6.x: per-row macros for the 4 leaderboard sections (per-action, top
-   queries, background jobs, hot frames). Each section renders custom-app
+   queries, RQ Jobs, hot frames). Each section renders custom-app
    rows in its primary table and framework-app rows in a collapsed
    "subsection" details sub-block below; both call the same macro so the
    row markup lives in one place. #}
-{% macro action_row(action, idx) %}
+{% macro action_row(action, idx, max_ms=1.0, large_duration_threshold_ms=1000) %}
+  {# v0.7.x redesign Phase E: editorial per-action row.
+
+     - Action cell: `.action-name` (bold mono) + `.action-meta` (HTTP
+       method + path + target doc + entry-callsite, mono muted).
+     - Type cell: `.type-tag` pill (blue HTTP / amber Background).
+     - Duration cell: `.bar-cell` with the value + inline bar; bar
+       colour by threshold (red ≥ threshold, amber 300+, green otherwise).
+     - Linked-finding sub-row uses `.row-finding` summary above the
+       embedded finding_card cluster. #}
   <tr>
-    <td>{{ idx }}</td>
+    <td class="num">{{ idx }}</td>
     <td>
-      <strong>{{ action.action_label }}</strong>
+      <div class="action-name">{{ action.action_label }}</div>
       {% if action.path %}
-        <br><span class="small muted">{{ action.http_method }} {{ action.path }}</span>
+        <div class="action-meta">{{ action.http_method }} {{ action.path }}</div>
       {% endif %}
       {% if action.target_doc %}
-        <br><span class="small muted">&rarr; {{ action.target_doc.doctype }}{% if action.target_doc.name %} <code>{{ action.target_doc.name }}</code>{% endif %}</span>
+        <div class="action-meta">&rarr; {{ action.target_doc.doctype }}{% if action.target_doc.name %} <code>{{ action.target_doc.name }}</code>{% endif %}</div>
       {% endif %}
-      {# v0.7.x: inline entry-callsite line — the bench-relative file path
-         + lineno + function. Replaces the (already-dropped) full source
-         snippet panel. Compact, navigable, vscode-clickable. #}
       {% if action.entry_callsite and action.entry_callsite.filename %}
         {% set _cs = action.entry_callsite %}
-        <br>
-        <span class="small muted">
-          {% if _cs._abs %}
-            <a class="callsite-link" href="vscode://file{{ _cs._abs }}:{{ _cs.lineno }}" title="Open in VS Code / Cursor"><code>{{ _cs.filename }}:{{ _cs.lineno }}</code></a>
-          {% else %}
-            <code>{{ _cs.filename }}:{{ _cs.lineno }}</code>
-          {% endif %}
-          {% if _cs.function %} <span class="muted">({{ _cs.function }})</span>{% endif %}
-        </span>
+        <div class="action-meta">
+          {% if _cs._abs %}<a href="vscode://file{{ _cs._abs }}:{{ _cs.lineno }}" title="Open in VS Code / Cursor">{{ _cs.filename }}:{{ _cs.lineno }}</a>{% else %}{{ _cs.filename }}:{{ _cs.lineno }}{% endif %}{% if _cs.function %} &middot; {{ _cs.function }}{% endif %}
+        </div>
       {% endif %}
     </td>
-    <td><span class="small">{{ action.event_type }}</span></td>
-    <td class="num">{{ fmt_ms(action.duration_ms) }}</td>
+    <td><span class="type-tag{% if action.event_type == 'RQ Job' %} bg{% endif %}">{{ action.event_type }}</span></td>
+    {% set _ms = action.duration_ms or 0 %}
+    {% set _pct = (_ms / max_ms * 100) if max_ms else 0 %}
+    <td class="num bar-cell">
+      <span{% if _ms >= large_duration_threshold_ms %} class="hot-value"{% endif %}>{{ fmt_ms(_ms) }}</span>
+      <div class="bar-track">
+        <div class="bar-fill{% if _ms >= large_duration_threshold_ms %}{% elif _ms >= 300 %} warn{% else %} ok{% endif %}" style="width: {{ _pct | round(1) }}%;"></div>
+      </div>
+    </td>
     <td class="num">{{ action.queries_count }}</td>
     <td class="num">{{ fmt_ms(action.query_time_ms) }}</td>
     <td class="num">{{ fmt_ms(action.slowest_query_ms) }}</td>
   </tr>
-  {# v0.7.x: when this action has linked findings (action_ref matches
-     its idx), embed the finding cards inline — same structure as the
-     Findings section, scoped to this action. The AI fix block is
-     suppressed here (it's noise in the per-action surface and lives
-     in the canonical Findings section anyway). Actions without
-     findings render no sub-row — the previous entry-callsite
-     fallback was dropped because the ``def function_name``
-     snippet wasn't actionable. #}
   {% if action.related_findings %}
   <tr>
-    <td colspan="7" style="background:#f9fafb;border-top:none;padding:8px 12px 12px 28px;">
-      <div style="margin: 0 0 8px; font-size: 12px; color: #6b7280;">
-        {{ action.related_findings | length }} finding{{ "s" if action.related_findings | length != 1 else "" }} linked to this action
-      </div>
+    <td colspan="7" class="row-finding">
+      &#9888; <strong>{{ action.related_findings | length }} finding{{ "s" if action.related_findings | length != 1 else "" }} linked:</strong>
+      {{ action.related_findings[0].title }}{% if action.related_findings[0].estimated_impact_ms %} &middot; ~{{ fmt_ms(action.related_findings[0].estimated_impact_ms) }}{% endif %}
+      {% if action.related_findings | length > 1 %} &middot; <em>+ {{ action.related_findings | length - 1 }} more</em>{% endif %}
+    </td>
+  </tr>
+  <tr>
+    <td colspan="7" style="background: var(--bg-tint); border-top: none; padding: 8px 16px 14px;">
       {% for f in action.related_findings %}
         {{ finding_card(f, hide_ai_fix=True, hide_source_snippet=True) }}
       {% endfor %}
@@ -1017,42 +1903,45 @@
   {% endif %}
 {% endmacro %}
 
-{% macro bg_job_row(job, idx, cols, any_findings_counted) %}
+{% macro bg_job_row(job, idx, cols, any_findings_counted, max_ms=1.0, large_duration_threshold_ms=1000) %}
+  {# v0.7.x redesign Phase E: mirror of action_row for background
+     jobs - `.action-name` for the dotted method, `.bar-cell` for the
+     duration, `.type-tag.bg` would be redundant (every row in this
+     table IS a RQ Job), so the type pill is omitted here. #}
   <tr>
-    <td>{{ idx }}</td>
+    <td class="num">{{ idx }}</td>
     <td>
-      <code>{{ job.method }}</code>
-      {# v0.7.x: inline entry-callsite line under the job method — same
-         compact treatment as the per-action row. #}
+      <div class="action-name">{{ job.method }}</div>
       {% if job.entry_callsite and job.entry_callsite.filename %}
         {% set _cs = job.entry_callsite %}
-        <br>
-        <span class="small muted">
-          {% if _cs._abs %}
-            <a class="callsite-link" href="vscode://file{{ _cs._abs }}:{{ _cs.lineno }}" title="Open in VS Code / Cursor"><code>{{ _cs.filename }}:{{ _cs.lineno }}</code></a>
-          {% else %}
-            <code>{{ _cs.filename }}:{{ _cs.lineno }}</code>
-          {% endif %}
-          {% if _cs.function %} <span class="muted">({{ _cs.function }})</span>{% endif %}
-        </span>
+        <div class="action-meta">
+          {% if _cs._abs %}<a href="vscode://file{{ _cs._abs }}:{{ _cs.lineno }}" title="Open in VS Code / Cursor">{{ _cs.filename }}:{{ _cs.lineno }}</a>{% else %}{{ _cs.filename }}:{{ _cs.lineno }}{% endif %}{% if _cs.function %} &middot; {{ _cs.function }}{% endif %}
+        </div>
       {% endif %}
     </td>
-    <td class="num">{{ fmt_ms(job.duration_ms) }}</td>
+    {% set _ms = job.duration_ms or 0 %}
+    {% set _pct = (_ms / max_ms * 100) if max_ms else 0 %}
+    <td class="num bar-cell">
+      <span{% if _ms >= large_duration_threshold_ms %} class="hot-value"{% endif %}>{{ fmt_ms(_ms) }}</span>
+      <div class="bar-track">
+        <div class="bar-fill{% if _ms >= large_duration_threshold_ms %}{% elif _ms >= 300 %} warn{% else %} ok{% endif %}" style="width: {{ _pct | round(1) }}%;"></div>
+      </div>
+    </td>
     <td class="num">{{ job.queries_count }}</td>
     <td class="num">{{ fmt_ms(job.query_time_ms) }}</td>
     <td class="num">{{ fmt_ms(job.slowest_query_ms) }}</td>
     {% if any_findings_counted %}
-      <td class="num">{{ job.findings_count if job.findings_count is not none else '&mdash;' | safe }}</td>
+      <td class="num">{{ job.findings_count if job.findings_count is not none else '-' | safe }}</td>
     {% endif %}
   </tr>
   <tr>
     <td colspan="{{ cols }}" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;">
-      {# v0.7.x: mirror the action_row trim — drop the entry-callsite
+      {# v0.7.x: mirror the action_row trim - drop the entry-callsite
          snippet (the bare ``def function_name`` line was noise) and
          embed finding cards in its place when this job has linked
          findings. AI fix is suppressed here (it lives in the
          canonical Findings section). The "Slowest queries for this
-         job" details block stays — it's job-specific. #}
+         job" details block stays - it's job-specific. #}
       {% if job.related_findings %}
       <div class="small muted" style="margin: 0 0 8px;">
         {{ job.related_findings | length }} finding{{ "s" if job.related_findings | length != 1 else "" }} linked to this job
@@ -1074,7 +1963,7 @@
             </div>
           {% endfor %}
         {% elif not job.recording_available %}
-          <p class="small muted">The recording for this job has expired from Redis (kept ~10&nbsp;min after analyze) &mdash; expand the matching action in <strong>Full recordings</strong> below if it's still listed.</p>
+          <p class="small muted">The recording for this job has expired from Redis (kept ~10&nbsp;min after analyze) - expand the matching action in <strong>Full recordings</strong> below if it's still listed.</p>
         {% else %}
           <p class="empty">No queries were recorded for this job.</p>
         {% endif %}
@@ -1084,8 +1973,13 @@
 {% endmacro %}
 
 {% macro hot_frame_row(row) %}
-  <tr>
-    <td><code>{{ row.display_name }}</code></td>
+  {# v0.7.x Phase E: user-code rows get `is-hot` class so the
+     `.hot-frames-table tr.is-hot td` CSS rule applies the
+     yellow-tinted background. The flag is precomputed by
+     renderer.build_hot_frames_table; defensive .get() in case the
+     dict was hand-built by an older test fixture. #}
+  <tr{% if row.is_hot %} class="is-hot"{% endif %}>
+    <td class="fn-cell"><code>{{ row.display_name }}</code></td>
     <td class="num">{{ fmt_ms(row.total_ms) }}</td>
     <td class="num">{{ row.occurrences }}</td>
     <td class="num">{{ row.distinct_actions }}</td>
@@ -1103,59 +1997,42 @@
 
 <div class="container">
 
-  {# --------------- HEADER --------------- #}
-  <div class="report-header">
-    <h1>
-      {{ session.title or "Optimus Session" }}
-    </h1>
-    <div class="meta">
-      <table class="meta-table">
-        <tbody>
-          <tr><td>Recorded by</td><td><strong>{{ session.user }}</strong></td></tr>
-          <tr><td>Started</td><td><time datetime="{{ session.started_at }}">{{ fmt_dt(session.started_at) }}</time></td></tr>
-          {% if session.stopped_at %}<tr><td>Stopped</td><td><time datetime="{{ session.stopped_at }}">{{ fmt_dt(session.stopped_at) }}</time></td></tr>{% endif %}
-          <tr><td>Report generated</td><td>{{ fmt_dt(generated_at) }}</td></tr>
-          <tr><td>Server timezone</td><td>{{ server_tz or "UTC" }}</td></tr>
-        </tbody>
-      </table>
+  {# --------------- MASTHEAD ---------------
+     v0.7.x redesign Phase A: editorial-style header. Eyebrow + serif
+     display heading on the left, meta block right-aligned. The
+     session title can carry "<em>...</em>" wrapping a session number
+     (e.g. "Session <em>0017</em>") to surface the italic-accent
+     treatment from the mock - the controller-side title doesn't
+     currently emit that, but the markup tolerates plain text.
+     The old `report-header` / `.meta` / `meta-table` classes are
+     defined upstream in the inline CSS and are no longer used by
+     this block. #}
+  <header class="masthead">
+    <div>
+      <div class="masthead-eyebrow">Performance Report</div>
+      <h1>{{ session.title or "Optimus Session" }}</h1>
     </div>
-  </div>
+    <div class="masthead-meta">
+      <div><span class="badge">OPTIMUS</span></div>
+      <div>Recorded by <b>{{ session.user }}</b></div>
+      <div>
+        <time datetime="{{ session.started_at }}">{{ fmt_dt(session.started_at) }}</time>
+        {% if session.stopped_at %} &rarr;
+        <time datetime="{{ session.stopped_at }}">{{ fmt_dt(session.stopped_at) }}</time>
+        {% endif %}
+      </div>
+      <div>Generated {{ fmt_dt(generated_at) }} &middot; {{ server_tz or "UTC" }}</div>
+    </div>
+  </header>
 
-  {# v0.7.x: companion-tool callout. Sibling of the Jump-to nav below;
-     mirrors its .section.small styling so it belongs in the same
-     visual family. 3px blue left-border + "Companion tool" prefix
-     label distinguish it as a related-product mention rather than
-     report data or another nav block. Inert anchor only — no remote
-     assets — so the self-contained-HTML guarantee is intact. #}
-  <aside class="section small lens-promo"
-         style="padding:10px 16px; border-left: 3px solid #2563eb;">
-    <span class="muted" style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-right: 8px;">Companion tool</span>
-    <strong>Aerele Lens</strong>
-    &mdash; Audit your Frappe custom apps before they break in production.
-    Static checks for performance regressions, security gaps, framework
-    mis-use, and ERPNext convention drift, plus version-compatibility
-    scans for Frappe v14&nbsp;/&nbsp;v15&nbsp;/&nbsp;v16 migrations.
-    <a href="https://lens.aerele.in/"
-       rel="noopener"
-       style="color:#2563eb; font-weight: 500; white-space: nowrap;">lens.aerele.in &rarr;</a>
-  </aside>
-
-  {# v0.6.0: compact in-page navigation. Conditional sections (Background
-     jobs / Server Resource / Frontend) link only when they'll render. #}
-  <div class="section small" style="padding:10px 16px;">
-    <strong>Jump to:</strong>
-    {% if phase2_html %}<a href="#phase2">Phase 2 line drill-down</a> · {% endif %}<a href="#findings">Findings</a> ·
-    <a href="#per-action">Per-action</a>{% if background_jobs and background_jobs.count %} · <a href="#background-jobs">Background jobs</a>{% endif %}{% if doc_event_breakdown and doc_event_breakdown.count %} · <a href="#doc-event-lifecycle">Doc events</a>{% endif %}{% if infra_timeline %} · <a href="#server-resource">Server resource</a>{% endif %}{% if frontend_xhr_matched or frontend_vitals_by_page %} · <a href="#frontend">Frontend</a>{% endif %} ·
-    <a href="#top-queries">Top queries</a> ·
-    <a href="#db-tables">DB tables</a> ·
-    <a href="#how-to-read">How to read</a>
-  </div>
-
-  {# v0.5.3: TRUNCATION BANNER — prominent at the top when analyze
+  {# v0.5.3 TRUNCATION BANNER - prominent at the top when analyze
      truncated queries beyond the per-recording cap. Previously only
      surfaced in the collapsed Analyzer Notes at the bottom, where
-     developers missed it and read incomplete reports. Deliberately
-     placed ABOVE the exec-summary card so it's impossible to miss. #}
+     developers missed it and read incomplete reports.
+     v0.7.x redesign Phase B: hoisted to sit ABOVE the TL;DR hero
+     (which replaced the exec-summary card as the most-prominent
+     block) so the warning is the literal first thing the reader
+     sees after the masthead. #}
   {% if truncation_banner %}
   <div class="truncation-banner">
     <div class="truncation-banner-title">⚠ Report is partial</div>
@@ -1163,49 +2040,112 @@
   </div>
   {% endif %}
 
-  {# v0.5.0: Steps to Reproduce / Notes. Content is pre-sanitized by
-     renderer.py via frappe.utils.html_utils.sanitize_html (bleach) so
-     harmless rich-text renders while <script>/onclick/javascript: are
-     stripped. |safe below is only valid because notes_html is already
-     bleach-cleaned — do NOT change to `session.notes | safe` without
-     re-adding sanitization, that's a stored-XSS sink. #}
-  {% if notes_html %}
+  {# v0.7.x redesign Phase B: TL;DR hero - one composed headline
+     keyed on the highest-impact finding (or a clean-session
+     message when there's nothing to fix). Replaces the older
+     "At a glance" exec-summary card. The Action plan section
+     (Phase C) is built from its own ``_build_action_plan``
+     helper - the old ``executive_summary`` data path was
+     retired in Phase H. #}
+  {# v0.7.x Phase J.2.1: reads from report_data.tldr (contract shape). #}
+  {% if report_data.tldr and report_data.tldr.headline_html %}
+  <div class="tldr">
+    <div class="tldr-label">The headline</div>
+    <p class="tldr-headline">{{ report_data.tldr.headline_html | safe }}</p>
+    <p class="tldr-sub">{{ report_data.tldr.subline_html | safe }}</p>
+  </div>
+  {% endif %}
+
+  {# v0.7.x J.14: companion-tool promotional banner. Featured-card
+     treatment with light-blue gradient background, serif product name,
+     bulleted value props, and a solid-blue CTA button. Inert anchor
+     only, no remote assets, no external CSS - the self-contained-HTML
+     guarantee stays intact. #}
+  <aside class="section lens-promo" style="
+      margin: 16px 0 24px;
+      padding: 20px 24px;
+      background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid #2563eb;
+      border-radius: 4px;
+  ">
+    <div style="display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family: var(--serif, Georgia, serif); font-size:1.45rem; font-weight:600; color:#1e3a8a; letter-spacing:-0.01em;">Aerele Lens</span>
+        <span style="font-size:0.65rem; text-transform:uppercase; letter-spacing:0.14em; font-weight:700; color:#1e40af; padding:3px 8px; background:#dbeafe; border-radius:3px;">Companion tool</span>
+      </div>
+      <span style="font-size:0.78rem; color:#475569; font-family:var(--mono, monospace);">lens.aerele.in</span>
+    </div>
+    <p style="margin:0 0 12px; font-size:1rem; color:#0f172a; line-height:1.5;">
+      Audit your Frappe custom apps <strong>before they break in production</strong>.
+    </p>
+    <ul style="margin:0 0 14px; padding-left:20px; color:#1f2937; font-size:0.88rem; line-height:1.7;">
+      <li>Static checks for <strong>performance regressions</strong>, <strong>security gaps</strong>, and framework mis-use.</li>
+      <li><strong>ERPNext convention drift</strong> detection.</li>
+      <li><strong>Version-compatibility scans</strong> for Frappe v14&nbsp;/&nbsp;v15&nbsp;/&nbsp;v16 migrations.</li>
+    </ul>
+    <a href="https://lens.aerele.in/" rel="noopener"
+       style="display:inline-block; padding:9px 18px; background:#2563eb; color:#ffffff !important; text-decoration:none; font-weight:600; font-size:0.88rem; border-radius:4px; letter-spacing:0.02em;">
+      Try Aerele Lens &rarr;
+    </a>
+  </aside>
+
+  {# v0.6.0: compact in-page navigation. Conditional sections (Background
+     jobs / Server Resource / Frontend) link only when they'll render.
+     v0.7.x Phase A: restyled as nav pills (editorial design tokens).
+     Anchors unchanged so external links / docs still resolve. The
+     "Jump to:" prefix is retained as a visually-quiet label so screen
+     readers still get the navigational cue. #}
+  <nav class="nav-pills">
+    <span class="jump-label">Jump to</span>
+    {% if report_data.line_drilldown_html %}<a href="#line-drilldown">Line-Level Drilldown</a>{% endif %}
+    <a href="#findings">Findings</a>
+    <a href="#per-action">Per-action</a>
+    {% if report_data.background_jobs or report_data.background_jobs_framework %}<a href="#background-jobs">RQ Jobs</a>{% endif %}
+    {% if report_data.doc_events %}<a href="#doc-event-lifecycle">Doc events</a>{% endif %}
+    {% if report_data.resource %}<a href="#server-resource">Server resource</a>{% endif %}
+    {% if report_data.frontend %}<a href="#frontend">Frontend</a>{% endif %}
+    <a href="#top-queries">Top queries</a>
+    <a href="#db-tables">DB tables</a>
+    <a href="#how-to-read">How to read</a>
+  </nav>
+
+  {# v0.7.x Phase J.2.1: Steps to Reproduce / Notes reads from
+     report_data.repro (contract shape). The raw_html source is the
+     sanitized notes_html produced by renderer.render via
+     frappe.utils.html_utils.sanitize_html (bleach) with always_sanitize=True.
+     |safe below is only valid because that upstream sanitization fires
+     regardless of input shape - do NOT migrate this block to read
+     session.notes directly through |safe, that's a stored-XSS sink. #}
+  {% if report_data.repro and report_data.repro.raw_html %}
   <details class="section" open style="background: #f0f9ff; border-left: 4px solid #2563eb;">
+    <a id="repro"></a>{# v0.7.x Phase I.1: mock-spec ID anchor #}
     <summary><h2 style="margin-top: 0;">Steps to Reproduce</h2></summary>
     <div class="notes-content">
-      {{ notes_html | safe }}
+      {{ report_data.repro.raw_html | safe }}
     </div>
   </details>
   {% endif %}
 
-  {# --------------- STAT CARDS --------------- #}
-  {% set total_findings = (all_findings | length) if all_findings is defined else (findings | length) %}
-  <div class="stats">
-    <div class="stat">
-      <div class="label">Total time</div>
-      <div class="value">{{ fmt_ms(session.total_duration_ms or 0) }}</div>
-      <div class="sub">{{ fmt_ms((session.total_duration_ms or 0) - (session.total_query_time_ms or 0)) }} server code &middot; {{ fmt_ms(session.total_query_time_ms or 0) }} database</div>
+  {# --------------- KPI STRIP ---------------
+     v0.7.x redesign Phase A: 4 numbers across a top-and-bottom-ruled
+     strip; the design-token colours flag the at-risk values (total
+     time over the configured threshold, any high-severity findings)
+     via `.kpi-value.danger`. The old `.stats` + `.stat` markup
+     pre-dates the variable system and is no longer referenced. #}
+  {# v0.7.x Phase J.2.2: iterate the contract's 4-item kpis list.
+     Labels, values, and sub-lines are all composed in build_report_context. #}
+  <div class="kpis">
+    {% for k in report_data.kpis %}
+    <div class="kpi">
+      <div class="kpi-label">{{ k.label }}</div>
+      <div class="kpi-value{% if k.is_danger %} danger{% endif %}">{{ k.value }}</div>
+      <div class="kpi-sub">{{ k.sub }}</div>
     </div>
-    <div class="stat">
-      <div class="label">Database queries</div>
-      <div class="value">{{ session.total_queries or 0 }}</div>
-      <div class="sub">across {{ session.total_requests or 0 }} operation{{ "s" if (session.total_requests or 0) != 1 else "" }}</div>
-    </div>
-    <div class="stat">
-      <div class="label">Operations</div>
-      <div class="value">{{ session.total_requests or 0 }}</div>
-      <div class="sub">page loads, saves &amp; background jobs</div>
-    </div>
-    <div class="stat">
-      <div class="label">Issues found</div>
-      <div class="value">{% if severity_counts.High %}<span style="color:#dc2626">{{ total_findings }}</span>{% else %}{{ total_findings }}{% endif %}</div>
-      <div class="sub">
-        {% if total_findings %}{% if severity_counts.High %}{{ severity_counts.High }} high{% endif %}{% if severity_counts.Medium %}{% if severity_counts.High %} &middot; {% endif %}{{ severity_counts.Medium }} medium{% endif %}{% if severity_counts.Low %}{% if severity_counts.High or severity_counts.Medium %} &middot; {% endif %}{{ severity_counts.Low }} low{% endif %}{% else %}none detected{% endif %}
-      </div>
-    </div>
+    {% endfor %}
   </div>
 
-  {# v0.6.x: Ignored Apps note — surfaces the count of findings the renderer
+  {# v0.6.x: Ignored Apps note - surfaces the count of findings the renderer
      dropped because their blame app is in Optimus Settings ▸ Apps ▸ Ignored
      Apps. Keeps the stat card's count honest (severity_counts shows the kept
      set). Hidden when nothing was dropped. #}
@@ -1218,35 +2158,12 @@
     </p>
   {% endif %}
 
-  {# v0.5.2 round 3: EXECUTIVE SUMMARY — TL;DR readable in 30 seconds.
-     v0.7.x: relocated from above Steps-to-Reproduce to below the stat
-     cards, so the reader gets context (steps) and numbers (cards)
-     first, then the "what's wrong + what to fix" narrative. #}
-  {% if executive_summary.show %}
-  <div class="exec-summary pace-{{ executive_summary.pace }}">
-    <h2>At a glance</h2>
-    <p class="exec-headline">{{ executive_summary.headline }}</p>
-
-    {% if executive_summary.bullets %}
-    <div class="exec-bullets">
-      <p class="small muted">Top {{ executive_summary.bullets | length }} highest-impact finding{{ "s" if executive_summary.bullets | length != 1 else "" }}{% if executive_summary.total_impact_ms %} ({{ fmt_ms(executive_summary.total_impact_ms) }} combined){% endif %}:</p>
-      <ol>
-        {% for b in executive_summary.bullets %}
-        <li>
-          <span class="exec-bullet-severity severity-{{ b.severity | lower }}">{{ b.severity }}</span>
-          <span class="exec-bullet-text">{{ b.text }}</span>
-          {% if b.impact_ms %}<span class="exec-bullet-impact">~{{ fmt_ms(b.impact_ms) }}</span>{% endif %}
-        </li>
-        {% endfor %}
-      </ol>
-    </div>
-    {% endif %}
-
-    {% if executive_summary.infra_note %}
-    <p class="exec-infra"><strong>Infra:</strong> {{ executive_summary.infra_note }}</p>
-    {% endif %}
-  </div>
-  {% endif %}
+  {# v0.7.x redesign Phase B: the "At a glance" exec-summary card
+     was removed here. Its headline collapsed into the TL;DR hero
+     at the top of the report; its top-3 list re-surfaces as the
+     Recommended Action Plan section (Phase C, via
+     ``_build_action_plan``). Phase H retired the old
+     ``executive_summary`` data path entirely. #}
 
   {# --------------- SUMMARY ---------------
      v0.7.x: prefer the render-time-built ``summary_html`` context
@@ -1257,9 +2174,14 @@
      to the stored value only if the render-time build somehow returns
      empty. #}
   <details class="section">
+    <a id="summary"></a>{# v0.7.x Phase I.1: mock-spec ID anchor #}
     <summary><h2>Summary</h2></summary>
-    {% if summary_html %}
-      {{ summary_html | safe }}
+    {# v0.7.x Phase J.2.1: reads report_data.summary.paragraphs_html (a list
+       of HTML paragraphs per the contract). Adapter currently wraps the
+       single render-time summary block as a one-element list, so this
+       loop emits one chunk - the legacy behaviour. #}
+    {% if report_data.summary and report_data.summary.paragraphs_html %}
+      {% for p in report_data.summary.paragraphs_html %}{{ p | safe }}{% endfor %}
     {% elif session.summary_html %}
       {{ session.summary_html | safe }}
     {% else %}
@@ -1267,35 +2189,60 @@
     {% endif %}
   </details>
 
-  {# v0.6.x: hoisted above Findings — the line-level drill-down is the
+  {# v0.6.x: hoisted above Findings - the line-level drill-down is the
      report's most distinctive section, so it lands first after the
      Summary narrative. The panel is pre-rendered by
-     _render_phase2_panel(session_doc) in renderer.py and returns "" when
-     the session has no phase-2 runs, so the section silently disappears
-     for sessions that never had drill-down. The HTML is fully self-
-     contained (inline styles, no external assets) so the safe-report
-     self-containment canary still passes. The <div id="phase2"> wrapper
-     is purely for the in-page jump-nav anchor. #}
-  {% if phase2_html %}
-  <div id="phase2">
-    {{ phase2_html | safe }}
-  </div>
+     _render_line_drilldown_panel(session_doc) in renderer.py and
+     returns "" when the session has no phase-2 runs, so the section
+     silently disappears for sessions that never had drill-down. The
+     HTML is fully self-contained (inline styles, no external assets)
+     so the safe-report self-containment canary still passes.
+     v0.7.x Phase I.1: the imperative-rendered HTML now opens with
+     a ``details`` element carrying the section anchor itself
+     (Phase F), so the legacy wrapper was redundant and was removed
+     to keep the anchor unique in the document. v0.7.x Phase J.16
+     renamed the anchor to ``id="line-drilldown"``; a legacy phase2
+     anchor element precedes the panel below so external links from
+     before the rename still resolve. #}
+  {# v0.7.x Phase J.16: the Line-Level Drilldown panel is still
+     pre-rendered server-side; the structured ``report_data.line_drilldown_runs``
+     list is available for a future template-side rewrite, but the
+     cross-run diff feature lives in Python for now. A legacy
+     ``id="phase2"`` anchor precedes the inner ``id="line-drilldown"``
+     element so external links from before the J.16 rename still
+     resolve in-page. #}
+  {% if report_data.line_drilldown_html %}
+  <a id="phase2"></a>
+  {{ report_data.line_drilldown_html | safe }}
+  {% endif %}
+
+  {# Phase K.5: call-tree panel for the slowest action. Empty string
+     when no action carries a call_tree_json; the renderer-side guard
+     hides the section. #}
+  {% if call_tree_html %}
+  {{ call_tree_html | safe }}
   {% endif %}
 
   {# --------------- FINDINGS (v0.5.2: per-app sub-grouping) --------------- #}
   <details class="section" open id="findings">
-    <summary><h2>Findings &mdash; what to fix</h2></summary>
-    {% if findings_by_app %}
+    <summary><h2>Findings - what to fix</h2></summary>
+    {# v0.7.x Phase J.2.7: Findings reads from report_data.findings_by_app
+       (passthrough of the legacy app-bucketed list). The contract's
+       transformed ``report_data.findings`` is available for a future
+       finding_card macro rewrite but isn't consumed yet - the macro
+       reads legacy field names (severity="High", technical_detail dict,
+       etc.) and the bucketing logic stays in renderer.py. #}
+    {% if report_data.findings_by_app %}
       <p class="small muted">Sorted by severity, then by impact. Grouped by app so you can focus on your custom code without scanning through framework noise.</p>
 
-      {% if findings_by_app | length == 1 %}
+      {% if report_data.findings_by_app | length == 1 %}
         {# Single app → skip the wrapper, render flat to avoid a
            pointless "myapp (N findings)" that wraps the whole list. #}
-        {% for f in findings_by_app[0].findings %}
+        {% for f in report_data.findings_by_app[0].findings %}
           {{ finding_card(f, "How to fix") }}
         {% endfor %}
       {% else %}
-        {% for bucket in findings_by_app %}
+        {% for bucket in report_data.findings_by_app %}
         <details class="subsection" open>
           <summary><h3>{{ app_bucket_header(bucket) }}</h3></summary>
           {% for f in bucket.findings %}
@@ -1314,21 +2261,21 @@
        erpnext + werkzeug doesn't read as one giant blob. User's
        rationale: "the framework and other 1 party app's scripts can
        be easily avoided and focus on their custom app". #}
-    {% if observational_findings_by_app %}
+    {% if report_data.observational_findings_by_app %}
     <details class="subsection">
       <summary><h3>Framework-level observations (not user-actionable)</h3></summary>
       <p class="small muted">
-        Informational signals without a concrete fix in your application code —
+        Informational signals without a concrete fix in your application code -
         framework-level activity, infrastructure pressure, and hot-frame
         observations. Listed for transparency; investigate if something here surprises you.
       </p>
 
-      {% if observational_findings_by_app | length == 1 %}
-        {% for f in observational_findings_by_app[0].findings %}
+      {% if report_data.observational_findings_by_app | length == 1 %}
+        {% for f in report_data.observational_findings_by_app[0].findings %}
           {{ finding_card(f, "Context") }}
         {% endfor %}
       {% else %}
-        {% for bucket in observational_findings_by_app %}
+        {% for bucket in report_data.observational_findings_by_app %}
         <details class="subsection">
           <summary><h3>{{ app_bucket_header(bucket) }}</h3></summary>
           {% for f in bucket.findings %}
@@ -1341,13 +2288,87 @@
     {% endif %}
   </details>
 
+  {# --------------- RECOMMENDED ACTION PLAN (v0.7.x Phase C) ---------
+     Top-3 highest-impact findings rendered as a numbered punch list
+     with verb-led titles + estimated savings. Sourced from the same
+     `_build_action_plan` data layer that supersedes the old exec-
+     summary bullets. Hidden when there's nothing to fix. #}
+  {# v0.7.x Phase J.2.2: iterate report_data.action_plan (contract shape).
+     savings_display already includes the `−` prefix; the template just
+     renders it verbatim. #}
+  {% if report_data.action_plan %}
+  <section id="plan">
+    <div class="section-head">
+      <h2>Recommended action plan</h2>
+      <span class="section-tag">top {{ report_data.action_plan | length }} by impact</span>
+    </div>
+    <div class="action-plan">
+      <h3>Fix these first</h3>
+      <p class="lead">In rough impact order - each step names a specific file and line. Estimated savings are wall-clock time, scaled per occurrence.</p>
+      {% for step in report_data.action_plan %}
+      <div class="action-step">
+        <div class="num">{{ step.number }}</div>
+        <div>
+          <p class="title">{{ step.title_html | safe }}</p>
+          <p class="desc">{{ step.description_html | safe }}</p>
+          {% if step.callsite %}<div class="callsite"><code>{{ step.callsite }}</code></div>{% endif %}
+        </div>
+        <div class="gain">
+          <span class="num-big">{{ step.savings_display }}</span>
+          <span class="gain-label">{{ step.savings_label }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {# --------------- WATERFALL (v0.7.x Phase C) ---------------
+     Top-N actions by duration, horizontal-bar timeline scaled to the
+     displayed slice's max (so short actions stay visible). Bar
+     colour: red when the action has a High-severity linked finding,
+     amber for RQ Jobs, info-blue otherwise. #}
+  {# v0.7.x Phase J.2.2: iterate report_data.waterfall (contract shape).
+     row.kind ∈ {"hot", "bg", "normal"}; row.is_hot_text colours the time
+     text red; row.duration_display already fmt_ms-formatted in Python. #}
+  {% if report_data.waterfall %}
+  <section id="waterfall">
+    <div class="section-head">
+      <h2>Where the time went</h2>
+      <span class="section-tag">top {{ report_data.waterfall | length }} actions</span>
+    </div>
+    <p class="section-intro">Wall-clock time per action, scaled to the slowest one shown. Red = a High-severity finding ties to this action; amber = RQ Job; blue = everything else.</p>
+    <div class="waterfall">
+      {% for row in report_data.waterfall %}
+      <div class="waterfall-row">
+        <div class="waterfall-name" title="{{ row.name }}">{{ row.name }}</div>
+        <div class="waterfall-track">
+          <div class="waterfall-bar{% if row.kind == 'hot' %} hot{% elif row.kind == 'bg' %} bg{% endif %}" style="width: {{ row.width_pct }}%;"></div>
+        </div>
+        <div class="waterfall-time{% if row.is_hot_text %} hot{% endif %}">{{ row.duration_display }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   {# --------------- PER-ACTION BREAKDOWN --------------- #}
   <details class="section" open id="per-action">
+    <a id="actions"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <summary><h2>Per-action breakdown</h2></summary>
-    {% if actions or actions_framework %}
+    {% if report_data.actions or report_data.actions_framework %}
       <p class="small muted">Sorted by duration. Your app's actions first; framework actions are collapsed below. Click on the action to drill into its queries.</p>
-      {% if actions %}
-      <table class="tbl-clip per-action-table">
+      {# v0.7.x Phase E: precompute the per-table max duration once
+         so the row macro can scale its inline bar correctly. Scope
+         the max to the table's own slice, not the combined set -
+         keeps the framework subsection's bars usable too. #}
+      {% set _threshold_ms = (report_data.large_duration_threshold_ms or 1000) | float %}
+      {% if report_data.actions %}
+      {# v0.7.x Phase J.2.3: iterate report_data.actions; the contract-shaped
+         entries preserve the legacy action keys so action_row reads
+         duration_ms / action_label / etc. unchanged. #}
+      {% set _max_action_ms = (report_data.actions | map(attribute='duration_ms') | map('default', 0) | list | max) or 1 %}
+      <table class="tbl-clip per-action-table data">
         <colgroup>
           <col class="col-idx">
           <col class="col-action">
@@ -1369,18 +2390,19 @@
           </tr>
         </thead>
         <tbody>
-        {% for action in actions %}
-          {{ action_row(action, loop.index) }}
+        {% for action in report_data.actions %}
+          {{ action_row(action, loop.index, max_ms=_max_action_ms, large_duration_threshold_ms=_threshold_ms) }}
         {% endfor %}
         </tbody>
       </table>
       {% else %}
-        <p class="small muted">No actions from your own app's code in this session &mdash; everything ran in framework code. Expand the block below to see what.</p>
+        <p class="small muted">No actions from your own app's code in this session - everything ran in framework code. Expand the block below to see what.</p>
       {% endif %}
-      {% if actions_framework %}
+      {% if report_data.actions_framework %}
+      {% set _max_fw_ms = (report_data.actions_framework | map(attribute='duration_ms') | map('default', 0) | list | max) or 1 %}
       <details class="subsection">
-        <summary class="small muted"><strong>{{ actions_framework | length }}</strong> framework action{{ "s" if actions_framework | length != 1 else "" }} (click to expand) &mdash; entry points in <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
-        <table class="tbl-clip per-action-table">
+        <summary class="small muted"><strong>{{ report_data.actions_framework | length }}</strong> framework action{{ "s" if report_data.actions_framework | length != 1 else "" }} (click to expand) - entry points in <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+        <table class="tbl-clip per-action-table data">
           <colgroup>
             <col class="col-idx">
             <col class="col-action">
@@ -1402,8 +2424,8 @@
             </tr>
           </thead>
           <tbody>
-          {% for action in actions_framework %}
-            {{ action_row(action, loop.index) }}
+          {% for action in report_data.actions_framework %}
+            {{ action_row(action, loop.index, max_ms=_max_fw_ms, large_duration_threshold_ms=_threshold_ms) }}
           {% endfor %}
           </tbody>
         </table>
@@ -1415,28 +2437,41 @@
   </details>
 
   {# --------------- v0.6.0: BACKGROUND JOBS --------------- #}
-  {# The background jobs the profiled flow enqueued — captured (the profiler
+  {# The RQ Jobs the profiled flow enqueued - captured (the profiler
      waits for them to finish before analyzing) and analyzed like requests.
      They also appear in the per-action breakdown above; this is a focused
      view with each job's slowest queries. Section omitted entirely when the
      flow enqueued nothing. #}
-  {% if background_jobs and background_jobs.count %}
+  {# v0.7.x Phase J.3.1: BG-jobs section reads aggregate fields from
+     report_data.background_jobs_summary (the legacy ``background_jobs``
+     dict had ``count``/``total_ms``/``total_queries``/``any_findings_counted``/
+     ``framework_count`` alongside the jobs lists; those move to a dedicated
+     namespace so the legacy dict can be dropped). #}
+  {% if report_data.background_jobs_summary.count %}
   <details class="section" open id="background-jobs">
-    <summary><h2>Background jobs</h2></summary>
+    <a id="jobs"></a>{# v0.7.x Phase G: mock-spec ID alias #}
+    <summary><h2>RQ Jobs</h2></summary>
     <p class="small muted">
-      {{ background_jobs.count }} background job{{ 's' if background_jobs.count != 1 else '' }}
-      ran during this flow &mdash; {{ fmt_ms(background_jobs.total_ms) }} total,
-      {{ background_jobs.total_queries }} quer{{ 'ies' if background_jobs.total_queries != 1 else 'y' }}.
+      {{ report_data.background_jobs_summary.count }} RQ Job{{ 's' if report_data.background_jobs_summary.count != 1 else '' }}
+      ran during this flow - {{ fmt_ms(report_data.background_jobs_summary.total_ms) }} total,
+      {{ report_data.background_jobs_summary.total_queries }} quer{{ 'ies' if report_data.background_jobs_summary.total_queries != 1 else 'y' }}.
       These also appear in the per-action breakdown above.
     </p>
     <p class="small muted">
       Jobs are captured until they finish (up to the configured wait). If a worker
-      wasn't running, or a job ran longer than the wait, it may be missing &mdash;
+      wasn't running, or a job ran longer than the wait, it may be missing -
       click <em>Retry Analyze</em> once it's done to pick it up.
     </p>
-    {% set cols = 7 if background_jobs.any_findings_counted else 6 %}
-    {% if background_jobs.jobs %}
-    <table>
+    {% set cols = 7 if report_data.background_jobs_summary.any_findings_counted else 6 %}
+    {% set _threshold_ms = (report_data.large_duration_threshold_ms or 1000) | float %}
+    {# v0.7.x Phase J.2.3: iterate report_data.background_jobs; entries
+       preserve the legacy job keys so bg_job_row reads job.method /
+       entry_callsite / etc. unchanged. The section heading still pulls
+       the count/total summary from the old background_jobs dict - that
+       migrates with the heading block in a later sub-phase. #}
+    {% if report_data.background_jobs %}
+    {% set _max_job_ms = (report_data.background_jobs | map(attribute='duration_ms') | map('default', 0) | list | max) or 1 %}
+    <table class="data">
       <thead>
         <tr>
           <th>#</th>
@@ -1445,22 +2480,23 @@
           <th class="num">Queries</th>
           <th class="num">DB time</th>
           <th class="num">Slowest query</th>
-          {% if background_jobs.any_findings_counted %}<th class="num">Findings</th>{% endif %}
+          {% if report_data.background_jobs_summary.any_findings_counted %}<th class="num">Findings</th>{% endif %}
         </tr>
       </thead>
       <tbody>
-      {% for job in background_jobs.jobs %}
-        {{ bg_job_row(job, loop.index, cols, background_jobs.any_findings_counted) }}
+      {% for job in report_data.background_jobs %}
+        {{ bg_job_row(job, loop.index, cols, report_data.background_jobs_summary.any_findings_counted, max_ms=_max_job_ms, large_duration_threshold_ms=_threshold_ms) }}
       {% endfor %}
       </tbody>
     </table>
     {% else %}
-      <p class="small muted">No background jobs from your own app's code &mdash; all jobs ran in framework code. Expand the block below to see what.</p>
+      <p class="small muted">No RQ Jobs from your own app's code - all jobs ran in framework code. Expand the block below to see what.</p>
     {% endif %}
-    {% if background_jobs.jobs_framework %}
+    {% if report_data.background_jobs_framework %}
+    {% set _max_fw_job_ms = (report_data.background_jobs_framework | map(attribute='duration_ms') | map('default', 0) | list | max) or 1 %}
     <details class="subsection">
-      <summary class="small muted"><strong>{{ background_jobs.framework_count }}</strong> framework job{{ "s" if background_jobs.framework_count != 1 else "" }} (click to expand) &mdash; <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
-      <table>
+      <summary class="small muted"><strong>{{ report_data.background_jobs_summary.framework_count }}</strong> framework job{{ "s" if report_data.background_jobs_summary.framework_count != 1 else "" }} (click to expand) - <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+      <table class="data">
         <thead>
           <tr>
             <th>#</th>
@@ -1469,12 +2505,12 @@
             <th class="num">Queries</th>
             <th class="num">DB time</th>
             <th class="num">Slowest query</th>
-            {% if background_jobs.any_findings_counted %}<th class="num">Findings</th>{% endif %}
+            {% if report_data.background_jobs_summary.any_findings_counted %}<th class="num">Findings</th>{% endif %}
           </tr>
         </thead>
         <tbody>
-        {% for job in background_jobs.jobs_framework %}
-          {{ bg_job_row(job, loop.index, cols, background_jobs.any_findings_counted) }}
+        {% for job in report_data.background_jobs_framework %}
+          {{ bg_job_row(job, loop.index, cols, report_data.background_jobs_summary.any_findings_counted, max_ms=_max_fw_job_ms, large_duration_threshold_ms=_threshold_ms) }}
         {% endfor %}
         </tbody>
       </table>
@@ -1489,41 +2525,47 @@
      or a controller method override, and surfacing cascaded DocTypes (e.g. a
      GL Entry created during a Sales Invoice submit). Omitted when no save/
      submit action had a slow lifecycle method. #}
-  {% if doc_event_breakdown and doc_event_breakdown.count %}
+  {# v0.7.x Phase J.2.2: iterate report_data.doc_events (contract shape).
+     The contract renames: events → methods, methods → hooks. The doctype
+     entry carries is_save_target/touched_during/method_count alongside
+     the summary string. #}
+  {% if report_data.doc_events %}
   <details class="section" id="doc-event-lifecycle">
+    <a id="doc-events"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <summary><h2>Doc-event lifecycle</h2></summary>
     <p class="small muted">
       Slow lifecycle methods (validate, on_submit, …) and registered doc-event
       hooks that ran during this session's save/submit actions, grouped by DocType
-      &mdash; including documents created by cascading hooks. Times are approximate
+      - including documents created by cascading hooks. Times are approximate
       (a method's time includes its callees).
     </p>
-    {% for g in doc_event_breakdown.doctypes %}
-    <div style="margin: 14px 0; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px;">
-      <div style="font-weight: 600;">
-        {{ g.doctype }}
-        <span class="small muted" style="font-weight: 400;">
+    {% for g in report_data.doc_events %}
+    <div class="doctype-block">
+      <div class="dt-head">
+        {{ g.name }}
+        <span class="dt-meta">
           {% if g.is_save_target %}&middot; saved/submitted directly{% endif %}
           {% if g.touched_during %}&middot; touched during {{ g.touched_during | join(", ") }} save/submit{% endif %}
           &middot; {{ g.method_count }} hot method{{ "s" if g.method_count != 1 else "" }}
-          &middot; ~{{ fmt_ms(g.total_ms) }}
+          &middot; ~{{ g.total_ms_display }}
         </span>
       </div>
-      {% for ev in g.events %}
-      <div style="margin: 8px 0 0 14px;">
-        <div class="small"><strong>{{ ev.event }}</strong> <span class="muted">&mdash; ~{{ fmt_ms(ev.total_ms) }}</span></div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 0.84rem; margin: 2px 0 0;">
-          {% for m in ev.methods %}
-          <tr>
-            <td style="padding: 2px 8px 2px 14px; border: none;">
-              {% if m._abs %}<a class="callsite-link" href="vscode://file{{ m._abs }}:{{ m.lineno }}" title="Open in VS Code / Cursor"><code>{{ m.function }}</code></a>{% else %}<code>{{ m.function }}</code>{% endif %}
-              <span class="small muted">{{ m.filename }}{% if m.lineno %}:{{ m.lineno }}{% endif %}</span>
-              <span class="small muted">[{{ m.kind }}]</span>
-            </td>
-            <td style="padding: 2px 8px; border: none; text-align: right; white-space: nowrap;">~{{ fmt_ms(m.ms) }}{% if m.count > 1 %} &times;{{ m.count }}{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </table>
+      {% for m in g.methods %}
+      <div class="event-section">
+        <span class="event-name">{{ m.name }}</span>
+        <span class="event-time">- ~{{ m.time_display }}</span>
+        {% for h in m.hooks %}
+        <div class="method-row">
+          <div>
+            <span class="method-name">
+              {% if h.vscode_link %}<a class="callsite-link" href="vscode://file{{ h.vscode_link }}:{{ h.lineno }}" title="Open in VS Code / Cursor">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}
+            </span>
+            <span class="method-meta">{{ h.filename }}{% if h.lineno %}:{{ h.lineno }}{% endif %}</span>
+            <span class="method-tag">{{ h.kind }}</span>
+          </div>
+          <div class="method-time">~{{ h.time_display }}{% if h.count > 1 %} &times;{{ h.count }}{% endif %}</div>
+        </div>
+        {% endfor %}
       </div>
       {% endfor %}
     </div>
@@ -1531,62 +2573,68 @@
   </details>
   {% endif %}
 
-  {# --------------- v0.5.0: SERVER RESOURCE PANEL --------------- #}
-  {% if infra_timeline %}
+  {# v0.7.x Phase J.2.4: Server Resource reads from report_data.resource
+     (contract). The cards still use the existing hardcoded 4-card markup
+     so colour/sub treatments stay editorial; the raw infra_summary +
+     infra_timeline travel under .summary and .timeline (non-contract
+     extensions). #}
+  {% if report_data.resource %}
   <details class="section" id="server-resource">
+    <a id="resource"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <summary><h2>Server Resource</h2></summary>
     <p class="small muted">
       CPU, memory, load average, DB and Redis pressure, and background
       queue depth sampled at each action boundary. Use this to tell code-slow
       from server-slow.
     </p>
-    <div class="stats" style="margin-bottom: 12px;">
-      <div class="stat">
-        <div class="label">CPU avg / peak</div>
-        <div class="value">
-          {{ "%.0f" | format(infra_summary.cpu_avg or 0) }}%
-          <span class="sub" style="font-size: 1rem">/ {{ "%.0f" | format(infra_summary.cpu_peak or 0) }}%</span>
+    {% set _rs = report_data.resource.summary %}
+    <div class="resource-grid">
+      <div class="resource-card">
+        <div class="rc-label">CPU avg / peak</div>
+        <div class="rc-value">
+          {{ "%.0f" | format(_rs.cpu_avg or 0) }}<span class="rc-unit">%</span>
+        </div>
+        <div class="rc-sub">peak {{ "%.0f" | format(_rs.cpu_peak or 0) }}%</div>
+      </div>
+      <div class="resource-card">
+        <div class="rc-label">Worker RSS delta</div>
+        <div class="rc-value">
+          {{ ((_rs.rss_delta or 0) / 1000000) | round(0) | int }}<span class="rc-unit">MB</span>
         </div>
       </div>
-      <div class="stat">
-        <div class="label">Worker RSS delta</div>
-        <div class="value">
-          {{ ((infra_summary.rss_delta or 0) / 1000000) | round(0) | int }}<span class="sub" style="font-size: 1rem">MB</span>
-        </div>
+      <div class="resource-card">
+        <div class="rc-label">Load peak</div>
+        <div class="rc-value">{{ "%.2f" | format(_rs.load_peak or 0) }}</div>
       </div>
-      <div class="stat">
-        <div class="label">Load peak</div>
-        <div class="value">{{ "%.2f" | format(infra_summary.load_peak or 0) }}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Swap peak</div>
-        <div class="value">
-          {{ infra_summary.swap_peak_mb or 0 }}<span class="sub" style="font-size: 1rem">MB</span>
+      <div class="resource-card">
+        <div class="rc-label">Swap peak</div>
+        <div class="rc-value">
+          {{ _rs.swap_peak_mb or 0 }}<span class="rc-unit">MB</span>
         </div>
       </div>
     </div>
-    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+    <table class="data">
       <thead>
-        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
-          <th style="padding: 6px 8px; text-align: left;">#</th>
-          <th style="padding: 6px 8px; text-align: left;">Action</th>
-          <th style="padding: 6px 8px; text-align: right;">CPU</th>
-          <th style="padding: 6px 8px; text-align: right;">RSS</th>
-          <th style="padding: 6px 8px; text-align: right;">Load</th>
-          <th style="padding: 6px 8px; text-align: right;">DB run/conn</th>
-          <th style="padding: 6px 8px; text-align: right;">RQ def/short/long</th>
+        <tr>
+          <th class="num">#</th>
+          <th>Action</th>
+          <th class="num">CPU</th>
+          <th class="num">RSS</th>
+          <th class="num">Load</th>
+          <th class="num">DB run/conn</th>
+          <th class="num">RQ def/short/long</th>
         </tr>
       </thead>
       <tbody>
-        {% for row in infra_timeline %}
-        <tr style="border-bottom: 1px solid #f3f4f6;">
-          <td style="padding: 4px 8px;">{{ row.action_idx }}</td>
-          <td style="padding: 4px 8px;">{{ row.action_label }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ "%.0f" | format(row.cpu or 0) }}%</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ ((row.rss or 0) / 1000000) | round(0) | int }}MB</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ "%.2f" | format(row.load_1min or 0) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ (row.db_threads_running or 0) | int }}/{{ (row.db_threads_connected or 0) | int }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ (row.rq_default or 0) | int }}/{{ (row.rq_short or 0) | int }}/{{ (row.rq_long or 0) | int }}</td>
+        {% for row in report_data.resource.timeline %}
+        <tr>
+          <td class="num">{{ row.action_idx }}</td>
+          <td>{{ row.action_label }}</td>
+          <td class="num">{{ "%.0f" | format(row.cpu or 0) }}%</td>
+          <td class="num">{{ ((row.rss or 0) / 1000000) | round(0) | int }}MB</td>
+          <td class="num">{{ "%.2f" | format(row.load_1min or 0) }}</td>
+          <td class="num">{{ (row.db_threads_running or 0) | int }}/{{ (row.db_threads_connected or 0) | int }}</td>
+          <td class="num">{{ (row.rq_default or 0) | int }}/{{ (row.rq_short or 0) | int }}/{{ (row.rq_long or 0) | int }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -1594,37 +2642,43 @@
   </details>
   {% endif %}
 
-  {# --------------- v0.5.0: FRONTEND PANEL --------------- #}
-  {% if frontend_xhr_matched or frontend_vitals_by_page %}
+  {# v0.7.x Phase J.2.4: Frontend reads from report_data.frontend (contract).
+     The raw frontend_summary / frontend_xhr_matched / frontend_orphans
+     travel under .summary / .xhr_matched / .orphans (non-contract
+     extensions). web_vitals iterates the structured list whose
+     ``*_class`` fields encode the web.dev thresholds in Python - the
+     legacy _vital macro is no longer needed. #}
+  {% if report_data.frontend %}
   <details class="section" id="frontend">
     <summary><h2>Frontend</h2></summary>
     <p class="small muted">
       Per-XHR timings from the browser joined to the matching server recording,
       plus Web Vitals (FCP, LCP, CLS) per page. Shows what the user actually
-      felt — network overhead and page paint time that the server alone can't see.
+      felt - network overhead and page paint time that the server alone can't see.
     </p>
-    <div class="stats" style="margin-bottom: 12px;">
-      <div class="stat">
-        <div class="label">Total XHRs</div>
-        <div class="value">{{ frontend_summary.total_xhrs or 0 }}</div>
+    {% set _fs = report_data.frontend.summary %}
+    <div class="resource-grid">
+      <div class="resource-card">
+        <div class="rc-label">Total XHRs</div>
+        <div class="rc-value">{{ _fs.total_xhrs or 0 }}</div>
       </div>
-      <div class="stat">
-        <div class="label">Browser wall time</div>
-        <div class="value">{{ fmt_ms(frontend_summary.total_xhr_ms or 0) }}</div>
+      <div class="resource-card">
+        <div class="rc-label">Browser wall time</div>
+        <div class="rc-value">{{ fmt_ms(_fs.total_xhr_ms or 0) }}</div>
       </div>
-      <div class="stat">
-        <div class="label">Backend time</div>
-        <div class="value">{{ fmt_ms(frontend_summary.total_backend_ms or 0) }}</div>
+      <div class="resource-card">
+        <div class="rc-label">Backend time</div>
+        <div class="rc-value">{{ fmt_ms(_fs.total_backend_ms or 0) }}</div>
       </div>
-      <div class="stat">
-        <div class="label">Network overhead</div>
-        <div class="value">{{ fmt_ms(frontend_summary.network_overhead_ms or 0) }}</div>
+      <div class="resource-card">
+        <div class="rc-label">Network overhead</div>
+        <div class="rc-value">{{ fmt_ms(_fs.network_overhead_ms or 0) }}</div>
       </div>
     </div>
 
-    {% if frontend_xhr_matched %}
+    {% if report_data.frontend.xhr_matched %}
     <h3 style="margin-bottom: 8px;">Per-action XHR timing</h3>
-    <table class="tbl-clip xhr-timing-table" style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+    <table class="tbl-clip xhr-timing-table data" style="width: 100%; font-size: 0.85rem;">
       <colgroup>
         <col class="col-action">
         <col class="col-num">
@@ -1646,7 +2700,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for m in frontend_xhr_matched %}
+        {% for m in report_data.frontend.xhr_matched %}
         <tr style="border-bottom: 1px solid #f3f4f6;">
           <td style="padding: 4px 8px;">{{ m.action_label }}</td>
           <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.backend_ms) }}</td>
@@ -1663,40 +2717,43 @@
     </table>
     {% endif %}
 
-    {% if frontend_vitals_by_page %}
-    <h3 style="margin-top: 16px; margin-bottom: 8px;">Web Vitals by page</h3>
-    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+    {% if report_data.frontend.web_vitals %}
+    <h3 class="frontend-h3">Web Vitals by page</h3>
+    {# v0.7.x Phase J.2.4: web vitals iterates a contract-shaped list
+       where each row carries pre-computed display strings and rating
+       classes (vital-good / vital-meh / vital-poor / vital-none) per
+       web.dev thresholds. Closes the Phase I.5 partial-vitals loop:
+       missing keys → vital-none + em-dash, computed in Python. #}
+    <table class="data vitals-table">
       <thead>
-        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
-          <th style="padding: 6px 8px; text-align: left;">Page</th>
-          <th style="padding: 6px 8px; text-align: right;">FCP</th>
-          <th style="padding: 6px 8px; text-align: right;">LCP</th>
-          <th style="padding: 6px 8px; text-align: right;">CLS</th>
-          <th style="padding: 6px 8px; text-align: right;">TTFB</th>
-          <th style="padding: 6px 8px; text-align: right;">DCL</th>
+        <tr>
+          <th>Page</th>
+          <th class="num">FCP</th>
+          <th class="num">LCP</th>
+          <th class="num">CLS</th>
+          <th class="num">TTFB</th>
+          <th class="num">DCL</th>
         </tr>
       </thead>
       <tbody>
-        {% for page, v in frontend_vitals_by_page.items() %}
-        <tr style="border-bottom: 1px solid #f3f4f6;">
-          <td style="padding: 4px 8px;">
-            <code style="font-size: 0.75rem;">{{ page }}</code>
-          </td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.fcp_ms or 0) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.lcp_ms or 0) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ "%.3f" | format(v.cls or 0) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.ttfb_ms or 0) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(v.dom_content_loaded_ms or 0) }}</td>
+        {% for row in report_data.frontend.web_vitals %}
+        <tr>
+          <td><code>{{ row.url }}</code></td>
+          <td class="num"><span class="{{ row.fcp_class }}">{{ row.fcp_display }}</span></td>
+          <td class="num"><span class="{{ row.lcp_class }}">{{ row.lcp_display }}</span></td>
+          <td class="num"><span class="{{ row.cls_class }}">{{ row.cls_display }}</span></td>
+          <td class="num"><span class="{{ row.ttfb_class }}">{{ row.ttfb_display }}</span></td>
+          <td class="num"><span class="{{ row.dcl_class }}">{{ row.dcl_display }}</span></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
     {% endif %}
 
-    {% if frontend_orphans %}
+    {% if report_data.frontend.orphans %}
     <details style="margin-top: 16px;">
       <summary class="small muted" style="cursor: pointer;">
-        Orphaned XHRs ({{ frontend_orphans | length }}) — no matching server recording
+        Orphaned XHRs ({{ report_data.frontend.orphans | length }}) - no matching server recording
       </summary>
       <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px;">
         <thead>
@@ -1707,7 +2764,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for o in frontend_orphans %}
+          {% for o in report_data.frontend.orphans %}
           <tr style="border-bottom: 1px solid #f3f4f6;">
             <td style="padding: 4px 8px;"><code style="font-size: 0.75rem;">{{ o.url }}</code></td>
             <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(o.duration_ms or 0) }}</td>
@@ -1722,11 +2779,16 @@
   {% endif %}
 
   {# --------------- v0.3.0: HOT FRAMES LEADERBOARD --------------- #}
-  {% if hot_frames_rows or hot_frames_rows_framework %}
+  {# v0.7.x Phase J.2.5: Hot frames reads from report_data.hot_frames /
+     .hot_frames_framework (non-contract split mirror of the existing
+     legacy split). The contract calls for a single list with
+     is_user_code flag; that collapse moves to J.3. #}
+  {% if report_data.hot_frames or report_data.hot_frames_framework %}
   <details class="section">
-    <summary><h2>Hot frames (top {{ ((hot_frames_rows or []) | length) + ((hot_frames_rows_framework or []) | length) }})</h2></summary>
-    {% if hot_frames_rows %}
-    <table>
+    <a id="hot-frames"></a>{# v0.7.x Phase I.1: mock-spec ID anchor #}
+    <summary><h2>Hot frames (top {{ (report_data.hot_frames | length) + (report_data.hot_frames_framework | length) }})</h2></summary>
+    {% if report_data.hot_frames %}
+    <table class="data hot-frames-table">
       <thead>
         <tr>
           <th>Function</th>
@@ -1736,18 +2798,18 @@
         </tr>
       </thead>
       <tbody>
-        {% for row in hot_frames_rows %}
+        {% for row in report_data.hot_frames %}
           {{ hot_frame_row(row) }}
         {% endfor %}
       </tbody>
     </table>
     {% else %}
-      <p class="small muted">No hot frames in your own app's code &mdash; all frames ran in framework code. Expand the block below to see what.</p>
+      <p class="small muted">No hot frames in your own app's code - all frames ran in framework code. Expand the block below to see what.</p>
     {% endif %}
-    {% if hot_frames_rows_framework %}
+    {% if report_data.hot_frames_framework %}
     <details class="subsection">
-      <summary class="small muted"><strong>{{ hot_frames_rows_framework | length }}</strong> framework frame{{ "s" if hot_frames_rows_framework | length != 1 else "" }} (click to expand) &mdash; <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
-      <table>
+      <summary class="small muted"><strong>{{ report_data.hot_frames_framework | length }}</strong> framework frame{{ "s" if report_data.hot_frames_framework | length != 1 else "" }} (click to expand) - <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+      <table class="data hot-frames-table">
         <thead>
           <tr>
             <th>Function</th>
@@ -1757,7 +2819,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for row in hot_frames_rows_framework %}
+          {% for row in report_data.hot_frames_framework %}
             {{ hot_frame_row(row) }}
           {% endfor %}
         </tbody>
@@ -1767,12 +2829,15 @@
   </details>
   {% endif %}
 
-  {# --------------- TOP-N SLOW QUERIES --------------- #}
+  {# v0.7.x Phase J.2.5: Slow queries reads from
+     report_data.slow_queries / .slow_queries_framework. The framework
+     split mirrors the legacy two-table layout pending J.3 collapse. #}
   <details class="section" id="top-queries">
-    <summary><h2>{% if top_queries %}Top {{ top_queries|length }} slowest queries{% else %}Slowest queries{% endif %} &mdash; your app</h2></summary>
-    {% if top_queries %}
-      <p class="small muted">Slowest queries issued from your own app's code. Framework and third-party queries are excluded &mdash; see the per-action breakdown below for the complete list.</p>
-      <table class="query-table">
+    <a id="queries"></a>{# v0.7.x Phase G: mock-spec ID alias #}
+    <summary><h2>{% if report_data.slow_queries %}Top {{ report_data.slow_queries|length }} slowest queries{% else %}Slowest queries{% endif %} - your app</h2></summary>
+    {% if report_data.slow_queries %}
+      <p class="small muted">Slowest queries issued from your own app's code. Framework and third-party queries are excluded - see the per-action breakdown below for the complete list.</p>
+      <table class="query-table data">
         <colgroup>
           <col class="col-index">
           <col class="col-duration">
@@ -1788,18 +2853,21 @@
           </tr>
         </thead>
         <tbody>
-        {% for q in top_queries %}
+        {% for q in report_data.slow_queries %}
           {{ top_query_row(q, loop.index) }}
         {% endfor %}
         </tbody>
       </table>
     {% else %}
-      <p class="empty">No notably slow queries from your app's own code in this session &mdash; nothing here is worth singling out. The per-action breakdown below lists every query, fast and framework ones included.</p>
+      <div class="empty-state">
+        <div class="empty-icon">&check; Clear</div>
+        <p>No notably slow queries from your app's own code in this session - nothing here is worth singling out. The per-action breakdown below lists every query, fast and framework ones included.</p>
+      </div>
     {% endif %}
-    {% if top_queries_framework %}
+    {% if report_data.slow_queries_framework %}
     <details class="subsection">
-      <summary class="small muted"><strong>{{ top_queries_framework | length }}</strong> framework quer{{ "ies" if top_queries_framework | length != 1 else "y" }} (click to expand) &mdash; <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
-      <table class="query-table">
+      <summary class="small muted"><strong>{{ report_data.slow_queries_framework | length }}</strong> framework quer{{ "ies" if report_data.slow_queries_framework | length != 1 else "y" }} (click to expand) - <code>frappe</code>, <code>erpnext</code>, and friends; the developer can't easily patch these</summary>
+      <table class="query-table data">
         <colgroup>
           <col class="col-index">
           <col class="col-duration">
@@ -1815,7 +2883,7 @@
           </tr>
         </thead>
         <tbody>
-        {% for q in top_queries_framework %}
+        {% for q in report_data.slow_queries_framework %}
           {{ top_query_row(q, loop.index) }}
         {% endfor %}
         </tbody>
@@ -1833,7 +2901,7 @@
       developer knows where to look. Actions are ordered by total duration.
     </p>
 
-    {% for action in (actions + (actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
+    {% for action in (report_data.actions + (report_data.actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
       {% set recording = recordings_by_uuid.get(action.recording_uuid) %}
       {% if recording and recording.calls %}
       <details{% if loop.index <= 3 %} open{% endif %} style="margin: 12px 0;">
@@ -1898,21 +2966,27 @@
 
   {# --------------- PER-TABLE BREAKDOWN --------------- #}
   <details class="section" id="db-tables">
+    <a id="db"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <summary><h2>Time spent per database table</h2></summary>
     {% if hidden_db_tables_count %}
       <p class="small muted" style="margin: 4px 0 10px; padding: 8px 12px; background: #f9fafb; border-radius: 6px;"><strong>{{ hidden_db_tables_count }}</strong> framework/internal table{{ "s" if hidden_db_tables_count != 1 else "" }} hidden (DocType / Workspace / Role / Has Role / DefaultValue / <code>information_schema.*</code> and friends). Uncheck <em>"Hide framework / internal database tables"</em> in Optimus Settings to see them.</p>
     {% endif %}
-    {% if table_breakdown %}
-      {% set written = table_breakdown | selectattr("write_count") | sort(attribute="write_count", reverse=True) | list %}
+    {# v0.7.x Phase J.2.5: DB tables read from report_data.db.tables.
+       The adapter spreads each original table dict so the rich index-
+       recommendation block keeps reading recommended_index /
+       index_candidates / is_meta_table / framework_cols_filtered /
+       ai_index without translation. #}
+    {% if report_data.db and report_data.db.tables %}
+      {% set written = report_data.db.tables | selectattr("write_count") | sort(attribute="write_count", reverse=True) | list %}
       {% if written %}
       <p class="small muted" style="margin-bottom:10px;">
         <strong>Tables written to this session</strong> ({{ written | length }}):
         {% for t in written[:12] %}<code title="{{ t.write_count }} write(s){% if t.get('write_time_ms') %}, {{ fmt_ms(t.write_time_ms) }}{% endif %}">{{ t.table }}</code>&nbsp;({{ t.write_count }}){% if not loop.last %}, {% endif %}{% endfor %}{% if written | length > 12 %} … and {{ written | length - 12 }} more{% endif %}.
-        <br>Writes are usually cheap (a handful of sub-millisecond <code>INSERT</code>&nbsp;/&nbsp;<code>UPDATE</code> rows), so a write-heavy table normally won't be near the top of the time-sorted list below &mdash; that's why a document save doesn't dominate this section. Drill into the <a href="#per-action">per-action breakdown</a> to see exactly what each save / submit wrote.
+        <br>Writes are usually cheap (a handful of sub-millisecond <code>INSERT</code>&nbsp;/&nbsp;<code>UPDATE</code> rows), so a write-heavy table normally won't be near the top of the time-sorted list below - that's why a document save doesn't dominate this section. Drill into the <a href="#per-action">per-action breakdown</a> to see exactly what each save / submit wrote.
       </p>
       {% endif %}
       <p class="small muted">Where the time goes, and how each table was used. A query touching multiple tables is counted against each, so the rows sum to more than the session total. <strong>Reads</strong> = <code>SELECT</code>; <strong>Writes</strong> = <code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code>. Sorted by time desc.</p>
-      <table>
+      <table class="data">
         <thead>
           <tr>
             <th>Table</th>
@@ -1923,82 +2997,101 @@
           </tr>
         </thead>
         <tbody>
-        {% for t in table_breakdown %}
+        {% for t in report_data.db.tables %}
           <tr>
             <td><code>{{ t.table }}</code></td>
             <td class="num">{{ fmt_ms(t.duration_ms) }}</td>
             <td class="num">{{ t.queries }}</td>
-            <td class="num">{{ t.get("read_count", "—") }}{% if t.get("read_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.read_time_ms) }}</span>{% endif %}</td>
-            <td class="num">{{ t.get("write_count", "—") }}{% if t.get("write_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.write_time_ms) }}</span>{% endif %}</td>
+            <td class="num">{{ t.get("read_count", "-") }}{% if t.get("read_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.read_time_ms) }}</span>{% endif %}</td>
+            <td class="num">{{ t.get("write_count", "-") }}{% if t.get("write_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.write_time_ms) }}</span>{% endif %}</td>
           </tr>
-          {% if t.get("recommended_index") %}
-          {% set rec = t.recommended_index %}
-          <tr>
-            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;font-size:0.82rem;">
-              <span class="muted" style="text-transform:uppercase;font-size:0.68rem;letter-spacing:0.5px;font-weight:600;">Index candidate &mdash; to speed up reads of this table</span><br>
-              The most-used filter on this table was <strong><code>({% for c in rec.columns %}{{ c }}{% if not loop.last %}, {% endif %}{% endfor %})</code></strong> &mdash; those columns were filtered together in {{ rec.together_count }} of {{ rec.read_count }} read{{ 's' if rec.read_count != 1 else '' }}. A composite index on them, leftmost-first, would help those reads:
-              <pre style="margin:6px 0;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:8px 10px;">frappe.db.add_index("{{ rec.doctype }}", [{% for c in rec.columns %}"{{ c }}"{% if not loop.last %}, {% endif %}{% endfor %}])</pre>
-              <span class="small muted">Put that in a patch &mdash; Customize&nbsp;Form ▸ field ▸ <em>Search&nbsp;Index</em> only makes single-column indexes. First run <code>SHOW INDEX FROM `{{ t.table }}`</code>: this may already be covered.</span>
-              {% if t.get("write_count", 0) %}
-                <div style="color:#b45309;margin-top:5px;">&#9888; {{ t.write_count }} write{% if t.write_count != 1 %}s{% endif %} on this table in this session{% if t.get("is_write_hot") %} &mdash; and <code>{{ t.table }}</code> is a write-hot core table (many rows inserted per submitted document in production){% endif %} &mdash; every index also slows writes, so add it only if a query in the per-action breakdown that filters this way is actually slow.</div>
-              {% elif t.get("is_write_hot") %}
-                <div style="color:#b45309;margin-top:5px;">&#9888; No writes in this session, but <code>{{ t.table }}</code> is normally write-hot in production (bulk inserts per submitted document) &mdash; be conservative about adding indexes here.</div>
-              {% else %}
-                <div class="muted" style="margin-top:5px;">No writes recorded &mdash; adding an index here is low-risk.</div>
-              {% endif %}
-              {% if rec.also_filtered %}
-                <div class="muted" style="margin-top:3px;">Other columns this session filtered on (in other / fewer queries) &mdash; index each only if its own query is slow: {% for c in rec.also_filtered %}<code>{{ c }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.</div>
-              {% endif %}
-              {% if t.get("framework_cols_filtered") %}
-                <div class="muted" style="margin-top:3px;">Also filtered on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) &mdash; never indexed (Frappe writes them on every save, or they're auto-indexed).</div>
-              {% endif %}
-              {% if t.get("ai_index") and t.ai_index.suggestion_html %}
-                <div class="ai-fix" style="margin-top:8px;">
-                  <div class="ai-fix-header">Index advice (AI{% if t.ai_index.model %} &mdash; {{ t.ai_index.model }}{% endif %})</div>
-                  <div class="ai-fix-body">{{ t.ai_index.suggestion_html | safe }}</div>
-                  <div class="ai-fix-foot">Machine-generated{% if t.ai_index.generated_at %} &middot; {{ fmt_dt(t.ai_index.generated_at) }}{% endif %} &mdash; verify against <code>SHOW INDEX</code> before applying.</div>
-                </div>
-              {% endif %}
-            </td>
-          </tr>
-          {% elif t.index_candidates %}
-          <tr>
-            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;font-size:0.82rem;">
-              <span class="muted" style="text-transform:uppercase;font-size:0.68rem;letter-spacing:0.5px;font-weight:600;">Index candidates &mdash; to speed up reads of this table</span><br>
-              {% for c in t.index_candidates %}<code title="used in {{ c.sources | join(', ') }} &middot; {{ c.hits }}× this session">{{ c.column }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-              {% if t.get("write_count", 0) %}
-                <span style="color:#b45309;"> &nbsp;&#9888; {{ t.write_count }} write{% if t.write_count != 1 %}s{% endif %} on this table — every index added also slows those writes, so index only the column(s) that meaningfully help reads (one composite index over columns filtered together beats several single-column ones).</span>
-              {% else %}
-                <span class="muted"> &nbsp;&middot; no writes recorded — adding an index here is low-risk.</span>
-              {% endif %}
-              {% if t.get("framework_cols_filtered") %}
-                <div class="muted" style="margin-top:3px;">Also filtered on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) &mdash; those aren't safe index targets (Frappe writes them on every save, or they're auto-indexed), so they're left out.</div>
-              {% endif %}
-            </td>
-          </tr>
-          {% elif t.get("is_meta_table") %}
-          <tr>
-            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;font-size:0.78rem;" class="muted">
-              Frappe framework meta table &mdash; <code>bench migrate</code> owns its schema (indexes included), so a hand-added index here is pointless and would be clobbered on the next migrate. Nothing suggested.
-            </td>
-          </tr>
-          {% elif "index_candidates" in t and t.get("framework_cols_filtered") %}
-          <tr>
-            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;font-size:0.78rem;" class="muted">
-              Reads here only filter on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) &mdash; those aren't safe index targets (Frappe writes them on every save, or they're auto-indexed), so nothing's suggested for this table.
-            </td>
-          </tr>
-          {% elif "index_candidates" in t and t.get("read_count") %}
-          <tr>
-            <td colspan="5" style="background:#f9fafb;border-top:none;padding:4px 12px 8px 28px;font-size:0.78rem;" class="muted">
-              Reads here filter on no single indexable column (full scans or primary-key lookups) &mdash; nothing obvious to add.
-            </td>
-          </tr>
-          {% endif %}
         {% endfor %}
         </tbody>
       </table>
-      <p class="small muted" style="margin-top:8px;">The <strong>index candidate</strong> for each table is the set of <code>WHERE</code> / <code>JOIN&nbsp;ON</code> columns this session filtered on <em>together</em> most often — a heuristic, not a verdict. Always confirm with the query's <code>EXPLAIN</code> (and a <code>SHOW INDEX FROM …</code>) before adding anything; every index also carries a write cost, and the column order in a composite matters (most-selective / equality columns first). Never suggested: Frappe's standard metadata columns (<code>name</code>, <code>creation</code>, <code>modified</code>, <code>parent</code>, <code>idx</code>, <code>docstatus</code>, …) — written on every save / already indexed; and Frappe's framework meta tables (<code>tabDocType</code>, <code>tabCustom Field</code>, <code>tabSingles</code>, …) — <code>bench&nbsp;migrate</code> owns their schema. ("&mdash;" in Reads/Writes means this session was analyzed before this breakdown was added &mdash; re-run <em>Retry Analyze</em> to populate.)</p>
+
+      {# v0.7.x Phase I: index recommendations rendered as `.index-rec`
+         cards BELOW the data table (lifted out of the colspan sub-rows
+         the older markup used). Each card carries the table name, the
+         read/write summary in mono, the recommendation prose, the
+         dark SQL snippet for any composite DDL, and an amber
+         warn-line when writes are present. Render only when a table
+         carries at least one of the recommendation flags. #}
+      {% set _rec_tables = [] %}
+      {% for t in report_data.db.tables %}
+        {% if t.get("recommended_index") or t.index_candidates or t.get("is_meta_table") or (t.get("framework_cols_filtered") and "index_candidates" in t) or ("index_candidates" in t and t.get("read_count")) %}
+          {% set _ = _rec_tables.append(t) %}
+        {% endif %}
+      {% endfor %}
+      {% if _rec_tables %}
+      <div class="index-recs">
+        <p class="index-recs-head">Index recommendations</p>
+        {% for t in _rec_tables %}
+        <div class="index-rec">
+          <div class="index-rec-head">
+            <span class="index-rec-table">{{ t.table }}</span>
+            <span class="index-rec-stats">
+              {% if t.get("read_count") is not none %}<span class="stat-num">{{ t.get("read_count", 0) }}</span> reads{% endif %}
+              {% if t.get("write_count") is not none %} &middot; <span class="stat-num">{{ t.get("write_count", 0) }}</span> writes{% endif %}
+              {% if t.get("duration_ms") %} &middot; {{ fmt_ms(t.duration_ms) }}{% endif %}
+            </span>
+          </div>
+
+          {% if t.get("recommended_index") %}
+            {% set rec = t.recommended_index %}
+            <div class="index-rec-label">Index candidate - to speed up reads</div>
+            <p>The most-used filter on this table was <code>({% for c in rec.columns %}{{ c }}{% if not loop.last %}, {% endif %}{% endfor %})</code> - those columns were filtered together in <strong>{{ rec.together_count }}</strong> of {{ rec.read_count }} read{{ 's' if rec.read_count != 1 else '' }}. A composite index on them, leftmost-first, would help those reads:</p>
+            <pre class="sql-snip">frappe.db.add_index("{{ rec.doctype }}", [{% for c in rec.columns %}"{{ c }}"{% if not loop.last %}, {% endif %}{% endfor %}])</pre>
+            <p class="note-text">Put that in a patch - Customize&nbsp;Form ▸ field ▸ <em>Search&nbsp;Index</em> only makes single-column indexes. First run <code>SHOW INDEX FROM `{{ t.table }}`</code>: this may already be covered.</p>
+            {% if t.get("write_count", 0) %}
+              <div class="warn-text">&#9888; {{ t.write_count }} write{% if t.write_count != 1 %}s{% endif %} on this table in this session{% if t.get("is_write_hot") %} - and <code>{{ t.table }}</code> is a write-hot core table (many rows inserted per submitted document in production){% endif %} - every index also slows writes, so add it only if a query in the per-action breakdown that filters this way is actually slow.</div>
+            {% elif t.get("is_write_hot") %}
+              <div class="warn-text">&#9888; No writes in this session, but <code>{{ t.table }}</code> is normally write-hot in production (bulk inserts per submitted document) - be conservative about adding indexes here.</div>
+            {% else %}
+              <div class="note-text">No writes recorded - adding an index here is low-risk.</div>
+            {% endif %}
+            {% if rec.also_filtered %}
+              <div class="note-text">Other columns this session filtered on (in other / fewer queries) - index each only if its own query is slow: {% for c in rec.also_filtered %}<code>{{ c }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.</div>
+            {% endif %}
+            {% if t.get("framework_cols_filtered") %}
+              <div class="note-text">Also filtered on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) - never indexed (Frappe writes them on every save, or they're auto-indexed).</div>
+            {% endif %}
+            {% if t.get("ai_index") and t.ai_index.suggestion_html %}
+              <div class="fix-box" style="margin-top: 10px;">
+                <div class="fix-head">
+                  <span>Index advice</span>
+                  <span class="ai-tag">AI{% if t.ai_index.model %} &middot; {{ t.ai_index.model }}{% endif %}</span>
+                </div>
+                <div class="fix-body">{{ t.ai_index.suggestion_html | safe }}</div>
+                <div class="fix-foot">Machine-generated{% if t.ai_index.generated_at %} &middot; {{ fmt_dt(t.ai_index.generated_at) }}{% endif %} - verify against <code>SHOW INDEX</code> before applying.</div>
+              </div>
+            {% endif %}
+
+          {% elif t.index_candidates %}
+            <div class="index-rec-label">Index candidates - to speed up reads</div>
+            <p>{% for c in t.index_candidates %}<code title="used in {{ c.sources | join(', ') }} &middot; {{ c.hits }}× this session">{{ c.column }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {% if t.get("write_count", 0) %}
+              <div class="warn-text">&#9888; {{ t.write_count }} write{% if t.write_count != 1 %}s{% endif %} on this table - every index added also slows those writes, so index only the column(s) that meaningfully help reads (one composite index over columns filtered together beats several single-column ones).</div>
+            {% else %}
+              <div class="note-text">No writes recorded - adding an index here is low-risk.</div>
+            {% endif %}
+            {% if t.get("framework_cols_filtered") %}
+              <div class="note-text">Also filtered on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) - those aren't safe index targets (Frappe writes them on every save, or they're auto-indexed), so they're left out.</div>
+            {% endif %}
+
+          {% elif t.get("is_meta_table") %}
+            <p class="note-text">Frappe framework meta table - <code>bench migrate</code> owns its schema (indexes included), so a hand-added index here is pointless and would be clobbered on the next migrate. Nothing suggested.</p>
+
+          {% elif "index_candidates" in t and t.get("framework_cols_filtered") %}
+            <p class="note-text">Reads here only filter on Frappe metadata columns ({% for fc in t.framework_cols_filtered %}<code>{{ fc }}</code>{% if not loop.last %}, {% endif %}{% endfor %}) - those aren't safe index targets (Frappe writes them on every save, or they're auto-indexed), so nothing's suggested for this table.</p>
+
+          {% elif "index_candidates" in t and t.get("read_count") %}
+            <p class="note-text">Reads here filter on no single indexable column (full scans or primary-key lookups) - nothing obvious to add.</p>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <p class="small muted" style="margin-top:8px;">The <strong>index candidate</strong> for each table is the set of <code>WHERE</code> / <code>JOIN&nbsp;ON</code> columns this session filtered on <em>together</em> most often - a heuristic, not a verdict. Always confirm with the query's <code>EXPLAIN</code> (and a <code>SHOW INDEX FROM …</code>) before adding anything; every index also carries a write cost, and the column order in a composite matters (most-selective / equality columns first). Never suggested: Frappe's standard metadata columns (<code>name</code>, <code>creation</code>, <code>modified</code>, <code>parent</code>, <code>idx</code>, <code>docstatus</code>, …) - written on every save / already indexed; and Frappe's framework meta tables (<code>tabDocType</code>, <code>tabCustom Field</code>, <code>tabSingles</code>, …) - <code>bench&nbsp;migrate</code> owns their schema. ("-" in Reads/Writes means this session was analyzed before this breakdown was added - re-run <em>Retry Analyze</em> to populate.)</p>
     {% else %}
       <p class="empty">No table breakdown available.</p>
     {% endif %}
@@ -2008,10 +3101,10 @@
   {% if recordings_by_uuid %}
   <details class="section">
     <summary><h2>Full recordings</h2></summary>
-    <p class="small muted">Every action's complete data &mdash; raw SQL with literal values, request headers, form data, and full Python stack traces. <strong>This contains potentially sensitive customer data &mdash; do not share externally.</strong></p>
+    <p class="small muted">Every action's complete data - raw SQL with literal values, request headers, form data, and full Python stack traces. <strong>This contains potentially sensitive customer data - do not share externally.</strong></p>
     <p class="small muted">Each action is collapsed by default. Click to expand.</p>
 
-    {% for action in (actions + (actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
+    {% for action in (report_data.actions + (report_data.actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
       {% set recording = recordings_by_uuid.get(action.recording_uuid) %}
       {% if recording %}
       <details style="margin: 12px 0; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
@@ -2044,7 +3137,7 @@
                 <pre style="margin: 4px 0;">{{ call.query }}</pre>
                 {% if call.stack %}
                   <details>
-                    <summary class="small muted">Stack ({{ call.stack | length }} frames) &mdash; click to expand</summary>
+                    <summary class="small muted">Stack ({{ call.stack | length }} frames) - click to expand</summary>
                     <pre class="small">{% for frame in call.stack %}{{ frame.filename }}:{{ frame.lineno }} ({{ frame.function }})
 {% endfor %}</pre>
                   </details>
@@ -2063,19 +3156,19 @@
   {% endif %}
 
   {# v0.6.0: orientation for someone seeing this report for the first time.
-     Collapsed by default — the summary line alone tells repeat readers it's
+     Collapsed by default - the summary line alone tells repeat readers it's
      here. v0.7.x: moved to the bottom of the report (was originally between
      the Jump-to nav and the executive summary). Repeat readers don't need
      it surfaced above the technical content; first-time readers reach it
      via the "How to read" link in the Jump-to nav. #}
-  <details class="section" id="how-to-read" style="background:#f8fafc;">
+  <details class="how-to" id="how-to-read">
     <summary><h2>How to read this report</h2></summary>
     <ul class="small" style="margin:6px 0 0 18px;padding:0;line-height:1.7;">
-      <li>Start with <strong>Findings</strong> &mdash; that's the punch list of what to fix. The <em>Observations</em> sub-list under it is FYI signal (framework-level issues, system pressure) with no concrete fix you can ship.</li>
+      <li>Start with <strong>Findings</strong> - that's the punch list of what to fix. The <em>Observations</em> sub-list under it is FYI signal (framework-level issues, system pressure) with no concrete fix you can ship.</li>
       <li>The per-action table below lists every request the session captured, sorted by duration; the background-jobs section lists the jobs those requests enqueued (captured and analyzed too).</li>
-      <li>The database-tables section shows where DB time went, with an index candidate per table; the <em>tables written to</em> line at the top of it lists every table the session wrote &mdash; writes are cheap, so they rank low by time. The slowest-queries section covers your own app's code only.</li>
-      <li>The server-resource and frontend panels show CPU / memory / queue pressure and browser timings &mdash; only when captured.</li>
-      <li>The full-recordings and queries-per-action sections (collapsed) hold the raw SQL, headers, form data and stack traces &mdash; for deep dives.</li>
+      <li>The database-tables section shows where DB time went, with an index candidate per table; the <em>tables written to</em> line at the top of it lists every table the session wrote - writes are cheap, so they rank low by time. The slowest-queries section covers your own app's code only.</li>
+      <li>The server-resource and frontend panels show CPU / memory / queue pressure and browser timings - only when captured.</li>
+      <li>The full-recordings and queries-per-action sections (collapsed) hold the raw SQL, headers, form data and stack traces - for deep dives.</li>
       <li>Hover any <code>file.py:123</code> callsite to open it in VS&nbsp;Code. Anything starting with <code>tab</code> is a database table; the DocType is the part after <code>tab</code>.</li>
     </ul>
   </details>
@@ -2084,24 +3177,22 @@
   <div class="footer">
     <p>
       Generated by <strong>Optimus</strong> &middot;
-      <span style="color:#dc2626">Admin report &mdash; contains sensitive data, internal use only</span>
+      <span class="warn-line">Admin report - contains sensitive data, internal use only</span>
     </p>
     <p class="small" style="margin-top: 8px; color: #9ca3af;">
       Do NOT email, upload, or share this file externally without redacting
       it yourself. Query literals, request headers, form data, and full
       stack traces are all included verbatim.
     </p>
-    {% if render_config %}
+    {# v0.7.x Phase J.2.1: reads report_data.footer.settings (a pre-
+       composed ` · `-joined string per the contract). The `<code>` per-
+       value styling from pre-J.2 is gone; in exchange the contract's
+       compact one-line shape lets the footer line wrap predictably. #}
+    {% if report_data.footer and report_data.footer.settings %}
     <p class="small" style="margin-top: 10px; color: #9ca3af;">
       <strong>Rendered with:</strong>
-      hide_framework_tables = <code>{{ "on" if render_config.hide_framework_tables else "off" }}</code> &middot;
-      tracked_apps = <code>{{ render_config.tracked_apps | join(", ") if render_config.tracked_apps else "(none)" }}</code> &middot;
-      ignored_apps = <code>{{ render_config.ignored_apps | join(", ") if render_config.ignored_apps else "(none)" }}</code> &middot;
-      ai_suggest_findings = <code>{{ "on" if render_config.ai_suggest_findings else "off" }}</code> &middot;
-      ai_suggest_indexes = <code>{{ "on" if render_config.ai_suggest_indexes else "off" }}</code> &middot;
-      min_action_duration_ms = <code>{{ render_config.min_action_duration_ms | round(0) | int }}</code> &middot;
-      large_duration_threshold_ms = <code>{{ render_config.large_duration_threshold_ms | round(0) | int }}</code>.
-      Settings affect FUTURE renders only &mdash; click <em>Regenerate Reports</em> on the Optimus Session after a settings change.
+      {{ report_data.footer.settings }}.
+      Settings affect FUTURE renders only - click <em>Regenerate Reports</em> on the Optimus Session after a settings change.
     </p>
     {% endif %}
   </div>

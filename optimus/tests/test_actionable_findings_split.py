@@ -110,7 +110,7 @@ def test_template_has_observations_subsection_inside_findings():
 		"report.html must iterate observational_findings"
 	)
 	# Observations is now a <details class="subsection"> inside Findings.
-	findings_idx = template.find("Findings &mdash; what to fix")
+	findings_idx = template.find("Findings - what to fix")
 	obs_idx = template.find("Framework-level observations")
 	assert findings_idx > 0 and obs_idx > 0
 	assert obs_idx > findings_idx, (

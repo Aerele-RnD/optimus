@@ -52,16 +52,16 @@ class TestLensPromoRendering:
 	def test_block_renders_exactly_once(self):
 		"""Promo is hardcoded — should appear on every report, exactly once."""
 		html = renderer.render_raw(_doc(), recordings=[])
-		assert html.count('class="section small lens-promo"') == 1
+		assert html.count('class="section lens-promo"') == 1
 
 	def test_block_positioned_before_jump_to_nav(self):
 		"""The Lens block must sit BEFORE the Jump-to nav (sibling, above
-		it). Anchor on the literal Jump-to string vs the lens-promo
-		class fragment."""
+		it). v0.7.x Phase A: nav is `<nav class="nav-pills">`; anchor on
+		that opening tag."""
 		html = renderer.render_raw(_doc(), recordings=[])
-		jump_idx = html.find("<strong>Jump to:</strong>")
-		lens_idx = html.find('class="section small lens-promo"')
-		assert jump_idx != -1, "Jump-to nav not found"
+		jump_idx = html.find('<nav class="nav-pills">')
+		lens_idx = html.find('class="section lens-promo"')
+		assert jump_idx != -1, "Jump-to nav-pills not found"
 		assert lens_idx != -1, "Lens promo block not found"
 		assert lens_idx < jump_idx, (
 			"Lens promo block must render BEFORE the Jump-to nav, not after"
@@ -93,7 +93,7 @@ class TestLensPromoRendering:
 		<img>, <link rel="...">, or <script> — those would break the
 		saved-HTML offline guarantee on click-free render."""
 		html = renderer.render_raw(_doc(), recordings=[])
-		start = html.find('<aside class="section small lens-promo"')
+		start = html.find('<aside class="section lens-promo"')
 		assert start != -1, "Lens promo block opening tag not found"
 		end = html.find("</aside>", start)
 		assert end != -1, "Lens promo block has no closing </aside> tag"

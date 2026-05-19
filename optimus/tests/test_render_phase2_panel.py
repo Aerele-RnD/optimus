@@ -67,7 +67,11 @@ class TestRenderPhase2PanelSingleRun:
 		html = renderer._render_phase2_panel(session)
 
 		assert "my_app.x.compute" in html
-		assert "Phase 2: Line-Level Drilldown" in html
+		# v0.7.x Phase I.2: heading dropped the "Phase 2" prefix —
+		# now reads just "Line-Level Drilldown" (the section's own
+		# content makes the line-level drilldown nature self-evident
+		# without the internal-phase jargon).
+		assert "Line-Level Drilldown" in html
 
 	def test_source_always_rendered(self):
 		# v0.6.0 Round 7: safe-mode source toggle removed. Source is
@@ -151,7 +155,10 @@ class TestRenderPhase2PanelAutoExpandChain:
 		root_idx = html.rfind("my_app.x.root_fn")
 		assert root_idx > -1
 		nearby = html[max(0, root_idx - 200):root_idx]
-		assert "margin: 12px 0 12px 24px" not in nearby
+		# v0.7.x Phase F: indent now expressed via `.indent-1` /
+		# `.indent-2` class names on the `.phase2-func` block, not
+		# inline margin. Anchor on the class instead.
+		assert "indent-1" not in nearby
 		assert "↳" not in nearby
 
 	def test_auto_expanded_descendant_renders_indented(self):
@@ -164,8 +171,11 @@ class TestRenderPhase2PanelAutoExpandChain:
 		desc_idx = html.rfind("my_app.x.descendant")
 		assert desc_idx > -1
 		nearby = html[max(0, desc_idx - 300):desc_idx]
-		assert "margin: 12px 0 12px 24px" in nearby
-		assert "↳" in nearby
+		# v0.7.x Phase F: indent now `.indent-1` class on the
+		# `.phase2-func` block + `&#x21B3;` arrow span before the
+		# function name.
+		assert "indent-1" in nearby
+		assert "&#x21B3;" in nearby
 
 	def test_no_picks_json_falls_back_to_curated_no_indent(self):
 		# Older runs may not carry source markers; renderer should treat
@@ -210,9 +220,11 @@ class TestRenderPhase2PanelSelfContainment:
 
 
 class TestRenderPhase2PanelPosition:
-	"""v0.6.x: Phase 2 is hoisted above the Findings section in the report.
-	A render-level check that the rendered HTML places the ``id="phase2"``
-	anchor before the ``<h2>Findings &mdash; what to fix</h2>`` heading.
+	"""v0.6.x: Line-Level Drilldown is hoisted above the Findings section
+	in the report. A render-level check that the rendered HTML places
+	the section anchor (``id="phase2"`` legacy alias or
+	``id="line-drilldown"`` canonical) before the
+	``<h2>Findings - what to fix</h2>`` heading.
 	"""
 
 	def _session_doc(self, *, with_phase2=True):
@@ -238,7 +250,7 @@ class TestRenderPhase2PanelPosition:
 	def test_phase2_anchor_renders_before_findings_h2(self):
 		html = renderer.render_raw(self._session_doc(with_phase2=True), recordings=[])
 		phase2_idx = html.find('id="phase2"')
-		findings_h2 = html.find("<h2>Findings &mdash; what to fix</h2>")
+		findings_h2 = html.find("<h2>Findings - what to fix</h2>")
 		assert phase2_idx > 0, "id=\"phase2\" wrapper missing from rendered HTML"
 		assert findings_h2 > 0, "Findings <h2> missing from rendered HTML"
 		assert phase2_idx < findings_h2, (
@@ -249,13 +261,17 @@ class TestRenderPhase2PanelPosition:
 	def test_phase2_jump_nav_link_appears_when_runs_present(self):
 		html = renderer.render_raw(self._session_doc(with_phase2=True), recordings=[])
 		# The jump-nav link is the visible affordance for the hoisted section.
-		assert 'href="#phase2"' in html
-		assert "Phase 2 line drill-down" in html
+		# v0.7.x Phase J.16: nav anchor renamed from "#phase2" to
+		# "#line-drilldown"; the legacy "#phase2" anchor element still
+		# precedes the panel so external links resolve.
+		assert 'href="#line-drilldown"' in html
+		assert ">Line-Level Drilldown</a>" in html
 
 	def test_phase2_omitted_when_no_runs(self):
 		html = renderer.render_raw(self._session_doc(with_phase2=False), recordings=[])
 		# Conditional both ways: no panel + no jump link when the session
 		# had no phase-2 runs.
 		assert 'id="phase2"' not in html
-		assert 'href="#phase2"' not in html
-		assert "Phase 2 line drill-down" not in html
+		assert 'id="line-drilldown"' not in html
+		assert 'href="#line-drilldown"' not in html
+		assert ">Line-Level Drilldown</a>" not in html

@@ -4,7 +4,7 @@
 """Unit tests for ``renderer._action_entry_callsite`` and the dotted-entry
 derivation that feeds it.
 
-The per-action breakdown and the Background Jobs section identify an action
+The per-action breakdown and the RQ Jobs section identify an action
 only by a dotted module path (``ugly_code.python.common.bg_recheck_users``)
 or a URL. This resolves that entry point to ``file:line`` + a ±1-line source
 snippet. The tests resolve a real function in *this* app
@@ -27,7 +27,7 @@ def _expected_lineno():
 class TestActionDottedEntry:
 	def test_background_job_path_is_the_dotted_entry(self):
 		assert renderer._action_dotted_entry(
-			{"event_type": "Background Job", "path": "ugly_code.python.common.bg_recheck_users"}
+			{"event_type": "RQ Job", "path": "ugly_code.python.common.bg_recheck_users"}
 		) == "ugly_code.python.common.bg_recheck_users"
 
 	def test_http_api_method_path_strips_prefix(self):
@@ -52,8 +52,8 @@ class TestActionDottedEntry:
 		) is None
 
 	def test_empty_missing_or_bad_input(self):
-		assert renderer._action_dotted_entry({"event_type": "Background Job", "path": ""}) is None
-		assert renderer._action_dotted_entry({"event_type": "Background Job"}) is None
+		assert renderer._action_dotted_entry({"event_type": "RQ Job", "path": ""}) is None
+		assert renderer._action_dotted_entry({"event_type": "RQ Job"}) is None
 		assert renderer._action_dotted_entry({"event_type": "HTTP Request", "path": ""}) is None
 		assert renderer._action_dotted_entry({}) is None
 		assert renderer._action_dotted_entry(None) is None
@@ -106,7 +106,7 @@ class TestActionEntryCallsite:
 
 	def test_resolves_background_job_action(self):
 		self._expect_renderer_py(renderer._action_entry_callsite(
-			{"event_type": "Background Job", "path": _DOTTED}
+			{"event_type": "RQ Job", "path": _DOTTED}
 		))
 
 	def test_resolves_http_api_method_action(self):
@@ -115,7 +115,7 @@ class TestActionEntryCallsite:
 		))
 
 	def test_display_path_matches_bench_relpath(self):
-		cs = renderer._action_entry_callsite({"event_type": "Background Job", "path": _DOTTED})
+		cs = renderer._action_entry_callsite({"event_type": "RQ Job", "path": _DOTTED})
 		try:
 			from frappe.utils import get_bench_path
 			expected = os.path.relpath(cs["_abs"], get_bench_path()).replace("\\", "/")
@@ -130,28 +130,28 @@ class TestActionEntryCallsite:
 
 	def test_none_for_unresolvable_dotted_path(self):
 		assert renderer._action_entry_callsite(
-			{"event_type": "Background Job", "path": "nope_xyzq.does.not.exist"}
+			{"event_type": "RQ Job", "path": "nope_xyzq.does.not.exist"}
 		) is None
 
 	def test_none_for_empty_path(self):
 		assert renderer._action_entry_callsite(
-			{"event_type": "Background Job", "path": ""}
+			{"event_type": "RQ Job", "path": ""}
 		) is None
 
 	def test_none_when_dotted_resolves_to_a_module(self):
 		assert renderer._action_entry_callsite(
-			{"event_type": "Background Job", "path": "optimus.renderer"}
+			{"event_type": "RQ Job", "path": "optimus.renderer"}
 		) is None
 
 	def test_none_for_builtin_no_code_object(self):
 		assert renderer._action_entry_callsite(
-			{"event_type": "Background Job", "path": "builtins.len"}
+			{"event_type": "RQ Job", "path": "builtins.len"}
 		) is None
 
 	def test_forwards_file_cache(self):
 		cache: dict = {}
 		cs = renderer._action_entry_callsite(
-			{"event_type": "Background Job", "path": _DOTTED}, cache=cache,
+			{"event_type": "RQ Job", "path": _DOTTED}, cache=cache,
 		)
 		assert cs is not None and cs["source_snippet"]
 		# _read_source_snippet memoizes the file's split lines under the path

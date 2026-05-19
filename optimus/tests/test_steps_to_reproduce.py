@@ -80,26 +80,32 @@ def test_api_start_writes_notes_to_doc():
 
 
 def test_report_template_renders_notes():
-	"""The report template must render the notes section and
-	use the pre-sanitized `notes_html` context var (which is |safe)."""
+	"""The report template must render the notes section using a
+	pre-sanitized variable. Post-J.2.1 the template reads
+	``report_data.repro.raw_html`` (sourced from the same sanitized
+	``notes_html`` that ``renderer.render`` builds via
+	``sanitize_html(always_sanitize=True)``)."""
 	tpath = os.path.join(HERE, "..", "templates", "report.html")
 	with open(tpath) as f:
 		template = f.read()
 
-	# Template must use the sanitized notes_html var, not raw session.notes.
-	# Using session.notes directly with |safe would be a stored-XSS sink.
-	assert "notes_html" in template
-	assert "notes_html | safe" in template or "notes_html|safe" in template
+	# XSS guard: the template must NEVER pipe the raw doc field through
+	# |safe. The sanitized version is mandatory.
+	assert "session.notes | safe" not in template
+	assert "session.notes|safe" not in template
+
+	# The repro section reads from the contract-shaped report_data.repro.
+	assert "report_data.repro" in template
 	# "Steps to Reproduce" heading must appear so users know the purpose.
 	assert "Steps to Reproduce" in template
 
-	# Verify notes appear ABOVE the "Findings — what to fix" section header.
-	notes_idx = template.find("notes_html")
-	findings_heading_idx = template.find("Findings &mdash; what to fix")
-	assert notes_idx > 0
+	# Repro section renders ABOVE the "Findings — what to fix" section.
+	repro_idx = template.find("report_data.repro")
+	findings_heading_idx = template.find("Findings - what to fix")
+	assert repro_idx > 0
 	assert findings_heading_idx > 0
-	assert findings_heading_idx > notes_idx, (
-		"notes section must appear above 'Findings — what to fix'"
+	assert findings_heading_idx > repro_idx, (
+		"repro section must appear above 'Findings — what to fix'"
 	)
 
 

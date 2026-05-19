@@ -7,11 +7,21 @@ the existing technical_detail rows. Uses renderer.render_raw end-to-end
 so we verify the macro within its real context.
 """
 
+import html as _html
 import inspect
 import json
+import re
 from types import SimpleNamespace
 
 from optimus import renderer
+
+
+def _plain(html_str: str) -> str:
+	"""Strip HTML tags + decode entities so substring assertions on
+	source-code content work after v0.7.x VSCode Dark+ syntax
+	highlighting wraps each token in its own ``<span class="tok-...">``
+	element (and Pygments escapes string quotes to ``&#39;`` etc.)."""
+	return _html.unescape(re.sub(r"<[^>]+>", "", html_str))
 
 
 def _finding_child(
@@ -88,8 +98,9 @@ class TestSourceSnippetRendering:
 
 		html = renderer.render_raw(doc, recordings=[])
 
-		assert "for i in range(50):" in html
-		assert "frappe.get_doc(&#39;User&#39;, i)" in html or "frappe.get_doc('User', i)" in html
+		plain = _plain(html)
+		assert "for i in range(50):" in plain
+		assert "frappe.get_doc('User', i)" in plain
 		# Lineno labels should appear next to the snippet rows.
 		assert ">41<" in html
 		assert ">42<" in html
@@ -104,7 +115,7 @@ class TestSourceSnippetRendering:
 
 		html = renderer.render_raw(doc, recordings=[])
 
-		assert "frappe.db.sql" in html
+		assert "frappe.db.sql" in _plain(html)
 
 	def test_finding_without_source_snippet_still_renders_callsite(self):
 		# Older sessions / sessions where the file couldn't be read.
@@ -119,6 +130,27 @@ class TestSourceSnippetRendering:
 		# at all (the placeholder only shows when we *had* a snippet but
 		# the safe-mode toggle suppressed it).
 		assert "&lt;source omitted&gt;" not in html
+
+	def test_blank_context_lines_are_skipped(self):
+		# Regression: the snippet builder returns a ±1 window so a def line
+		# preceded by the PEP-8 blank-line separator yields an empty leading
+		# row. Rendering that as a line-number gutter with no content
+		# produced a dead band of empty space above the highlighted target.
+		snippet = [
+			{"lineno": 198, "content": ""},                           # blank separator
+			{"lineno": 199, "content": "def my_func(doc_name=None):"},  # target
+			{"lineno": 200, "content": "    for i in range(15):"},
+		]
+		doc = _fake_doc([_finding_child(lineno=199, source_snippet=snippet)])
+
+		html = renderer.render_raw(doc, recordings=[])
+
+		# Blank leading row is dropped.
+		assert '<span class="ln">198</span>' not in html
+		# Target line + the trailing context line are kept.
+		assert '<span class="ln">199</span>' in html
+		assert '<span class="ln">200</span>' in html
+		assert "def my_func(doc_name=None):" in _plain(html)
 
 
 class TestSmokingGunBlockHoisting:
@@ -192,7 +224,7 @@ class TestPhase2Crosslink:
 
 		html = renderer.render_raw(doc, recordings=[])
 
-		assert "Phase 2:" in html
+		assert "Line-Level Drilldown:" in html
 		assert "hottest line 42" in html
 		assert "160ms" in html or "160.5ms" in html
 		assert "50 hit" in html
@@ -358,16 +390,17 @@ class TestPhase2Crosslink:
 		# Smoking-gun callsite has been retargeted to the **call site**
 		# of _check_user_exists in its parent (_run_validations). That
 		# call lives at line 13 (``    _check_user_exists(doc)``), not
-		# at the leaf's def line 18. The smoking-gun block uses class
-		# "smoking-gun" so we scope the asserts to that section to avoid
-		# false matches against the Drill-down chain rendering below
-		# (which DOES reference line 18 as one of the descent steps).
-		smoking_gun_start = html.find('class="smoking-gun"')
-		smoking_gun_end = html.find("Drill-down", smoking_gun_start)
-		assert smoking_gun_start > -1 and smoking_gun_end > -1
-		smoking_gun_html = html[smoking_gun_start:smoking_gun_end]
+		# at the leaf's def line 18. v0.7.x redesign Phase D: the
+		# file:line callsite header moved from inside `.smoking` to
+		# the `.finding-meta` row under the title — slice the broader
+		# `.finding` card up to the Drill-down chain so both the meta
+		# row AND the smoking-gun snippet are inside the scope.
+		finding_start = html.find('class="finding severity-')
+		finding_end = html.find("Drill-down", finding_start)
+		assert finding_start > -1 and finding_end > -1
+		smoking_gun_html = html[finding_start:finding_end]
 		assert "common.py:13" in smoking_gun_html
-		# Parent function shown in the header.
+		# Parent function shown in the meta row.
 		assert "_run_validations" in smoking_gun_html
 		# The highlighted source body is the call expression itself.
 		assert "_check_user_exists(doc)" in smoking_gun_html
@@ -665,7 +698,7 @@ class TestHotLineLegacyShape:
 		# Callsite line appears with file:lineno.
 		assert "common.py:7" in html
 		# line_content rendered as the snippet body.
-		assert "_run_validations(doc)" in html
+		assert "_run_validations(doc)" in _plain(html)
 		# The lineno label for the single-row snippet appears.
 		assert ">7<" in html
 
@@ -740,7 +773,7 @@ class TestLazySnippetRead:
 		html = renderer.render_raw(doc, recordings=[])
 
 		# Snippet was read lazily at render time and inserted.
-		assert "b()" in html
+		assert "b()" in _plain(html)
 		assert ">1<" in html and ">2<" in html and ">3<" in html
 
 	def test_missing_file_no_snippet_no_crash(self, tmp_path):
@@ -834,9 +867,9 @@ class TestRenderTimeCallsiteResolution:
 		doc = _fake_doc([_repeated_hot_frame("optimus/renderer.py::render")])
 		html = renderer.render_raw(doc, recordings=[])
 		assert "optimus/renderer.py:" in html      # resolved callsite line
-		assert "def render(" in html                        # the highlighted def line
+		assert "def render(" in _plain(html)                        # the highlighted def line
 		assert "vscode://file" in html                      # _abs → editor link
-		assert 'class="smoking-gun"' in html
+		assert 'class="smoking"' in html
 
 	def test_repeated_hot_frame_unresolvable_is_filtered(self):
 		"""v0.7.x: a Repeated Hot Frame whose ``function`` key can't be
@@ -847,13 +880,13 @@ class TestRenderTimeCallsiteResolution:
 		html = renderer.render_raw(doc, recordings=[])
 		# Filtered: title and smoking-gun both absent.
 		assert "appeared in 3 actions" not in html
-		assert 'class="smoking-gun"' not in html
+		assert 'class="smoking"' not in html
 
 	def test_function_not_invoked_shows_def_line(self):
 		doc = _fake_doc([_function_not_invoked("optimus.renderer.render")])
 		html = renderer.render_raw(doc, recordings=[])
 		assert "optimus/renderer.py:" in html
-		assert "def render(" in html
+		assert "def render(" in _plain(html)
 
 	def test_missing_index_gets_representative_callsite_from_recordings(self):
 		nq = "SELECT ... FROM `tabUser` WHERE x = ?"
@@ -872,8 +905,11 @@ class TestRenderTimeCallsiteResolution:
 			}],
 		}]
 		html = renderer.render_raw(doc, recordings=recs)
-		assert "Most-called from:" in html
-		assert "Representative callsite" in html
+		# v0.7.x Phase D: smoking-gun label wording trimmed —
+		# "Most-called from:" / "Representative callsite" prose collapsed
+		# into a single `.smoking-label` line ("most-called from this
+		# callsite ..."). Anchor on the new wording.
+		assert "most-called from this callsite" in html
 		assert f"{_USER_FRAME_FILE}:10" in html
 		assert "run_report" in html
 
@@ -926,7 +962,7 @@ class TestDocEventHookInsideSmokingGun:
 		html = renderer.render_raw(doc, recordings=[])
 
 		hook_pos = html.find("Doc-event hook:")
-		sg_open = html.find('class="smoking-gun"', 0)
+		sg_open = html.find('class="smoking"', 0)
 		assert hook_pos > 0, "Doc-event hook line missing from output"
 		assert sg_open > 0
 		# Hook appears AFTER smoking-gun's opening marker — i.e. inside it.
@@ -1040,7 +1076,7 @@ class TestDrilldownPlaceholder:
 		action = SimpleNamespace(
 			idx=0,
 			action_label="Job: bg_recheck_users",
-			event_type="Background Job",
+			event_type="RQ Job",
 			http_method="",
 			path="bg_recheck_users",
 			recording_uuid="rec1",
@@ -1073,8 +1109,8 @@ class TestDrilldownPlaceholder:
 		assert "no deeper user-code frame" in html
 		# Names the wrapper (the function the placeholder is rooted on).
 		assert "bg_recheck_users" in html
-		# The placeholder still has the "Drill-down:" label.
-		assert "Drill-down:" in html
+		# The placeholder still has the "Drill-down" label.
+		assert "Drill-down" in html
 
 	def test_finding_without_drilldown_attribute_renders_no_placeholder(self, tmp_path):
 		"""A finding without ``action_ref`` skips _attach_drilldown_chains
@@ -1095,7 +1131,7 @@ class TestDrilldownPlaceholder:
 		# Neither the chain nor the placeholder renders.
 		assert "no deeper user-code frame" not in html
 		# Drill-down label absent because no Drill-down section renders.
-		assert "Drill-down:" not in html
+		assert "Drill-down" not in html
 
 	def test_non_empty_chain_renders_chain_not_placeholder(self, tmp_path):
 		"""When the drill-down chain has entries, the existing chain
@@ -1159,8 +1195,12 @@ class TestDrilldownPlaceholder:
 		html = renderer.render_raw(doc, recordings=[])
 
 		# Chain rendered (existing behavior).
-		assert "Drill-down:" in html
-		assert "common.py:6" in html  # inner's def line in the chain
+		assert "Drill-down" in html
+		# v0.7.x Phase D: chain steps render as `function:lineno` pills
+		# (filename is dropped from each pill — the meta row above
+		# carries the file path). The inner def line is line 6 — its
+		# function name appears as a chain step.
+		assert "inner:6" in html or ":6" in html
 		# Placeholder branch NOT taken.
 		assert "no deeper user-code frame" not in html
 

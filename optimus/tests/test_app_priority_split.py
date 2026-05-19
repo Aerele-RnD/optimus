@@ -4,7 +4,7 @@
 """v0.6.x: tests for the "custom prominent, framework collapsed" split.
 
 The 4 main leaderboard sections (Per-action breakdown, Top queries,
-Background jobs, Hot frames) all pre-split their rows in
+RQ Jobs, Hot frames) all pre-split their rows in
 ``renderer.render()`` into ``<name>`` (custom-app rows) + ``<name>_framework``
 (framework-app rows). The template renders the primary list in a normal
 <table> and the framework list in a collapsed <details class="subsection">
@@ -177,7 +177,7 @@ class TestPerActionSplit:
 		breakdown does NOT split — all actions, including those hitting
 		Frappe endpoints, stay in the main table. Pre-v0.7 every
 		HTTP request to ``/api/method/frappe.*`` was hidden in the
-		collapsed framework subsection, leaving Background Jobs as the
+		collapsed framework subsection, leaving RQ Jobs as the
 		only visible rows in the main table."""
 		doc = _doc(actions=[
 			_action_ns(action_label="POST /api/method/myapp.handlers.recompute",
@@ -266,17 +266,17 @@ class TestBackgroundJobsSplit:
 	def test_custom_and_framework_jobs_split(self):
 		doc = _doc(actions=[
 			_action_ns(action_label="Job: myapp.tasks.digest",
-			           event_type="Background Job", path="myapp.tasks.digest",
+			           event_type="RQ Job", path="myapp.tasks.digest",
 			           recording_uuid="r1", duration_ms=400, queries_count=5),
 			_action_ns(action_label="Job: frappe.email.queue.send",
-			           event_type="Background Job", path="frappe.email.queue.send",
+			           event_type="RQ Job", path="frappe.email.queue.send",
 			           recording_uuid="r2", duration_ms=300, queries_count=3),
 			_action_ns(action_label="Job: erpnext.accounts.utils.recompute",
-			           event_type="Background Job", path="erpnext.accounts.utils.recompute",
+			           event_type="RQ Job", path="erpnext.accounts.utils.recompute",
 			           recording_uuid="r3", duration_ms=200, queries_count=2),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		# 2 framework jobs collapsed.
 		assert "<strong>2</strong> framework jobs" in html
 		# All three methods still rendered somewhere.
@@ -287,11 +287,11 @@ class TestBackgroundJobsSplit:
 	def test_only_framework_jobs_shows_replacement_note(self):
 		doc = _doc(actions=[
 			_action_ns(action_label="Job: frappe.email.queue.send",
-			           event_type="Background Job", path="frappe.email.queue.send",
+			           event_type="RQ Job", path="frappe.email.queue.send",
 			           recording_uuid="r1", duration_ms=300, queries_count=3),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		assert "<strong>1</strong> framework job " in html
 		# Replacement note when there are zero custom jobs.
 		assert "all jobs ran in framework code" in html

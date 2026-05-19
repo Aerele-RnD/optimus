@@ -64,7 +64,7 @@ class TestDefaultThreshold:
 		# Fast action stays in ms.
 		assert ">800ms<" in html
 		# Footer stamps the default threshold (1000).
-		assert "large_duration_threshold_ms = <code>1000</code>" in html
+		assert "large_duration_threshold_ms=1000" in html
 
 
 class TestDisabledThreshold:
@@ -82,7 +82,7 @@ class TestDisabledThreshold:
 
 		assert ">5234ms<" in html
 		assert ">5.23s<" not in html
-		assert "large_duration_threshold_ms = <code>0</code>" in html
+		assert "large_duration_threshold_ms=0" in html
 
 
 class TestHighThreshold:
@@ -100,7 +100,7 @@ class TestHighThreshold:
 
 		assert ">5234ms<" in html
 		assert ">5.23s<" not in html
-		assert "large_duration_threshold_ms = <code>10000</code>" in html
+		assert "large_duration_threshold_ms=10000" in html
 
 
 class TestLowThreshold:

@@ -121,7 +121,7 @@ class TestDrilldownRender:
 		html = renderer.render_raw(doc, recordings=[])
 
 		# The drill-down label appears on the card.
-		assert '<strong style="color: #1d4ed8;">Drill-down:</strong>' in html
+		assert '<div class="chain-label">Drill-down</div>' in html
 		# Both user-code frames below looped_validate are surfaced.
 		assert "_run_validations" in html
 		assert "_check_user_exists" in html
@@ -131,14 +131,17 @@ class TestDrilldownRender:
 		# stops before it.)
 		# The drill-down block lives inside the smoking-gun container, so
 		# locate it and assert the framework path isn't inside that span.
-		dd_idx = html.find("Drill-down:")
+		dd_idx = html.find("Drill-down")
 		assert dd_idx > 0
 		dd_segment = html[dd_idx:dd_idx + 4000]
 		assert "frappe/frappe/model/document.py" not in dd_segment, (
 			"framework frame leaked into the drill-down block"
 		)
-		# Percentages render as "% of parent".
-		assert "% of parent" in html
+		# v0.7.x Phase D: drill-down chain renders as pill steps; the
+		# per-step `% of parent` value isn't shown in the new layout
+		# (the mock dropped it for visual cleanliness — data still
+		# available via the underlying drilldown_chain dict for API
+		# consumers).
 
 	def test_finding_without_matching_tree_node_renders_placeholder(self):
 		"""v0.7.x: a finding whose callsite doesn't match any node in
@@ -170,7 +173,7 @@ class TestDrilldownRender:
 		html = renderer.render_raw(doc, recordings=[])
 
 		# Drill-down label IS present (the placeholder uses it).
-		assert "Drill-down:" in html
+		assert "Drill-down" in html
 		# Placeholder text rendered.
 		assert "no deeper user-code frame" in html
 		# No actual chain entries rendered — the bg of `_run_validations`
@@ -197,7 +200,7 @@ class TestDrilldownRender:
 		)
 		html = renderer.render_raw(doc, recordings=[])
 
-		assert "Drill-down:" not in html
+		assert "Drill-down" not in html
 
 	def test_action_without_call_tree_skips_drilldown(self):
 		from optimus import renderer
@@ -219,4 +222,4 @@ class TestDrilldownRender:
 			)],
 		)
 		html = renderer.render_raw(doc, recordings=[])
-		assert "Drill-down:" not in html
+		assert "Drill-down" not in html

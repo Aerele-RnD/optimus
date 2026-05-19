@@ -40,7 +40,7 @@ class TestTemplateStructure:
 		)
 		assert m is not None, "Top Queries section not found"
 		section = m.group(0)
-		assert 'class="query-table"' in section, (
+		assert 'class="query-table' in section, (
 			"Top Queries table must carry the .query-table class for "
 			"the fixed-layout CSS to apply"
 		)
@@ -70,7 +70,7 @@ class TestTemplateStructure:
 		)
 		assert m is not None, "Queries per action section not found"
 		section = m.group(0)
-		assert 'class="query-table"' in section
+		assert 'class="query-table' in section
 
 	def test_queries_per_action_colgroup_uses_copies_column(self):
 		"""Per-action drill-down has Copies where Top Queries has #."""
@@ -177,7 +177,7 @@ class TestEndToEndRender:
 		html = renderer.render(doc, recordings=[])
 
 		# Table renders with the fixed-layout class.
-		assert 'class="query-table"' in html
+		assert 'class="query-table' in html
 		# Colgroup is emitted with all four columns.
 		assert 'class="col-index"' in html
 		assert 'class="col-duration"' in html

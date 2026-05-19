@@ -191,7 +191,11 @@ class TestRenderedIndexCandidatePanel:
 			"generated_at": "2026-05-12T00:00:00+00:00",
 		}
 		html = renderer.render_raw(_doc([entry]), recordings=[])
-		assert "Index advice (AI" in html and "claude-sonnet-4-6" in html
+		# v0.7.x Phase I: AI index advice renders inside a `.fix-box`
+		# (same component as the AI-fix on findings); "Index advice"
+		# heading + the `AI · model` tag are now in separate spans
+		# instead of the inline-paren form.
+		assert "Index advice" in html and "claude-sonnet-4-6" in html
 		assert "already covers it" in html
 
 	def test_no_ai_index_block_when_indexes_section_toggle_off(self):
@@ -218,7 +222,7 @@ class TestRenderedIndexCandidatePanel:
 
 		entry = _table_entry(recommended_index=None)
 		html = renderer.render_raw(_doc([entry]), recordings=[])
-		assert "Index candidates &mdash; to speed up reads" in html
+		assert "Index candidates - to speed up reads" in html
 		assert ">customer</code>" in html
 
 

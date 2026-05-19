@@ -62,7 +62,7 @@ def test_primary_actionable_sections_are_open_by_default():
 	for section_heading in (
 		"Summary",
 		"Per-action breakdown",
-		"Findings &mdash; what to fix",
+		"Findings - what to fix",
 		"Server Resource",
 		"Frontend",
 		"Hot frames",
@@ -71,7 +71,7 @@ def test_primary_actionable_sections_are_open_by_default():
 		"Time spent per database table",
 		"Full recordings",
 		"Doc-event lifecycle",
-		"Background jobs",
+		"RQ Jobs",
 	):
 		assert section_heading in template, (
 			f"section heading {section_heading!r} missing from template"
@@ -84,9 +84,9 @@ def test_primary_actionable_sections_are_open_by_default():
 	# Reproduce ... #} comment above the section).
 	for summary in (
 		'<summary><h2 style="margin-top: 0;">Steps to Reproduce</h2></summary>',
-		"<summary><h2>Findings &mdash; what to fix</h2></summary>",
+		"<summary><h2>Findings - what to fix</h2></summary>",
 		"<summary><h2>Per-action breakdown</h2></summary>",
-		"<summary><h2>Background jobs</h2></summary>",
+		"<summary><h2>RQ Jobs</h2></summary>",
 	):
 		idx = template.index(summary)
 		details_open = template.rindex("<details", 0, idx)
@@ -125,7 +125,7 @@ def test_heavy_reference_sections_are_collapsed_by_default():
 	# substring unique to each.
 	for fragment in (
 		"Hot frames (top",
-		"&mdash; your app",
+		"- your app",
 	):
 		idx = template.index(fragment)
 		details_open = template.rindex("<details", 0, idx)
@@ -140,11 +140,80 @@ def test_report_has_navigation_aids():
 	in-page 'Jump to:' nav near the top."""
 	template = _read_template()
 	assert "How to read this report" in template
-	assert "Jump to:" in template
+	assert "Jump to" in template
 	# The jump links point at sections that carry matching ids.
 	for anchor in ("#findings", "#per-action", "#top-queries", "#db-tables", "#how-to-read"):
 		assert f'href="{anchor}"' in template, f"jump link {anchor} missing"
 		assert f'id="{anchor[1:]}"' in template, f"section id {anchor[1:]} missing"
+
+
+def test_section_id_aliases_for_mock_spec_names():
+	"""v0.7.x Phase G: the mock spec uses shorter section IDs (#actions,
+	#jobs, #resource, #queries, #db, #doc-events) alongside the original
+	long-form names. The template carries both — original ID on the
+	<details> tag so the Jump-to nav keeps working; alias as an empty
+	<a id="..."></a> anchor inside each section so external links /
+	docs that reference the mock names still scroll-to-anchor.
+
+	Pin both forms exist."""
+	template = _read_template()
+	for original, alias in (
+		("per-action", "actions"),
+		("background-jobs", "jobs"),
+		("server-resource", "resource"),
+		("top-queries", "queries"),
+		("db-tables", "db"),
+		("doc-event-lifecycle", "doc-events"),
+	):
+		assert f'id="{original}"' in template, (
+			f"original section id '{original}' must still exist on its "
+			f"<details> tag for Jump-to back-compat"
+		)
+		assert f'id="{alias}"' in template, (
+			f"mock-spec alias '{alias}' must exist as an empty <a> "
+			f"anchor inside section #{original}"
+		)
+
+
+def test_net_new_section_ids_from_mock_spec():
+	"""v0.7.x Phase I.1: the redesign mock spec introduced three
+	anchors that don't have a long-form original — they're net-new
+	IDs (not aliases). Pin their presence so a future template
+	refactor doesn't quietly drop them.
+
+	#repro    — Steps to Reproduce section
+	#summary  — Summary section (bulleted recap)
+	#hot-frames — Hot frames leaderboard section
+	"""
+	template = _read_template()
+	for net_new in ("repro", "summary", "hot-frames"):
+		assert f'id="{net_new}"' in template, (
+			f"mock-spec section id '{net_new}' missing from template"
+		)
+
+
+def test_phase2_id_is_unique():
+	"""v0.7.x Phase I.1: the phase2 anchor must appear at most once
+	in the static template. Pre-Phase-I.1, the imperative-rendered
+	Phase 2 panel emitted a details element carrying the phase2
+	anchor while the surrounding template wrapped it in a redundant
+	`<div id="phase2">` - duplicate IDs are invalid HTML. The
+	wrapper was removed; this test pins that the duplicate doesn't
+	come back. (v0.7.x Phase J.16: the renderer-emitted inner anchor
+	is now ``id="line-drilldown"``; the template carries a single
+	legacy ``<a id="phase2"></a>`` so external links resolve.)"""
+	template = _read_template()
+	# Count actual anchor tags carrying the id, not literal substrings
+	# inside Jinja ``{# ... #}`` comments (which talk about the rename
+	# but emit no DOM).
+	count = template.count('<a id="phase2"')
+	assert count <= 1, (
+		f'<a id="phase2"... must appear at most once in the template; '
+		f"found {count} occurrences. The imperative-rendered panel "
+		f"emits its own ``id=\"line-drilldown\"`` anchor; only the "
+		f"legacy ``<a id=\"phase2\"></a>`` alias should live in the "
+		f"template."
+	)
 
 
 def test_observations_subsection_is_collapsed_by_default():
@@ -176,7 +245,7 @@ def test_observations_is_nested_inside_findings():
 	"""
 	template = _read_template()
 	findings_summary_idx = template.find(
-		"<summary><h2>Findings &mdash; what to fix</h2></summary>"
+		"<summary><h2>Findings - what to fix</h2></summary>"
 	)
 	# The Observations subsection's <summary> carries an <h3> labelled
 	# "Framework-level observations". Walk back from there to its opening
@@ -226,59 +295,75 @@ def test_collapsible_css_is_present():
 
 
 def test_phase2_section_appears_before_findings():
-	"""v0.6.x: the Phase 2 line-level drill-down is the report's most
-	distinctive section — it must be hoisted above the actionable
-	Findings list so readers see it immediately after the Summary."""
+	"""v0.6.x: the Line-Level Drilldown is the report's most distinctive
+	section - it must be hoisted above the actionable Findings list so
+	readers see it immediately after the Summary.
+
+	v0.7.x Phase J.16: anchor on the
+	``report_data.line_drilldown_html | safe`` Jinja injection point
+	(renamed from ``report_data.phase2_html | safe`` in J.2.6, itself
+	renamed from the legacy top-level ``phase2_html``). The render-time
+	markup still comes from ``_render_line_drilldown_panel`` and is
+	exposed under the contract namespace."""
 	template = _read_template()
-	phase2_anchor = template.find('id="phase2"')
+	panel_injection = template.find("report_data.line_drilldown_html | safe")
 	findings_anchor = template.find('id="findings"')
-	assert phase2_anchor > 0, "Phase 2 anchor (id=\"phase2\") missing from template"
+	assert panel_injection > 0, (
+		"report_data.line_drilldown_html injection point missing from template"
+	)
 	assert findings_anchor > 0, "Findings anchor (id=\"findings\") missing from template"
-	assert phase2_anchor < findings_anchor, (
-		"Phase 2 (id=\"phase2\") must render BEFORE Findings (id=\"findings\") — "
-		"it is the report's showcase section"
+	assert panel_injection < findings_anchor, (
+		"Line-Level Drilldown (report_data.line_drilldown_html injection) "
+		"must render BEFORE Findings (id=\"findings\") - it is the "
+		"report's showcase section"
 	)
 
 
 def test_phase2_jump_nav_link_present():
-	"""The Jump-to nav must include a Phase 2 link (conditional on the
-	session having phase-2 runs)."""
+	"""The Jump-to nav must include a Line-Level Drilldown link
+	(conditional on the session having phase-2 runs)."""
 	template = _read_template()
-	assert 'href="#phase2"' in template, (
-		"Jump-to nav missing #phase2 link — Phase 2 section won't be "
-		"reachable from the top-of-report navigation"
+	assert 'href="#line-drilldown"' in template, (
+		"Jump-to nav missing #line-drilldown link - Line-Level Drilldown "
+		"section won't be reachable from the top-of-report navigation"
 	)
-	# Conditional wrapper: the link only renders when phase2_html exists.
-	assert "{% if phase2_html %}<a href=\"#phase2\"" in template, (
-		"Phase 2 nav link must be wrapped in {% if phase2_html %} so "
-		"sessions without runs don't show a dangling link"
+	# Conditional wrapper: the link only renders when the panel exists.
+	assert (
+		'{% if report_data.line_drilldown_html %}<a href="#line-drilldown"'
+		in template
+	), (
+		"Line-Level Drilldown nav link must be wrapped in "
+		"{% if report_data.line_drilldown_html %} so sessions without runs "
+		"don't show a dangling link"
 	)
 
 
-def test_exec_summary_renders_between_stats_and_summary_section():
-	"""v0.7.x: the executive summary ('At a glance') was moved from
-	above the Steps-to-Reproduce / stat-cards cluster to BELOW the stat
-	cards and ABOVE the Summary section. The reader now sees context
-	(Steps) → numbers (cards) → narrative (At a glance) → folded recap
-	(Summary). Pin the order so a future refactor doesn't pull the
-	exec-summary back to the top of the header zone."""
+def test_tldr_hero_renders_before_kpi_strip_and_summary():
+	"""v0.7.x redesign Phase B: the 'At a glance' exec-summary card
+	was replaced by the TL;DR hero (one composed headline keyed on
+	the highest-impact finding). The hero lives RIGHT AFTER the
+	masthead — first prominent block on the page. Pin: TL;DR comes
+	before the KPI strip, and the KPI strip comes before the
+	Summary section. (Old test asserted At-a-glance lived between
+	stats and Summary; that block is gone.)"""
 	template = _read_template()
-	jump_idx = template.find("<strong>Jump to:</strong>")
-	stats_idx = template.find('<div class="stats">')
-	at_a_glance_idx = template.find("<h2>At a glance</h2>")
+	tldr_idx = template.find('<div class="tldr">')
+	stats_idx = template.find('<div class="kpis">')
 	summary_idx = template.find("<summary><h2>Summary</h2></summary>")
 	for label, idx in (
-		("Jump-to nav", jump_idx),
-		("stat cards", stats_idx),
-		("At a glance heading", at_a_glance_idx),
+		("TL;DR hero", tldr_idx),
+		("KPI strip", stats_idx),
 		("Summary section", summary_idx),
 	):
 		assert idx > 0, f"{label} missing from template"
-	assert jump_idx < stats_idx < at_a_glance_idx < summary_idx, (
-		"Header-zone order must be: Jump-to → stat cards → At a glance "
-		"→ Summary section. Got indices: "
-		f"jump={jump_idx} stats={stats_idx} "
-		f"at_a_glance={at_a_glance_idx} summary={summary_idx}"
+	assert tldr_idx < stats_idx < summary_idx, (
+		"Header-zone order must be: TL;DR hero → KPI strip → "
+		"Summary section. Got indices: "
+		f"tldr={tldr_idx} stats={stats_idx} summary={summary_idx}"
+	)
+	# And the old exec-summary card MUST be gone.
+	assert "<h2>At a glance</h2>" not in template, (
+		"Old exec-summary heading must be removed (TL;DR replaces it)"
 	)
 
 
@@ -346,9 +431,13 @@ def test_per_action_table_has_fixed_layout_class():
 	# The opening tag fragment must contain the shared layout classes.
 	tag_end = template.find(">", table_idx)
 	open_tag = template[table_idx:tag_end]
-	assert 'class="tbl-clip per-action-table"' in open_tag, (
-		f"Per-action breakdown table must carry "
-		f"'class=\"tbl-clip per-action-table\"'; got: {open_tag!r}"
+	# v0.7.x Phase E: tables stack `.data` on top of the existing
+	# `.tbl-clip` / `.per-action-table` classes. Check for both
+	# critical layout hooks as substrings rather than the exact
+	# class-attr value.
+	assert "tbl-clip" in open_tag and "per-action-table" in open_tag, (
+		f"Per-action breakdown table must carry tbl-clip + "
+		f"per-action-table classes; got: {open_tag!r}"
 	)
 	# And a <colgroup> follows so column widths are defined.
 	colgroup_idx = template.find("<colgroup>", table_idx)

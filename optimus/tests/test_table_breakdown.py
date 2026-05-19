@@ -607,13 +607,13 @@ class TestRenderConfigFooter:
 		html = renderer.render_raw(self._doc(), recordings=[])
 		# Anchor label is unambiguous.
 		assert "<strong>Rendered with:</strong>" in html
-		assert "hide_framework_tables = <code>on</code>" in html
-		assert "tracked_apps = <code>(none)</code>" in html
-		assert "ignored_apps = <code>(none)</code>" in html
-		assert "ai_suggest_findings = <code>on</code>" in html
-		assert "ai_suggest_indexes = <code>on</code>" in html
-		assert "min_action_duration_ms = <code>0</code>" in html
-		assert "large_duration_threshold_ms = <code>1000</code>" in html
+		assert "hide_framework_tables=on" in html
+		assert "tracked_apps=(none)" in html
+		assert "ignored_apps=(none)" in html
+		assert "ai_suggest_findings=on" in html
+		assert "ai_suggest_indexes=on" in html
+		assert "min_action_duration_ms=0" in html
+		assert "large_duration_threshold_ms=1000" in html
 		# The nudge phrase explains why the user might be looking at stale
 		# data — the whole point of the stamp.
 		assert "Regenerate Reports" in html
@@ -636,10 +636,10 @@ class TestRenderConfigFooter:
 		with patch("optimus.settings.get_config", return_value=cfg):
 			html = renderer.render_raw(self._doc(), recordings=[])
 
-		assert "hide_framework_tables = <code>off</code>" in html
-		assert "tracked_apps = <code>myapp, ugly_code</code>" in html
-		assert "ignored_apps = <code>frappe</code>" in html
-		assert "ai_suggest_findings = <code>off</code>" in html
-		assert "ai_suggest_indexes = <code>off</code>" in html
-		assert "min_action_duration_ms = <code>42</code>" in html
-		assert "large_duration_threshold_ms = <code>2500</code>" in html
+		assert "hide_framework_tables=off" in html
+		assert "tracked_apps=myapp, ugly_code" in html
+		assert "ignored_apps=frappe" in html
+		assert "ai_suggest_findings=off" in html
+		assert "ai_suggest_indexes=off" in html
+		assert "min_action_duration_ms=42" in html
+		assert "large_duration_threshold_ms=2500" in html

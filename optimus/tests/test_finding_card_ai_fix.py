@@ -155,7 +155,7 @@ class TestAiFixBlockRendering:
 		})])
 		html = renderer.render_raw(doc, recordings=[])
 		# Header + model name.
-		assert "Suggested fix (AI" in html
+		assert "Suggested fix" in html
 		assert "claude-sonnet-4-6" in html
 		# The suggestion text made it into the page (converted-markdown or
 		# escaped-pre fallback — both contain the words).
@@ -167,7 +167,7 @@ class TestAiFixBlockRendering:
 	def test_no_block_when_llm_fix_absent(self):
 		doc = _doc([_finding(llm_fix=None)])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "Suggested fix (AI" not in html
+		assert "Suggested fix" not in html
 		assert "review before applying" not in html
 
 	def test_no_block_when_findings_section_toggle_off(self):
@@ -185,23 +185,23 @@ class TestAiFixBlockRendering:
 		with patch("optimus.settings.get_config",
 		           return_value=settings.OptimusConfig(ai_suggest_findings=False)):
 			html = renderer.render_raw(doc, recordings=[])
-		assert "Suggested fix (AI" not in html
+		assert "Suggested fix" not in html
 		assert "review before applying" not in html
 		# Sanity: with the toggle back on, the block IS there.
 		with patch("optimus.settings.get_config",
 		           return_value=settings.OptimusConfig(ai_suggest_findings=True)):
 			html2 = renderer.render_raw(doc, recordings=[])
-		assert "Suggested fix (AI" in html2
+		assert "Suggested fix" in html2
 
 	def test_no_block_when_llm_fix_json_is_empty_object(self):
 		doc = _doc([_finding(llm_fix={})])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "Suggested fix (AI" not in html
+		assert "Suggested fix" not in html
 
 	def test_no_block_when_suggestion_blank(self):
 		doc = _doc([_finding(llm_fix={"suggestion": "   ", "model": "m"})])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "Suggested fix (AI" not in html
+		assert "Suggested fix" not in html
 
 	def test_script_in_suggestion_is_stripped(self):
 		doc = _doc([_finding(llm_fix={
@@ -211,7 +211,7 @@ class TestAiFixBlockRendering:
 			"generated_at": "2026-05-11T00:00:00+00:00",
 		})])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "Suggested fix (AI" in html
+		assert "Suggested fix" in html
 		# The <script> tag is gone (sanitized server-side), in any rendering path.
 		assert "<script" not in html.lower()
 		assert "alert('xss')" not in html and "alert(&#39;xss&#39;)" not in html
@@ -224,7 +224,7 @@ class TestAiFixBlockRendering:
 		html = renderer.render_raw(doc, recordings=[])
 		# Bound the check to the AI block region (the report has vscode://
 		# callsite links elsewhere).
-		start = html.find("Suggested fix (AI")
+		start = html.find("Suggested fix")
 		end = html.find("review before applying", start)
 		assert start != -1 and end != -1
 		block = html[start:end]
@@ -240,7 +240,7 @@ class TestAiFixBlockRendering:
 			_finding(llm_fix=None, finding_type="Slow Query"),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert html.count('class="ai-fix"') == 1
+		assert html.count('class="fix-box"') == 1
 
 	def test_directional_caution_shown_when_source_unavailable(self):
 		doc = _doc([_finding(llm_fix={
@@ -248,7 +248,7 @@ class TestAiFixBlockRendering:
 			"generated_at": "t", "source_available": False,
 		})])
 		html = renderer.render_raw(doc, recordings=[])
-		assert 'class="ai-fix-caution"' in html
+		assert 'class="fix-caution"' in html
 		assert "directional guidance" in html
 
 	def test_no_caution_when_source_available_or_legacy_row(self):
@@ -258,9 +258,9 @@ class TestAiFixBlockRendering:
 			"suggestion": _GOOD_SUGGESTION, "model": "m", "provider": "OpenAI",
 			"generated_at": "t", "source_available": True,
 		})])
-		assert 'class="ai-fix-caution"' not in renderer.render_raw(doc, recordings=[])
+		assert 'class="fix-caution"' not in renderer.render_raw(doc, recordings=[])
 		# Legacy row with no such key → defaults to "had context", no caution.
 		doc2 = _doc([_finding(llm_fix={
 			"suggestion": _GOOD_SUGGESTION, "model": "m", "provider": "OpenAI", "generated_at": "t",
 		})])
-		assert 'class="ai-fix-caution"' not in renderer.render_raw(doc2, recordings=[])
+		assert 'class="fix-caution"' not in renderer.render_raw(doc2, recordings=[])

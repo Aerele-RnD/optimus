@@ -295,7 +295,7 @@ def analyze(recordings: list[dict], context) -> AnalyzerResult:
             "severity": severity,
             "title": f"RQ queue depth peaked at {max_peak} during session",
             "customer_description": (
-                f"A background job queue had more than {rq_warn} pending jobs "
+                f"An RQ Job queue had more than {rq_warn} pending jobs "
                 f"during your flow (peak {max_peak}). If your flow enqueues "
                 "work, it's waiting behind other jobs."
             ),

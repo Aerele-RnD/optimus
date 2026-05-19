@@ -9,7 +9,7 @@ row is the unit the customer sorts/filters by in the report — "which step
 of my flow took the longest?".
 
 Label detection strategy:
-    1. Background jobs: "Job: <last component of method name>"
+    1. RQ Jobs: "Job: <last component of method name>"
     2. frappe.client.{save,insert,submit,cancel,delete}: "<Verb> <DocType>"
     3. frappe.client.get_list: "List <DocType>"
     4. Other cmd: use the cmd verbatim
@@ -66,11 +66,11 @@ def _label(recording: dict) -> str:
 	re-enabling the full humanization pipeline (which the user
 	wanted off in technical breakdowns).
 	"""
-	if recording.get("event_type") == "Background Job":
-		path = recording.get("path") or "Background Job"
+	if recording.get("event_type") == "RQ Job":
+		path = recording.get("path") or "RQ Job"
 		# Trim long module paths to the last component for readability
 		short = path.split(".")[-1] if "." in path else path
-		return f"Job: {short}"
+		return f"RQ Job: {short}"
 
 	cmd = recording.get("cmd") or ""
 	if not cmd:
@@ -186,8 +186,8 @@ def humanized_label(recording: dict) -> str:
 	humanization rules — so unknown cmds produce the same technical
 	label they would in the per-action table, not an empty string.
 	"""
-	if recording.get("event_type") == "Background Job":
-		# Background jobs use the same label in both views — the
+	if recording.get("event_type") == "RQ Job":
+		# RQ Jobs use the same label in both views — the
 		# "Job: <method>" form is already readable.
 		return _label(recording)
 

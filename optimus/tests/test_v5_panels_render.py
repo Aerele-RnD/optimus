@@ -127,6 +127,36 @@ def test_frontend_panel_renders_full_urls():
 	assert "SI-2026-00123" in html
 
 
+def test_frontend_panel_renders_partial_vitals():
+	# Regression: production page reported only `cls` (no fcp/lcp/ttfb).
+	# Pre-fix this raised UndefinedError inside the _vital macro and
+	# broke Regenerate Reports entirely.
+	from optimus import renderer
+
+	v5 = {
+		"infra_timeline": [],
+		"infra_summary": {},
+		"frontend_xhr_matched": [],
+		"frontend_vitals_by_page": {
+			"/desk/sales-invoice/A": {
+				"fcp_ms": 420, "lcp_ms": 2800, "cls": 0.02,
+				"ttfb_ms": 180, "dom_content_loaded_ms": 890,
+			},
+			"/desk/sales-invoice/B": {"cls": 0.135},
+			"/desk/sales-invoice/C": {},
+		},
+		"frontend_orphans": [],
+		"frontend_summary": {},
+	}
+
+	doc = _fake_session_doc(v5)
+	html = renderer.render(doc, recordings=[])
+
+	assert "/desk/sales-invoice/B" in html
+	assert "/desk/sales-invoice/C" in html
+	assert "vital-none" in html
+
+
 def test_raw_mode_keeps_docname_in_urls():
 	from optimus import renderer
 

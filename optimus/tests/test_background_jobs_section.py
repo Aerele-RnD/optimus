@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Optimus contributors
 # For license information, please see license.txt
 
-"""Tests for the v0.6.0 "Background jobs" report section.
+"""Tests for the v0.6.0 "RQ Jobs" report section.
 
 `renderer.build_background_jobs` is a pure function (unit-tested directly);
 the section rendering is exercised end-to-end via `renderer.render_raw` with
@@ -59,10 +59,10 @@ class TestBuildBackgroundJobs:
 		actions = [
 			_action_dict(0, action_label="POST /api/method/save", event_type="HTTP Request",
 			             recording_uuid="r0", duration_ms=900),
-			_action_dict(1, action_label="Job: myapp.tasks.digest", event_type="Background Job",
+			_action_dict(1, action_label="Job: myapp.tasks.digest", event_type="RQ Job",
 			             path="myapp.tasks.digest", recording_uuid="r1", duration_ms=1200,
 			             queries_count=8, query_time_ms=30, slowest_query_ms=12),
-			_action_dict(2, action_label="Job: myapp.tasks.stock", event_type="Background Job",
+			_action_dict(2, action_label="Job: myapp.tasks.stock", event_type="RQ Job",
 			             recording_uuid="r2", duration_ms=300, queries_count=2),
 		]
 		out = renderer.build_background_jobs(actions, {})
@@ -79,10 +79,10 @@ class TestBuildBackgroundJobs:
 
 	def test_method_name_cleanup_and_fallbacks(self):
 		actions = [
-			_action_dict(0, action_label="Job: myapp.x.run", event_type="Background Job", recording_uuid="a"),
-			_action_dict(1, action_label="", event_type="Background Job", path="myapp.y.go", recording_uuid="b"),
-			_action_dict(2, action_label="", event_type="Background Job", path="", recording_uuid="c"),
-			_action_dict(3, action_label="", event_type="Background Job", path="", recording_uuid="d"),
+			_action_dict(0, action_label="Job: myapp.x.run", event_type="RQ Job", recording_uuid="a"),
+			_action_dict(1, action_label="", event_type="RQ Job", path="myapp.y.go", recording_uuid="b"),
+			_action_dict(2, action_label="", event_type="RQ Job", path="", recording_uuid="c"),
+			_action_dict(3, action_label="", event_type="RQ Job", path="", recording_uuid="d"),
 		]
 		recs = {"c": {"cmd": "myapp.z.cmd"}}
 		out = renderer.build_background_jobs(actions, recs)
@@ -90,19 +90,19 @@ class TestBuildBackgroundJobs:
 		assert by_uuid["a"] == "myapp.x.run"      # "Job: " stripped
 		assert by_uuid["b"] == "myapp.y.go"        # falls back to path
 		assert by_uuid["c"] == "myapp.z.cmd"       # falls back to recording cmd
-		assert by_uuid["d"] == "Background Job"     # generic placeholder
+		assert by_uuid["d"] == "RQ Job"     # generic placeholder
 
 	def test_sorted_by_duration_desc(self):
 		actions = [
-			_action_dict(0, action_label="Job: a", event_type="Background Job", recording_uuid="a", duration_ms=100),
-			_action_dict(1, action_label="Job: b", event_type="Background Job", recording_uuid="b", duration_ms=900),
-			_action_dict(2, action_label="Job: c", event_type="Background Job", recording_uuid="c", duration_ms=400),
+			_action_dict(0, action_label="Job: a", event_type="RQ Job", recording_uuid="a", duration_ms=100),
+			_action_dict(1, action_label="Job: b", event_type="RQ Job", recording_uuid="b", duration_ms=900),
+			_action_dict(2, action_label="Job: c", event_type="RQ Job", recording_uuid="c", duration_ms=400),
 		]
 		out = renderer.build_background_jobs(actions, {})
 		assert [j["method"] for j in out["jobs"]] == ["b", "c", "a"]
 
 	def test_top_queries_when_recording_present(self):
-		actions = [_action_dict(0, action_label="Job: a", event_type="Background Job", recording_uuid="a")]
+		actions = [_action_dict(0, action_label="Job: a", event_type="RQ Job", recording_uuid="a")]
 		recs = {"a": {"calls": [
 			{"index": 0, "duration": 5.0, "query": "Q0"},
 			{"index": 1, "duration": 30.0, "query": "Q1", "exact_copies": 3},
@@ -119,7 +119,7 @@ class TestBuildBackgroundJobs:
 		assert job["top_queries"][0]["exact_copies"] == 3
 
 	def test_no_top_queries_when_recording_absent(self):
-		actions = [_action_dict(0, action_label="Job: a", event_type="Background Job", recording_uuid="gone")]
+		actions = [_action_dict(0, action_label="Job: a", event_type="RQ Job", recording_uuid="gone")]
 		out = renderer.build_background_jobs(actions, {})  # recording not in the map
 		job = out["jobs"][0]
 		assert job["recording_available"] is False
@@ -128,8 +128,8 @@ class TestBuildBackgroundJobs:
 	def test_findings_counted_per_job_by_action_ref(self):
 		actions = [
 			_action_dict(0, action_label="GET /app", event_type="HTTP Request", recording_uuid="r0"),
-			_action_dict(1, action_label="Job: a", event_type="Background Job", recording_uuid="r1", duration_ms=200),
-			_action_dict(2, action_label="Job: b", event_type="Background Job", recording_uuid="r2", duration_ms=100),
+			_action_dict(1, action_label="Job: a", event_type="RQ Job", recording_uuid="r1", duration_ms=200),
+			_action_dict(2, action_label="Job: b", event_type="RQ Job", recording_uuid="r2", duration_ms=100),
 		]
 		findings = [
 			{"action_ref": "1"}, {"action_ref": "1"},  # two findings from job at idx 1
@@ -142,7 +142,7 @@ class TestBuildBackgroundJobs:
 		assert by_method["b"] == 0  # we did look (findings exist) — 0, not None
 
 	def test_findings_count_none_when_no_action_refs(self):
-		actions = [_action_dict(0, action_label="Job: a", event_type="Background Job", recording_uuid="r1")]
+		actions = [_action_dict(0, action_label="Job: a", event_type="RQ Job", recording_uuid="r1")]
 		# Findings with no action_ref → can't be mapped.
 		out = renderer.build_background_jobs(actions, {}, [{"action_ref": ""}, {}])
 		assert out["any_findings_counted"] is False
@@ -155,7 +155,7 @@ class TestBuildBackgroundJobs:
 
 class TestRenderedBackgroundJobsSection:
 	def _job_action(self, **kw):
-		kw.setdefault("event_type", "Background Job")
+		kw.setdefault("event_type", "RQ Job")
 		return _action(**kw)
 
 	def test_section_renders_with_jobs(self):
@@ -168,11 +168,13 @@ class TestRenderedBackgroundJobsSection:
 		])
 		recs = [{"uuid": "r1", "calls": [{"index": 0, "duration": 12.0, "query": "SELECT * FROM tabUser"}]}]
 		html = renderer.render_raw(doc, recordings=recs)
-		assert "<h2>Background jobs</h2>" in html
-		assert "<code>myapp.tasks.digest</code>" in html
+		assert "<h2>RQ Jobs</h2>" in html
+		# v0.7.x Phase E: the BG-job method renders as an
+		# `.action-name` div (bold mono) instead of inline `<code>`.
+		assert 'class="action-name">myapp.tasks.digest</div>' in html
 		# summary line (HTML collapses the inter-token whitespace, so check
 		# the pieces rather than an exact phrase).
-		assert "1 background job" in html
+		assert "1 RQ Job" in html
 		assert "ran during this flow" in html
 		# 1200ms > default threshold (1000ms) → renders as 1.20s wrapped
 		# in the v0.7.x highlight span.
@@ -190,7 +192,7 @@ class TestRenderedBackgroundJobsSection:
 			        recording_uuid="r0", duration_ms=120),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" not in html
+		assert "<h2>RQ Jobs</h2>" not in html
 
 	def test_section_renders_without_recordings(self):
 		# A re-render long after analyze: recordings expired from Redis. The
@@ -201,7 +203,7 @@ class TestRenderedBackgroundJobsSection:
 			                 recording_uuid="r9", duration_ms=400, queries_count=3),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		assert "myapp.tasks.cleanup" in html
 		assert "has expired from Redis" in html
 
@@ -226,7 +228,7 @@ class TestRenderedBackgroundJobsSection:
 			],
 		)
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		assert "<th class=\"num\">Findings</th>" in html
 
 	def test_smoking_gun_block_not_duplicated_into_bg_job_embed(self):
@@ -237,7 +239,7 @@ class TestRenderedBackgroundJobsSection:
 		full panel would just duplicate that anchor inside a blue-bordered
 		box. The canonical Findings section keeps it.
 
-		Pin: ``class="smoking-gun"`` appears exactly once across the
+		Pin: ``class="smoking"`` appears exactly once across the
 		whole report (the Findings-section card), never twice (Findings
 		card + BG-job embed)."""
 		doc = _doc(
@@ -259,10 +261,10 @@ class TestRenderedBackgroundJobsSection:
 		)
 		html = renderer.render_raw(doc, recordings=[])
 		# Exactly one smoking-gun panel — the one in the Findings section.
-		assert html.count('class="smoking-gun"') == 1
+		assert html.count('class="smoking"') == 1
 		# Sanity: the BG-jobs section is rendered, and the related-finding
 		# card was embedded under the job (title travels with the card).
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		# Two card-titles for "x": one in Findings section, one in BG embed.
 		# (If embedding broke, the title count would drop to 1.)
 		assert html.count(">x<") >= 2
@@ -284,11 +286,11 @@ class TestEntryCallsiteInReport:
 		the def line itself rendered as a yellow-highlighted row — is
 		what's absent."""
 		doc = _doc([
-			_action(action_label="Job: " + self._DOTTED, event_type="Background Job",
+			_action(action_label="Job: " + self._DOTTED, event_type="RQ Job",
 			        path=self._DOTTED, recording_uuid="r1", duration_ms=500, queries_count=2),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		# Inline path IS present (compact, useful).
 		assert "optimus/renderer.py:" in html
 		# But the multi-line snippet PANEL's content is absent: the def
@@ -341,7 +343,7 @@ class TestEntryCallsiteInReport:
 		)
 		html = renderer.render_raw(doc, recordings=[])
 		# Exactly one smoking-gun panel — the canonical Findings section card.
-		assert html.count('class="smoking-gun"') == 1
+		assert html.count('class="smoking"') == 1
 		# Sanity: the embed actually happened — the title travels with the
 		# card, so it should appear at least twice (Findings + per-action).
 		assert html.count("duplicated-anchor probe") >= 2
@@ -355,20 +357,22 @@ class TestEntryCallsiteInReport:
 			        path="/api/method/" + self._DOTTED, recording_uuid="r0", duration_ms=900),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		# Inline path with the function-name parenthetical.
+		# Inline path with the function-name separator.
 		assert "optimus/renderer.py:" in html
-		assert "(render)" in html
+		# v0.7.x Phase E: the parenthetical "(function)" form was
+		# replaced by " · function" in the editorial action-meta row.
+		assert "&middot; render" in html or "· render" in html
 		# vscode deep-link present (absolute path was resolved).
 		assert "vscode://file" in html
 
 	def test_unresolvable_action_path_renders_no_sub_row(self):
 		# A job whose method path can't be imported → no callsite, no crash.
 		doc = _doc([
-			_action(action_label="Job: myapp.tasks.nope_xyzq", event_type="Background Job",
+			_action(action_label="Job: myapp.tasks.nope_xyzq", event_type="RQ Job",
 			        path="myapp.tasks.nope_xyzq", recording_uuid="r1", duration_ms=300),
 		])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "<h2>Background jobs</h2>" in html
+		assert "<h2>RQ Jobs</h2>" in html
 		assert "myapp.tasks.nope_xyzq" in html  # still listed by method name
 		assert "renderer.py:" not in html        # nothing got resolved
 
@@ -413,8 +417,11 @@ class TestActionContextInReport:
 		# Finding card: "Document:" line.
 		assert "Document:" in html
 		assert "Sales Invoice" in html
-		# Exec-summary bullet text augmented with "— Sales Invoice SINV-1".
-		assert "Sales Invoice SINV-1" in html
+		# v0.7.x redesign Phase B: the exec-summary bullet that
+		# augmented its text with "— Sales Invoice SINV-1" is gone
+		# (exec-summary card replaced by TL;DR hero). Target-doc
+		# surfacing now lives in the per-action breakdown + finding
+		# card breadcrumb above. Drop the bullet-text assertion.
 
 	def test_action_with_no_doc_in_form_dict_has_no_target_doc_line(self):
 		action = _action(
@@ -484,7 +491,9 @@ class TestDocEventLifecycleSection:
 		assert "Sales Invoice" in html
 		assert "saved/submitted directly" in html
 		assert "looped_validate" in html
-		assert "[doc_events hook]" in html
+		# v0.7.x Phase F: the kind tag is now an info-blue
+		# `.method-tag` pill instead of a bracketed inline label.
+		assert 'class="method-tag">doc_events hook</span>' in html
 		assert ">Doc events<" in html  # "Jump to:" nav link
 
 	def test_controller_override_finding_and_cascade_note(self):
@@ -499,7 +508,8 @@ class TestDocEventLifecycleSection:
 		html = renderer.render_raw(doc, recordings=[self._si_recording()])
 		assert "<h2>Doc-event lifecycle</h2>" in html
 		assert "Gl Entry" in html
-		assert "[controller override]" in html
+		# v0.7.x Phase F: kind tag → `.method-tag` info-blue pill.
+		assert 'class="method-tag">controller override</span>' in html
 		assert "touched during Sales Invoice" in html
 
 	def test_section_omitted_when_no_lifecycle_findings(self):

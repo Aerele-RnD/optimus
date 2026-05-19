@@ -63,20 +63,20 @@ def test_http_fallback_when_no_cmd(empty_context):
 
 
 def test_background_job_label(empty_context):
-	"""Background jobs should be labeled with 'Job: <last component>'."""
+	"""RQ Jobs should be labeled with 'Job: <last component>'."""
 	recording = {
 		"uuid": "j1",
 		"path": "erpnext.accounts.doctype.gl_entry.gl_entry.post_gl_entries",
 		"method": None,
 		"cmd": None,
-		"event_type": "Background Job",
+		"event_type": "RQ Job",
 		"duration": 320.0,
 		"calls": [],
 		"form_dict": None,
 	}
 	result = per_action.analyze([recording], empty_context)
-	assert result.actions[0]["action_label"] == "Job: post_gl_entries"
-	assert result.actions[0]["event_type"] == "Background Job"
+	assert result.actions[0]["action_label"] == "RQ Job: post_gl_entries"
+	assert result.actions[0]["event_type"] == "RQ Job"
 
 
 def test_submit_cmd(empty_context):

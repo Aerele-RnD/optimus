@@ -80,15 +80,21 @@ class TestTruncationBannerRenders:
 		# what to raise.
 		assert "Max Queries per Recording" in html
 
-	def test_banner_renders_above_exec_summary(self):
+	def test_banner_renders_above_tldr_hero(self):
 		"""Structural: the truncation banner must appear BEFORE the
-		exec-summary card in document order. Otherwise readers who
-		stop scrolling at the exec card won't see the warning."""
+		TL;DR hero in document order. Otherwise readers who stop
+		scrolling at the headline won't see the warning.
+		v0.7.x redesign: the exec-summary card was replaced by the
+		TL;DR hero (mock spec). The banner-must-come-before-the-most-
+		prominent-content rule still applies — the prominent block
+		just changed identity."""
 		from optimus import renderer
 
 		warning = "⚠ TRUNCATED: 100 queries (5% of the flow) exceeded ..."
 		doc = _fake_session_doc(analyzer_warnings=warning)
-		# Put ONE finding in so the exec-summary card renders.
+		# Put ONE finding in so the TL;DR has a finding-keyed headline
+		# (clean-session branch would also work for the order check,
+		# but exercising the populated path is closer to real reports).
 		row = types.SimpleNamespace()
 		row.finding_type = "N+1 Query"
 		row.severity = "High"
@@ -98,9 +104,6 @@ class TestTruncationBannerRenders:
 		row.affected_count = 50
 		row.action_ref = "0"
 		# v0.7.x: findings with no callsite are filtered before render.
-		# Give this finding a callsite so the exec-summary still picks
-		# it up (the test's intent is to verify banner-vs-summary order,
-		# not the callsite plumbing).
 		row.technical_detail_json = json.dumps({
 			"callsite": {"filename": "apps/myapp/foo.py", "lineno": 1, "function": "f"},
 		})
@@ -108,12 +111,12 @@ class TestTruncationBannerRenders:
 
 		html = renderer.render(doc, recordings=[])
 		banner_idx = html.find('class="truncation-banner"')
-		exec_idx = html.find('class="exec-summary')
+		tldr_idx = html.find('class="tldr"')
 		assert banner_idx > 0
-		assert exec_idx > 0
-		assert banner_idx < exec_idx, (
-			f"Truncation banner must render BEFORE exec-summary card. "
-			f"Got banner at {banner_idx}, exec at {exec_idx}."
+		assert tldr_idx > 0
+		assert banner_idx < tldr_idx, (
+			f"Truncation banner must render BEFORE the TL;DR hero. "
+			f"Got banner at {banner_idx}, TL;DR at {tldr_idx}."
 		)
 
 	def test_banner_absent_on_clean_session(self):

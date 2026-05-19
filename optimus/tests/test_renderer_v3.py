@@ -64,10 +64,11 @@ def test_render_raw_with_donut_and_hot_frames():
 		total_query_time_ms=200,
 	)
 	html = renderer.render_raw(doc, recordings=[])
-	# v0.6.0: Time breakdown donut was folded into the Total time stat card,
-	# now labelled in plain English: `<server-code>ms server code · <db>ms database`.
-	assert "ms server code" in html
-	assert "ms database" in html
+	# v0.6.0: time breakdown was folded into the Total-time stat card.
+	# v0.7.x Phase A: stat card → KPI strip, sub-label now reads
+	# `<server>ms server · <db>ms DB` (tighter editorial copy).
+	assert "ms server" in html
+	assert "ms DB" in html
 	# Hot frames section rendered with full app names (v0.6.0 Round 7
 	# removed safe-mode app collapse).
 	assert "Hot frames" in html

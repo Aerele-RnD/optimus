@@ -21,8 +21,78 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
+from pygments import highlight as _pyg_highlight
+from pygments.formatters import HtmlFormatter as _PygHtmlFormatter
+from pygments.lexers import PythonLexer as _PygPythonLexer
 
 from optimus.analyzers.base import SEVERITY_ORDER
+
+_PY_LEXER = _PygPythonLexer(stripnl=False, ensurenl=False)
+_PY_HTML_FMT = _PygHtmlFormatter(nowrap=True, classprefix="tok-")
+
+
+def _highlight_python_snippet(lines):
+	"""Mutate each ``{"lineno", "content"}`` dict in ``lines`` to add a
+	``content_html`` field carrying Pygments-highlighted span markup
+	(VSCode Dark+ palette via CSS in the template).
+
+	The lines are joined into one source block before highlighting so
+	multi-line strings, decorators, and other multi-line constructs
+	keep correct tokenisation; the resulting HTML is then split per
+	``\\n`` and each chunk assigned back to its source line. Idempotent
+	on lines that already carry ``content_html``. Falls back to
+	``content_html = None`` (template uses plain ``content``) on any
+	Pygments failure.
+	"""
+	if not lines:
+		return
+	if all(isinstance(l, dict) and l.get("content_html") is not None for l in lines):
+		return
+	try:
+		src = "\n".join((l.get("content") or "") for l in lines if isinstance(l, dict))
+		out = _pyg_highlight(src, _PY_LEXER, _PY_HTML_FMT)
+		out = out.rstrip("\n")
+		chunks = out.split("\n")
+		if len(chunks) != len(lines):
+			for l in lines:
+				if isinstance(l, dict):
+					l["content_html"] = None
+			return
+		for l, chunk in zip(lines, chunks, strict=True):
+			if isinstance(l, dict):
+				l["content_html"] = chunk
+	except Exception:
+		for l in lines:
+			if isinstance(l, dict):
+				l["content_html"] = None
+
+
+def _highlight_all_snippets(actions, all_findings):
+	"""Walk findings + actions and apply VSCode Dark+ syntax highlighting
+	to every ``source_snippet`` list reachable from the data shapes the
+	template + line-prof builder iterate. Mutates in place.
+	"""
+	for f in all_findings or []:
+		if not isinstance(f, dict):
+			continue
+		td = f.get("technical_detail")
+		if not isinstance(td, dict):
+			continue
+		cs = td.get("callsite")
+		if isinstance(cs, dict):
+			_highlight_python_snippet(cs.get("source_snippet") or [])
+		for chain_key in ("drilldown_chain", "frame_chain", "call_chain"):
+			chain = td.get(chain_key)
+			if isinstance(chain, list):
+				for step in chain:
+					if isinstance(step, dict):
+						_highlight_python_snippet(step.get("source_snippet") or [])
+	for a in actions or []:
+		if not isinstance(a, dict):
+			continue
+		ec = a.get("entry_callsite")
+		if isinstance(ec, dict):
+			_highlight_python_snippet(ec.get("source_snippet") or [])
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -112,7 +182,7 @@ def render(
 			if (a.get("duration_ms") or 0) >= _min_action_ms
 		]
 	# v0.6.x: per-action entry-point source location + ±1-line snippet,
-	# shown under each row in the per-action breakdown and Background Jobs
+	# shown under each row in the per-action breakdown and RQ Jobs
 	# sections. One shared file-line cache so a cluster of actions in the
 	# same source file reads it once. Done before build_background_jobs so
 	# the job dicts can copy the resolved callsite off the action dict.
@@ -145,15 +215,41 @@ def render(
 		return bool((callsite.get("filename") or "").strip())
 
 	all_findings = [f for f in all_findings if _has_renderable_callsite(f)]
-	# v0.7.x: phase-2 callsite index built once and reused for the Jinja
-	# lookup the template uses for cross-link callouts ("Phase 2: hottest
-	# line N — Mms / X hits"). The smoking-gun retargeting reads
-	# drill-down chains (not phase-2) and is wired in after
-	# _attach_drilldown_chains populates them on the findings.
-	_phase2_index = _build_phase2_callsite_index(session_doc)
+	# v0.7.x: line-drilldown callsite index built once and reused for the
+	# Jinja lookup the template uses for cross-link callouts ("Line-Level
+	# Drilldown: hottest line N - Mms / X hits"). The smoking-gun
+	# retargeting reads drill-down chains (not line-drilldown) and is
+	# wired in after _attach_drilldown_chains populates them on the
+	# findings.
+	_line_drilldown_index = _build_line_drilldown_callsite_index(session_doc)
 	# v0.6.x: which document each save/submit action touched, and which
 	# doc-event lifecycle hook each slow function fired in.
 	_attach_action_context(actions, all_findings, recordings_by_uuid)
+	# v0.7.x: VSCode Dark+ syntax highlighting for every source_snippet
+	# we'll render. Done once, in place, after all snippets are attached.
+	# Adds a ``content_html`` field to each line dict; the template (or
+	# the line-prof renderer) uses it via ``| safe`` with a graceful
+	# fallback to plain ``content`` if Pygments failed.
+	_highlight_all_snippets(actions, all_findings)
+	# v0.7.x J.13: render-time em-dash sweep over analyzer-baked prose.
+	# The analyzer wrote em dashes into customer_description, llm_fix HTML,
+	# session.notes_html, and summary_html during analyse-time (pre-J.12).
+	# Replace at render time so existing reports get the hyphen treatment
+	# without requiring a Retry Analyze.
+	def _strip_em(s):
+		if isinstance(s, str) and "—" in s:
+			return s.replace("—", "-")
+		return s
+	for _f in (all_findings or []):
+		if not isinstance(_f, dict):
+			continue
+		_f["customer_description"] = _strip_em(_f.get("customer_description"))
+		_f["title"] = _strip_em(_f.get("title"))
+		_lf = _f.get("llm_fix")
+		if isinstance(_lf, dict):
+			for _k in ("diagnosis_html", "patch_html", "rationale_html", "verify_html", "description_html", "code_html", "why_html"):
+				if _k in _lf:
+					_lf[_k] = _strip_em(_lf[_k])
 	# v0.6.x: "Ignored Apps" — drop findings whose blame app is in the
 	# admin's exclusion list, BEFORE anything downstream sees the list
 	# (doc-event breakdown, background-jobs tally, exec summary, severity
@@ -181,7 +277,28 @@ def render(
 	# _attach_action_context just attached).
 	doc_event_breakdown = _build_doc_event_breakdown(all_findings)
 
-	# v0.6.0: the "Background jobs" section — the captured background-job
+	# v0.7.x J.11: enrich finding callsite function names with the DocType
+	# suffix for display. Runs AFTER _build_doc_event_breakdown because
+	# that function parses ``callsite.function`` against the lifecycle
+	# event vocabulary (``validate``, ``on_submit``, ...) — suffixing
+	# before classification would break the match.
+	for _f in (all_findings or []):
+		if not isinstance(_f, dict):
+			continue
+		_detail = _f.get("technical_detail")
+		if not isinstance(_detail, dict):
+			continue
+		_td = _detail.get("target_doc")
+		_dt = _td.get("doctype") if isinstance(_td, dict) else None
+		if not _dt:
+			continue
+		_cs = _detail.get("callsite")
+		if isinstance(_cs, dict):
+			_cs_fn = _cs.get("function") or ""
+			if _cs_fn and " (" not in _cs_fn:
+				_cs["function"] = f"{_cs_fn} ({_dt})"
+
+	# v0.6.0: the "RQ Jobs" section — the captured background-job
 	# recordings, surfaced on their own (they also stay in the per-action
 	# table). Derived from the persisted action rows; uses all findings
 	# (actionable + observational) for the per-job findings tally.
@@ -210,6 +327,7 @@ def render(
 			raw = (_t["ai_index"].get("suggestion") or "").strip()
 			if raw:
 				_t["ai_index"]["suggestion_html"] = _markdown_to_safe_html(raw)
+
 
 	# v0.6.x: a per-section LLM toggle being off is a hard disable — drop any
 	# previously-generated AI output for that section so re-rendering an older
@@ -375,9 +493,12 @@ def render(
 			# If sanitize_html blows up for any reason (unexpected input
 			# type, nh3/bleach internal error), fall back to HTML-escaping
 			# via html.escape so the report NEVER renders unsanitized
-			# user input — safe by default.
+			# user input - safe by default.
 			import html as html_mod
 			notes_html = html_mod.escape(notes_html)
+		# v0.7.x J.13: strip em dashes the analyzer wrote into auto-notes
+		# / humanized-notes prose at analyse-time.
+		notes_html = notes_html.replace("—", "-")
 
 	# v0.5.2: Analyzer warnings are stored as a newline-joined string
 	# (see analyze.py). Split into a list of non-empty bullets for the
@@ -487,7 +608,7 @@ def render(
 		_a["related_findings"] = _findings_by_action_ref.get(
 			str(_a.get("idx", "")), [],
 		)
-	# v0.7.x: same linkage for Background Jobs rows. Jobs carry the
+	# v0.7.x: same linkage for RQ Jobs rows. Jobs carry the
 	# original action ``idx`` (set in ``build_background_jobs``) so
 	# they look up against the same per-action-ref map. With this
 	# the BG row macro embeds the same finding cards as action_row,
@@ -522,18 +643,43 @@ def render(
 		lambda r: (r.get("function") or "").split("::", 1)[0],
 		tracked_apps,
 	)
-	hot_frames_rows = build_hot_frames_table(_hf_raw_custom)
-	hot_frames_rows_framework = build_hot_frames_table(_hf_raw_framework)
+	hot_frames_rows = build_hot_frames_table(_hf_raw_custom, is_hot=True)
+	hot_frames_rows_framework = build_hot_frames_table(_hf_raw_framework, is_hot=False)
 
 	# v0.5.2 round 3: executive summary — top 3 most-impactful findings
 	# stated in plain English, rendered in a card at the top of the
 	# report. A non-developer (e.g. a project manager) reading this
 	# should be able to decide "do we have a problem" in 30 seconds
 	# without scrolling past the first screen.
-	executive_summary = _build_executive_summary(
-		findings=findings,
-		session_doc=session_doc,
-		v5=v5,
+	# v0.7.x Phase H: the v0.5.2 `executive_summary` data layer was
+	# orphaned after the TL;DR hero (Phase B) + Action plan (Phase C)
+	# took over its on-page responsibilities. The function is left in
+	# the module for back-compat (existing test fixtures call it
+	# directly) but is no longer wired into render_raw's context.
+	tldr = _compose_tldr(
+		all_findings,
+		session_doc,
+		large_duration_threshold_ms=_large_duration_threshold_ms,
+		actions=list(actions) + list(actions_framework),
+	)
+	# Phase K.5: nested-<details> call-tree panel for the slowest
+	# action. Empty string when no action carries a call_tree_json.
+	call_tree_html = _render_call_tree_panel(list(actions) + list(actions_framework))
+	# v0.7.x redesign Phase C: Recommended Action plan + waterfall.
+	# Action plan: top-3 highest-impact findings, verb-led titles.
+	# Waterfall: top-8 actions by duration, horizontal bars scaled
+	# to the displayed slice's max so short actions stay visible.
+	action_plan = _build_action_plan(
+		all_findings,
+		large_duration_threshold_ms=_large_duration_threshold_ms,
+	)
+	# Waterfall spans both tracked-apps + framework actions; the
+	# split below is for the per-action breakdown table. The reader
+	# wants to see ALL slow actions in the timeline, framework
+	# included.
+	waterfall_rows = _build_waterfall(
+		list(actions) + list(actions_framework),
+		all_findings,
 		large_duration_threshold_ms=_large_duration_threshold_ms,
 	)
 
@@ -560,6 +706,10 @@ def render(
 		int(getattr(session_doc, "total_queries", 0) or 0),
 		recordings,
 	)
+	# v0.7.x J.13: strip em dashes from the render-time summary HTML
+	# (analyze.py's prose composer may still produce them on cached doc rows).
+	if summary_html_rendered:
+		summary_html_rendered = summary_html_rendered.replace("—", "-")
 
 	context = {
 		"session": session_doc,
@@ -579,7 +729,6 @@ def render(
 		"truncation_banner": truncation_banner,
 		"findings_by_app": findings_by_app,
 		"observational_findings_by_app": observational_findings_by_app,
-		"executive_summary": executive_summary,
 		# v0.5.2: "findings" holds actionable items only (shown in
 		# "Findings — what to fix"); "observational_findings" the rest.
 		# "all_findings" is the full list — the "Issues found" stat card
@@ -637,15 +786,17 @@ def render(
 		"frontend_orphans": v5.get("frontend_orphans") or [],
 		"frontend_summary": v5.get("frontend_summary") or {},
 		"notes_html": notes_html,  # sanitized, safe to pass through |safe
-		# v0.6.0 phase-2 line profiler — pre-rendered HTML so the existing
-		# report.html template only needs a single {{ phase2_html | safe }}
-		# include instead of growing by 100+ lines of new markup.
-		"phase2_html": _render_phase2_panel(session_doc),
-		# v0.6.0 finding-card smoking gun: cross-link a finding's callsite
-		# to its hottest phase-2 line when the same function was
-		# instrumented. Helper rather than raw dict because Jinja can't
-		# build tuple keys for the basename + function lookup.
-		"phase2_for_callsite": _make_phase2_lookup(_phase2_index),
+		# v0.7.x J.16 (renamed from phase2_html): the Line-Level Drilldown
+		# panel pre-rendered server-side so the template only needs a
+		# single ``{{ line_drilldown_html | safe }}`` include instead of
+		# growing by 100+ lines of new markup.
+		"line_drilldown_html": _render_line_drilldown_panel(session_doc),
+		# v0.7.x J.16 (renamed from phase2_for_callsite): cross-link a
+		# finding's callsite to its hottest line-drilldown line when the
+		# same function was instrumented. Helper rather than raw dict
+		# because Jinja can't build tuple keys for the basename +
+		# function lookup.
+		"line_drilldown_for_callsite": _make_line_drilldown_lookup(_line_drilldown_index),
 		# v0.6.x: snapshot of the render-affecting settings, stamped in the
 		# report footer so a user opening a saved HTML file can immediately
 		# tell which toggles were in effect when it was rendered. (Saved
@@ -656,7 +807,57 @@ def render(
 		# ``_build_summary_html`` call). The template prefers this over
 		# the stored ``session.summary_html``.
 		"summary_html": summary_html_rendered,
+		# v0.7.x redesign Phase B: TL;DR hero — single composed headline
+		# keyed off the highest-impact finding, with `<span class="hot">`
+		# inline emphases (rendered as Markup so Jinja autoescape leaves
+		# them intact).
+		"tldr": tldr,
+		# Phase K.5: nested-<details> call-tree panel for the slowest
+		# action. Empty string when no action carries a call_tree_json;
+		# template ``{% if %}`` guards the section.
+		"call_tree_html": call_tree_html,
+		# v0.7.x redesign Phase C: top-3 verb-led action plan steps.
+		# Empty list → template hides the section.
+		"action_plan": action_plan,
+		# v0.7.x redesign Phase C: top-8 actions by duration, scaled to
+		# the displayed slice's max. Empty list → template hides.
+		"waterfall_rows": waterfall_rows,
 	}
+
+	# v0.7.x Phase J.1 — contract-shape adapter. Exposes the 19-key dict
+	# per template_variable_contract.md under a single ``report_data``
+	# namespace; Phase J.2 migrated every template section to read from
+	# it instead of the flat legacy keys.
+	from optimus.report_context import build_report_context as _build_report_context
+	context["report_data"] = _build_report_context(session_doc, context)
+
+	# v0.7.x Phase J.3 — drop the now-unused legacy top-level keys.
+	# Template grep confirms zero remaining references; the adapter has
+	# already consumed them (the pop runs AFTER build_report_context).
+	# Keys kept: session, fmt_dt/fmt_ms, generated_at/server_tz, severity_counts,
+	# ignored_apps, ignored_findings_count, hidden_db_tables_count, donut_*,
+	# truncation_banner, analyzer_warnings, recordings_by_uuid,
+	# line_drilldown_for_callsite, redact_frame_name, from_json - all
+	# directly used by template markup or finding_card cross-link.
+	for _legacy_key in (
+		"notes_html", "summary_html", "line_drilldown_html",
+		"waterfall_rows",
+		"hot_frames_rows", "hot_frames_rows_framework",
+		"top_queries", "top_queries_framework",
+		"table_breakdown",
+		"infra_summary", "infra_timeline",
+		"frontend_vitals_by_page", "frontend_xhr_matched",
+		"frontend_orphans", "frontend_summary",
+		"doc_event_breakdown",
+		"actions", "actions_framework",
+		"background_jobs",
+		"findings", "findings_by_app",
+		"observational_findings", "observational_findings_by_app",
+		"all_findings",
+		"tldr", "action_plan",
+		"render_config",
+	):
+		context.pop(_legacy_key, None)
 
 	return template.render(**context)
 
@@ -667,11 +868,11 @@ def _e(text: object) -> str:
 	return _html.escape("" if text is None else str(text))
 
 
-def _build_phase2_callsite_index(session_doc: Any) -> dict:
+def _build_line_drilldown_callsite_index(session_doc: Any) -> dict:
 	"""Build a (basename, function_name) → hottest-line lookup from the
-	session's phase-2 runs. Used by ``finding_card`` to inject a "Phase 2
-	hot line: …" callout whenever a finding's callsite resolves to a
-	function that was line-profiled.
+	session's phase-2 runs. Used by ``finding_card`` to inject a
+	"Line-Level Drilldown hot line: ..." callout whenever a finding's
+	callsite resolves to a function that was line-profiled.
 
 	Keyed by file basename (not absolute path) so the lookup survives
 	dev-vs-deploy path differences. When the same function appears in
@@ -732,10 +933,13 @@ def _build_phase2_callsite_index(session_doc: Any) -> dict:
 	return index
 
 
-def _make_phase2_lookup(index: dict):
-	"""Wrap the phase-2 callsite index in a small lookup callable so
-	Jinja can call ``phase2_for_callsite(filename, function_name)`` —
-	Jinja cannot index dicts by tuple keys directly.
+_build_phase2_callsite_index = _build_line_drilldown_callsite_index
+
+
+def _make_line_drilldown_lookup(index: dict):
+	"""Wrap the line-drilldown callsite index in a small lookup callable
+	so Jinja can call ``line_drilldown_for_callsite(filename,
+	function_name)`` - Jinja cannot index dicts by tuple keys directly.
 	"""
 	import os
 
@@ -745,6 +949,9 @@ def _make_phase2_lookup(index: dict):
 		return index.get((os.path.basename(filename), function_name))
 
 	return lookup
+
+
+_make_phase2_lookup = _make_line_drilldown_lookup
 
 
 def _find_call_line_in_function_body(
@@ -1168,89 +1375,72 @@ def _render_phase2_function_table(fn: dict) -> str:
 	user's pick appears flush-left, each auto-expanded descendant a
 	level deeper.
 	"""
+	# v0.7.x Phase F: editorial styling. Replaces inline-styled divs +
+	# table with `.phase2-func` + `.line-prof` classes. Auto-expanded
+	# descendants get progressive indent (`.indent-1` for now; deeper
+	# chains can roll into `.indent-2` / `.indent-3` if a future patch
+	# tracks chain depth on the row).
 	rows = fn.get("lines") or []
 	dotted = fn.get("dotted_path", "")
 	file_path = fn.get("file", "")
 	source = fn.get("source") or "curated"
 
-	# Auto-expanded descendants get a chain-indent + arrow so the report
-	# reads top-down as "you picked X; we drilled into ↳ Y; ↳ Z; …".
 	is_descendant = source == "auto_expand"
-	container_margin_left = "24px" if is_descendant else "0"
+	indent_cls = " indent-1" if is_descendant else ""
 	header_prefix = (
-		'<span style="color: #9ca3af; margin-right: 6px;">↳</span>'
-		if is_descendant
-		else ""
+		'<span class="arrow">&#x21B3;</span>' if is_descendant else ""
 	)
 
 	html = [
-		f'<div class="phase2-function" '
-		f'style="margin: 12px 0 12px {container_margin_left}; padding: 8px; '
-		f'border: 1px solid #d1d5db; border-radius: 4px;">',
-		f'<div style="font-family: ui-monospace, Menlo, monospace; '
-		f'font-weight: 600; margin-bottom: 4px;">{header_prefix}{_e(dotted)}</div>',
-		f'<div style="color: #6b7280; font-size: 12px; margin-bottom: 8px;">'
-		f'{_e(file_path)}</div>',
+		f'<div class="phase2-func{indent_cls}">',
+		f'<div class="fn-name">{header_prefix}{_e(dotted)}</div>',
+		f'<div class="fn-path">{_e(file_path)}</div>',
 	]
 
 	if not rows:
 		html.append(
-			'<div style="font-style: italic; color: #6b7280;">'
+			'<div class="picks"><em>'
 			'Function was instrumented but never invoked during phase 2.'
-			'</div></div>'
+			'</em></div></div>'
 		)
 		return "".join(html)
 
 	html.append(
-		'<table style="width: 100%; border-collapse: collapse; '
-		'font-family: ui-monospace, Menlo, monospace; font-size: 12px;">'
-		'<thead style="background: #f9fafb;">'
-		'<tr>'
-		'<th style="text-align: right; padding: 4px 8px; '
-		'border-bottom: 1px solid #e5e7eb;">#</th>'
-		'<th style="text-align: right; padding: 4px 8px; '
-		'border-bottom: 1px solid #e5e7eb;">hits</th>'
-		# v0.7.x: unit suffixes ("total ms" / "per hit µs") dropped —
-		# the cells now flow through ``_format_duration_ms`` which
-		# emits the unit itself ("ms" or "s") and highlights values
-		# that cross the 1s threshold. The header just labels the
-		# field; the cell carries the unit.
-		'<th style="text-align: right; padding: 4px 8px; '
-		'border-bottom: 1px solid #e5e7eb;">total</th>'
-		'<th style="text-align: right; padding: 4px 8px; '
-		'border-bottom: 1px solid #e5e7eb;">per hit</th>'
-		'<th style="text-align: left; padding: 4px 8px; '
-		'border-bottom: 1px solid #e5e7eb;">source</th>'
+		'<table class="line-prof">'
+		'<thead><tr>'
+		'<th class="num">#</th>'
+		'<th class="num">hits</th>'
+		'<th class="num">total</th>'
+		'<th class="num">per hit</th>'
+		'<th>source</th>'
 		'</tr></thead><tbody>'
 	)
 
-	# Find the hot line so we can highlight it.
+	# Hot-row threshold: a line is hot when its total_ms is ≥25% of the
+	# function's max line ms (the existing heat-map rule).
 	max_ms = max((r.get("total_ms") or 0) for r in rows)
+
+	# v0.7.x: VSCode Dark+ syntax highlighting for the per-function
+	# source column. Highlighting the whole function's rows together
+	# preserves multi-line tokenisation state.
+	_highlight_python_snippet(rows)
 
 	for line in rows:
 		ms = line.get("total_ms") or 0
-		# Highlight rows that account for ≥25% of the function's max line ms
-		# AND > 0 — gives the eye a heat-map of where time goes.
-		highlight = max_ms > 0 and ms / max_ms >= 0.25
-		row_style = (
-			'background: #fef3c7;' if highlight and ms > 0 else 'background: transparent;'
-		)
-		source_cell = (
-			f'<code style="white-space: pre;">{_e(line.get("content", ""))}</code>'
-		)
-		# v0.7.x: honour the report-wide timing rule. ``_format_duration_ms``
-		# returns Markup with the ``<span class="time-high">…</span>``
-		# highlight when the value crosses the 1s threshold; sub-1s values
-		# render plain. ``per_hit_us`` is microseconds — convert to ms first
-		# so the same rule applies in the same unit-scale.
+		is_hot = max_ms > 0 and ms > 0 and ms / max_ms >= 0.25
+		tr_cls = ' class="hot"' if is_hot else ""
+		# `per_hit_us` is microseconds — convert to ms so the timing
+		# rule (1s threshold for the `.time-high` highlight) applies.
 		per_hit_ms = (line.get("per_hit_us") or 0) / 1000.0
+		_src_html = line.get("content_html")
+		_src_cell = _src_html if _src_html else _e(line.get("content", ""))
 		html.append(
-			f'<tr style="{row_style}">'
-			f'<td style="text-align: right; padding: 2px 8px; color: #6b7280;">{line.get("lineno", "")}</td>'
-			f'<td style="text-align: right; padding: 2px 8px;">{line.get("hits", 0)}</td>'
-			f'<td style="text-align: right; padding: 2px 8px;">{_format_duration_ms(ms, decimals=2)}</td>'
-			f'<td style="text-align: right; padding: 2px 8px;">{_format_duration_ms(per_hit_ms, decimals=2)}</td>'
-			f'<td style="padding: 2px 8px;">{source_cell}</td>'
+			f'<tr{tr_cls}>'
+			f'<td class="ln">{line.get("lineno", "")}</td>'
+			f'<td class="num">{line.get("hits", 0)}</td>'
+			f'<td class="num">{_format_duration_ms(ms, decimals=2)}</td>'
+			f'<td class="num">{_format_duration_ms(per_hit_ms, decimals=2)}</td>'
+			f'<td class="src"><code>{_src_cell}</code></td>'
 			'</tr>'
 		)
 
@@ -1265,66 +1455,75 @@ def _render_phase2_diff_table(diff_rows: list[dict]) -> str:
 	v0.6.0 Round 7: source column always shows full code (was previously
 	gated by ``mode == "safe"`` + the safe-source toggle).
 	"""
+	# v0.7.x Phase F: cross-run diff uses the same `.line-prof` base
+	# class as the per-function table, with extra `.added` / `.removed`
+	# row tints for matched-faster / matched-slower / added / removed
+	# statuses (CSS overlays in the `.line-prof` block).
 	if not diff_rows:
 		return ""
 
 	html = [
-		'<table style="width: 100%; border-collapse: collapse; '
-		'font-family: ui-monospace, Menlo, monospace; font-size: 12px; '
-		'margin-top: 8px;">',
-		'<thead style="background: #f9fafb;"><tr>'
-		'<th style="text-align: left; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">status</th>'
-		'<th style="text-align: right; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">prev #</th>'
-		'<th style="text-align: right; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">curr #</th>'
-		'<th style="text-align: right; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">prev ms</th>'
-		'<th style="text-align: right; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">curr ms</th>'
-		'<th style="text-align: right; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">Δ ms</th>'
-		'<th style="text-align: left; padding: 4px 8px; border-bottom: 1px solid #e5e7eb;">source</th>'
+		'<table class="line-prof line-prof-diff">'
+		'<thead><tr>'
+		'<th>status</th>'
+		'<th class="num">prev #</th>'
+		'<th class="num">curr #</th>'
+		'<th class="num">prev ms</th>'
+		'<th class="num">curr ms</th>'
+		'<th class="num">&Delta; ms</th>'
+		'<th>source</th>'
 		'</tr></thead><tbody>',
 	]
 
+	# v0.7.x: VSCode Dark+ syntax highlighting for the cross-run diff
+	# source column. Highlight all diff rows together so multi-line
+	# constructs across the diff window stay correctly tokenised.
+	_highlight_python_snippet(diff_rows)
+
 	for row in diff_rows:
 		status = row.get("status", "")
-		# Status background: green for matched-faster, red for matched-slower,
-		# blue for added, gray for removed.
-		bg = "transparent"
 		delta = row.get("delta_ms")
+		# Row-class: `added` (green tint) for matched-faster + new
+		# rows; `removed` (red tint) for matched-slower + dropped
+		# rows. Matches the `.line-prof` CSS overlays.
+		tr_cls = ""
 		if status == "matched" and delta is not None:
 			if delta < -0.5:
-				bg = "#dcfce7"  # green-50
+				tr_cls = ' class="added"'
 			elif delta > 0.5:
-				bg = "#fee2e2"  # red-50
+				tr_cls = ' class="removed"'
 		elif status == "added":
-			bg = "#dbeafe"  # blue-50
+			tr_cls = ' class="added"'
 		elif status == "removed":
-			bg = "#f3f4f6"  # gray-100
+			tr_cls = ' class="removed"'
 
 		def _fmt(v):
 			return "—" if v is None else (f"{v:.2f}" if isinstance(v, float) else str(v))
 
-		source_cell = (
-			f'<code style="white-space: pre;">{_e(row.get("content", ""))}</code>'
-		)
+		_src_html = row.get("content_html")
+		_src = _src_html if _src_html else _e(row.get("content", ""))
+		source_cell = f'<code>{_src}</code>'
 
 		html.append(
-			f'<tr style="background: {bg};">'
-			f'<td style="padding: 2px 8px;">{_e(status)}</td>'
-			f'<td style="text-align: right; padding: 2px 8px; color: #6b7280;">{_fmt(row.get("lineno_old"))}</td>'
-			f'<td style="text-align: right; padding: 2px 8px; color: #6b7280;">{_fmt(row.get("lineno_new"))}</td>'
-			f'<td style="text-align: right; padding: 2px 8px;">{_fmt(row.get("ms_old"))}</td>'
-			f'<td style="text-align: right; padding: 2px 8px;">{_fmt(row.get("ms_new"))}</td>'
-			f'<td style="text-align: right; padding: 2px 8px;">{_fmt(delta)}</td>'
-			f'<td style="padding: 2px 8px;">{source_cell}</td>'
+			f'<tr{tr_cls}>'
+			f'<td>{_e(status)}</td>'
+			f'<td class="ln">{_fmt(row.get("lineno_old"))}</td>'
+			f'<td class="ln">{_fmt(row.get("lineno_new"))}</td>'
+			f'<td class="num">{_fmt(row.get("ms_old"))}</td>'
+			f'<td class="num">{_fmt(row.get("ms_new"))}</td>'
+			f'<td class="num">{_fmt(delta)}</td>'
+			f'<td class="src">{source_cell}</td>'
 			'</tr>'
 		)
 	html.append('</tbody></table>')
 	return "".join(html)
 
 
-def _render_phase2_panel(session_doc: Any) -> str:
-	"""Build the phase-2 section HTML. Returns an empty string when the
-	session has no phase-2 runs (the template's ``{% if phase2_html %}``
-	guard then skips the section entirely).
+def _render_line_drilldown_panel(session_doc: Any) -> str:
+	"""Build the Line-Level Drilldown section HTML. Returns an empty
+	string when the session has no phase-2 runs (the template's
+	``{% if line_drilldown_html %}`` guard then skips the section
+	entirely).
 
 	v0.6.0 Round 7: source-line text is always rendered (was previously
 	gated by the ``safe_report_include_source_lines`` setting in safe
@@ -1392,17 +1591,24 @@ def _render_phase2_panel(session_doc: Any) -> str:
 			"rows": _lp_diff.align_function(prev_fn["lines"], curr_fn["lines"]),
 		}
 
+	# v0.7.x Phase F: editorial section head with per-run cards +
+	# per-function blocks. Uses the shared `.section` / `.section-head` /
+	# `.phase2-run` / `.phase2-func` / `.line-prof` classes.
+	n_runs = len(parsed_runs)
 	html = [
-		'<details class="section" style="margin-top: 32px; padding: 16px; '
-		'border: 1px solid #d1d5db; border-radius: 6px; background: #ffffff;">',
-		'<summary><h2 style="margin: 0 0 8px 0;">Phase 2: Line-Level Drilldown</h2></summary>',
-		'<div style="background: #fef3c7; border-left: 4px solid #f59e0b; '
-		'padding: 8px 12px; margin-bottom: 16px; font-size: 13px;">'
-		'Phase 2 captures only the flow you ran during the line-profile '
-		'recording. Make sure your phase-2 reproduction exercises the same '
-		'code paths as phase 1 — function-not-invoked warnings indicate '
-		"otherwise."
-		'</div>',
+		'<details class="section" id="line-drilldown">',
+		'<summary>'
+		'<div class="section-head">'
+		'<h2>Line-Level Drilldown</h2>'
+		f'<span class="section-tag">{n_runs} run{"s" if n_runs != 1 else ""}</span>'
+		'</div>'
+		'</summary>',
+		'<p class="section-intro">'
+		'Line-Level Drilldown captures only the flow you ran during the '
+		'line-profile recording. Make sure the line-profile reproduction '
+		'exercises the same code paths as the initial session recording - '
+		'function-not-invoked warnings indicate otherwise.'
+		'</p>',
 	]
 
 	for run_idx, run in enumerate(parsed_runs, start=1):
@@ -1410,37 +1616,31 @@ def _render_phase2_panel(session_doc: Any) -> str:
 		picks_summary = ", ".join(
 			_e(p.get("dotted_path", "?")) for p in run.get("picks", [])
 		)
-		status_color = {
-			"Ready": "#16a34a",
-			"Recording": "#0ea5e9",
-			"Analyzing": "#f59e0b",
-			"Failed": "#dc2626",
-		}.get(run.get("status", ""), "#6b7280")
+		status = _e(run.get("status", ""))
+		total_ms = run.get("total_ms", 0)
 		html.append(
-			f'<div style="margin: 16px 0; padding: 12px; '
-			f'background: #f9fafb; border-radius: 4px;">'
-			f'<div style="display: flex; justify-content: space-between; '
-			f'align-items: baseline; margin-bottom: 8px;">'
-			f'<strong>Run {run_idx}</strong> '
-			f'<span style="color: {status_color}; font-size: 12px;">'
-			f'{_e(run.get("status", ""))} · {run.get("total_ms", 0):.2f}ms · '
-			f'{started}</span></div>'
-			f'<div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">'
-			f'<em>Picks:</em> {picks_summary or "—"}</div>'
+			'<div class="phase2-run">'
+			'<div class="phase2-run-head">'
+			f'<strong>Run {run_idx}</strong>'
+			'<span class="meta">'
+			f'<span class="status-badge status-{status}">{status}</span>'
+			f'{total_ms:.2f}ms &middot; {started}'
+			'</span>'
+			'</div>'
+			f'<div class="picks"><em>Picks:</em> {picks_summary or "-"}</div>'
 		)
-
 		for fn in run.get("functions", []):
 			html.append(_render_phase2_function_table(fn))
 		html.append('</div>')
 
 	if diffs:
 		html.append(
-			'<h3 style="margin-top: 24px;">Cross-Run Comparison</h3>'
-			'<div style="font-size: 13px; color: #4b5563; margin-bottom: 8px;">'
+			'<h3 class="frontend-h3">Cross-Run Comparison</h3>'
+			'<p class="section-intro">'
 			'For functions profiled in two or more runs, the table below shows '
 			'a line-by-line delta between the most recent two runs (aligned by '
-			'content hash so file edits between runs don\'t break the diff).'
-			'</div>'
+			"content hash so file edits between runs don't break the diff)."
+			'</p>'
 		)
 		for path, diff_meta in diffs.items():
 			label = (
@@ -1448,15 +1648,17 @@ def _render_phase2_panel(session_doc: Any) -> str:
 				f"Run {diff_meta['curr_run_idx'] + 1}"
 			)
 			html.append(
-				f'<div style="margin: 16px 0;">'
-				f'<div style="font-family: ui-monospace, Menlo, monospace; '
-				f'font-weight: 600; margin-bottom: 4px;">{_e(label)}</div>'
+				'<div class="phase2-func">'
+				f'<div class="fn-name">{_e(label)}</div>'
 			)
 			html.append(_render_phase2_diff_table(diff_meta["rows"]))
 			html.append('</div>')
 
 	html.append('</details>')
 	return "".join(html)
+
+
+_render_phase2_panel = _render_line_drilldown_panel
 
 
 def render_raw(session_doc: Any, recordings: list[dict]) -> str:
@@ -1476,10 +1678,23 @@ def render_raw(session_doc: Any, recordings: list[dict]) -> str:
 
 
 def _action_to_dict(child: Any) -> dict:
-	"""Flatten a Optimus Action child row to a plain dict."""
+	"""Flatten a Optimus Action child row to a plain dict.
+
+	v0.7.x J.12.1: normalise legacy ``event_type = "Background Job"`` to
+	the new ``"RQ Job"`` label at read time so reports rendered from
+	sessions captured before the J.12 rename still surface the RQ-Jobs
+	section. New recordings already carry the new label.
+	"""
+	_event_type = child.event_type or ""
+	if _event_type == "Background Job":
+		_event_type = "RQ Job"
+	_label = child.action_label or ""
+	# Same normalisation for the analyzer-baked label prefix.
+	if _label.startswith("Job: "):
+		_label = "RQ " + _label
 	return {
-		"action_label": child.action_label or "",
-		"event_type": child.event_type or "",
+		"action_label": _label,
+		"event_type": _event_type,
 		"http_method": child.http_method or "",
 		"path": child.path or "",
 		"recording_uuid": child.recording_uuid or "",
@@ -1495,9 +1710,9 @@ def _action_to_dict(child: Any) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# v0.6.0: "Background jobs" report section — render-time only (the pipeline is
+# v0.6.0: "RQ Jobs" report section — render-time only (the pipeline is
 # frozen). Derived purely from the persisted Optimus Action rows that have
-# event_type == "Background Job" (one per captured job recording), enriched
+# event_type == "RQ Job" (one per captured job recording), enriched
 # with the live recording's SQL when it's still in Redis.
 # ---------------------------------------------------------------------------
 
@@ -1512,18 +1727,22 @@ def _clean_job_method(action_label, path, recording) -> str:
 	``cmd``, then a generic placeholder."""
 	label = (action_label or "").strip()
 	if label:
-		prefix = "Job: "
-		return (label[len(prefix):].strip() or label) if label.startswith(prefix) else label
+		# Accept both the new ``"RQ Job: <method>"`` prefix and the legacy
+		# ``"Job: <method>"`` from sessions captured before the J.12 rename.
+		for prefix in ("RQ Job: ", "Job: "):
+			if label.startswith(prefix):
+				return label[len(prefix):].strip() or label
+		return label
 	p = (path or "").strip()
 	if p:
 		return p
 	if recording:
-		return (recording.get("cmd") or recording.get("path") or "").strip() or "Background Job"
-	return "Background Job"
+		return (recording.get("cmd") or recording.get("path") or "").strip() or "RQ Job"
+	return "RQ Job"
 
 
 def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
-	"""Build the "Background jobs" section payload from the (already
+	"""Build the "RQ Jobs" section payload from the (already
 	min-duration-filtered) action dicts.
 
 	``actions`` items are ``_action_to_dict`` output plus an ``idx`` key
@@ -1546,7 +1765,7 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 
 	jobs: list[dict] = []
 	for a in (actions or []):
-		if a.get("event_type") != "Background Job":
+		if a.get("event_type") != "RQ Job":
 			continue
 		uuid = a.get("recording_uuid") or ""
 		rec = recordings_by_uuid.get(uuid) if recordings_by_uuid else None
@@ -1790,8 +2009,8 @@ def _find_node_in_tree(tree: dict, basename: str, function: str) -> dict | None:
 
 	The basename match (rather than full path) survives bench-relative vs
 	absolute path differences between where the analyzer ran and where the
-	render is happening — same trick ``_build_phase2_callsite_index`` uses
-	(``renderer.py:552``).
+	render is happening - same trick ``_build_line_drilldown_callsite_index``
+	uses.
 	"""
 	if not isinstance(tree, dict):
 		return None
@@ -2145,11 +2364,64 @@ def _attach_action_context(actions, findings, recordings_by_uuid) -> None:
 	    key omitted when the function isn't a registered ``doc_events`` hook.
 	"""
 	recordings_by_uuid = recordings_by_uuid or {}
+	# Build a per-action finding index so the fallback path (below) can
+	# infer doctype from a related finding's controller-path callsite when
+	# the recording's form_dict isn't available (Redis TTL expired).
+	_findings_by_action_idx: dict[int, list] = {}
+	for _f in (findings or []):
+		if not isinstance(_f, dict):
+			continue
+		_ref = (_f.get("action_ref") or "").strip()
+		if _ref.isdigit():
+			_findings_by_action_idx.setdefault(int(_ref), []).append(_f)
 	for a in (actions or []):
 		if not isinstance(a, dict):
 			continue
 		rec = recordings_by_uuid.get(a.get("recording_uuid") or "")
-		a["target_doc"] = _extract_target_doc(rec.get("form_dict") if isinstance(rec, dict) else None)
+		td = _extract_target_doc(rec.get("form_dict") if isinstance(rec, dict) else None)
+		# v0.7.x J.13: fallback when the recording isn't available
+		# (Redis TTL expired between record-time and regenerate-time) —
+		# infer the action's DocType from any related finding's callsite
+		# filepath via the controller-path mapping
+		# (e.g. ``erpnext/.../sales_invoice/sales_invoice.py`` → "Sales Invoice").
+		# Bench-side reports for old sessions get the DocType suffix
+		# without needing the recording or a fresh capture.
+		if not td:
+			for _rf in _findings_by_action_idx.get(a.get("idx"), []):
+				_detail = _rf.get("technical_detail") or {}
+				_cs = _detail.get("callsite") if isinstance(_detail, dict) else None
+				_fname = _cs.get("filename") if isinstance(_cs, dict) else None
+				_inferred = _doctype_from_controller_path(_fname or "")
+				if _inferred:
+					td = {"doctype": _inferred, "name": None}
+					break
+		a["target_doc"] = td
+		# v0.7.x J.8: enrich the action_label with the DocType suffix so
+		# every downstream consumer (TLDR composer, action-plan composer,
+		# per-action table cell, waterfall row, queries-per-action heading,
+		# related-finding inline link) shows the doctype inline without
+		# requiring template edits. Idempotent: the `" (" not in label`
+		# guard means re-renders pass through untouched.
+		_td_doctype = (a.get("target_doc") or {}).get("doctype") if isinstance(a.get("target_doc"), dict) else None
+		_a_label = a.get("action_label") or ""
+		if _td_doctype and _a_label and " (" not in _a_label:
+			a["action_label"] = f"{_a_label} ({_td_doctype})"
+		# v0.7.x J.9: same suffix on the URL path so the per-action
+		# `.action-meta` line ("POST /api/method/...") and the
+		# queries-per-action heading carry the doctype too. Idempotent on
+		# `" (" not in path` for re-renders.
+		_a_path = a.get("path") or ""
+		if _td_doctype and _a_path and " (" not in _a_path:
+			a["path"] = f"{_a_path} ({_td_doctype})"
+		# v0.7.x J.11: enrich the entry-callsite `function` so the small
+		# `.action-meta` line under each action row reads
+		# `…/save.py:16 · savedocs (Sales Invoice)` — keeps every filepath
+		# surface in the report consistently tagged with its DocType.
+		_ec = a.get("entry_callsite")
+		if _td_doctype and isinstance(_ec, dict):
+			_ec_fn = _ec.get("function") or ""
+			if _ec_fn and " (" not in _ec_fn:
+				_ec["function"] = f"{_ec_fn} ({_td_doctype})"
 	by_idx = {a.get("idx"): a for a in (actions or []) if isinstance(a, dict)}
 	hook_index = _doc_event_hook_index()
 	for f in (findings or []):
@@ -2165,6 +2437,26 @@ def _attach_action_context(actions, findings, recordings_by_uuid) -> None:
 			td = act.get("target_doc") if isinstance(act, dict) else None
 		if td:
 			detail["target_doc"] = td
+			# v0.7.x J.7: inject the DocType inline at the end of the
+			# italicised action-label phrase so the reader sees
+			# "During *frappe.desk.form.save.savedocs:Save (Sales Invoice)*"
+			# instead of "During *frappe.desk.form.save.savedocs:Save*" —
+			# keeps the technical label and the doctype emphasised together
+			# inside one self-contained italic phrase. Guards on the
+			# `"During *…*"` prose shape so self-referential / non-action
+			# descriptions pass through untouched.
+			_doctype = td.get("doctype") if isinstance(td, dict) else None
+			if _doctype:
+				_desc = f.get("customer_description") or ""
+				if _desc.startswith("During *"):
+					_close_idx = _desc.find("*", len("During *"))
+					if _close_idx > 0:
+						_action_label = _desc[len("During *"):_close_idx]
+						_original_chunk = f"*{_action_label}*"
+						_new_chunk = f"*{_action_label} ({_doctype})*"
+						f["customer_description"] = _desc.replace(
+							_original_chunk, _new_chunk, 1
+						)
 		hevs = _finding_hook_events(detail, hook_index, action_doctype=(td or {}).get("doctype"))
 		if hevs:
 			detail["hook_events"] = hevs
@@ -2510,7 +2802,7 @@ def _read_source_snippet(
 def _action_dotted_entry(action) -> str | None:
 	"""Derive an action's dotted entry-point path, or ``None``.
 
-	- Background Job: ``action["path"]`` is already the job method (Frappe's
+	- RQ Job: ``action["path"]`` is already the job method (Frappe's
 	  recorder stores ``frappe.job.method`` there — e.g.
 	  ``ugly_code.python.common.bg_recheck_users``).
 	- HTTP Request whose path is ``/api/method/<dotted>``: the ``<dotted>``
@@ -2524,7 +2816,7 @@ def _action_dotted_entry(action) -> str | None:
 	path = (action.get("path") or "").strip()
 	if not path:
 		return None
-	if event_type == "Background Job":
+	if event_type == "RQ Job":
 		return path.split("?", 1)[0].strip() or None
 	if event_type == "HTTP Request" and path.startswith("/api/method/"):
 		rest = path[len("/api/method/"):]
@@ -2824,6 +3116,595 @@ def _read_source_window(
 # away knowing (1) is the session slow, (2) what's the biggest problem,
 # (3) how much of the time it accounts for. Surfaces the top 3 most-
 # impactful actionable findings as plain-English bullets.
+#
+# v0.7.x: ``_build_executive_summary`` stays as the data layer (pace,
+# top-3 bullets, infra_note — feeds the upcoming Action plan section);
+# the *headline* portion of the original "At a glance" card was
+# replaced template-side by ``_compose_tldr`` below — a hero block
+# composing one sentence keyed on the single highest-impact finding.
+
+
+# Mapping from analyzer finding_type to a short category slug used by
+# _compose_tldr for branch selection. Anything not in the map falls
+# through to the verbatim-title branch — safe default.
+_CATEGORY_FOR_FINDING_TYPE: dict[str, str] = {
+	"N+1 Query": "n_plus_one",
+	"Framework N+1": "n_plus_one",
+	"Hook Bottleneck": "slow_hook",
+	"Slow Hot Path": "slow_path",
+	"Hot Line": "hot_line",
+	"Slow Query": "slow_query",
+	"Missing Index": "missing_index",
+	"Full Table Scan": "full_table_scan",
+	"Redundant Call": "redundant_call",
+	"Repeated Hot Frame": "repeated_hot_frame",
+	"Filesort": "filesort",
+	"Temporary Table": "temp_table",
+	"Low Filter Ratio": "low_filter",
+}
+
+# Ascending order for sorted() — High first. NOT the same as the
+# `> max` _SEVERITY_RANK constant defined earlier in this module
+# (which uses {High:3, Medium:2, Low:1} for max-of comparisons).
+# Named distinctly to avoid the shadowing collision that broke
+# `_build_doc_event_breakdown`'s severity-max merge.
+_TLDR_SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+
+
+def _category_for(finding_type: str | None) -> str:
+	"""Map a finding_type string to a TL;DR category slug, or 'other'."""
+	return _CATEGORY_FOR_FINDING_TYPE.get(finding_type or "", "other")
+
+
+# Verb-led action titles per finding category. Strings are short
+# imperative phrases — the user reads the title alone and knows what
+# to do next. Fallback: the finding's own title (verbatim).
+_ACTION_VERB_FOR_FINDING_TYPE: dict[str, str] = {
+	"N+1 Query": "Eliminate the N+1 query",
+	"Framework N+1": "Eliminate the N+1 query (framework code)",
+	"Hook Bottleneck": "Speed up the doc-event hook",
+	"Slow Hot Path": "Optimise the hot call path",
+	"Hot Line": "Tune the single hottest line",
+	"Missing Index": "Add a database index",
+	"Slow Query": "Speed up the slow query",
+	"Full Table Scan": "Eliminate the full-table scan",
+	"Filesort": "Avoid the filesort",
+	"Temporary Table": "Avoid the temporary table",
+	"Low Filter Ratio": "Narrow the WHERE clause",
+	"Redundant Call": "Cache the repeated call",
+	"Repeated Hot Frame": "Investigate the recurring hot frame",
+}
+
+
+def _action_verb_for(finding_type: str | None) -> str | None:
+	"""Return a short verb-led action title for a finding_type, or
+	None when the verb isn't known (callers fall back to the finding's
+	own title)."""
+	return _ACTION_VERB_FOR_FINDING_TYPE.get(finding_type or "")
+
+
+def _build_action_plan(
+	findings: list[dict],
+	large_duration_threshold_ms: float = 1000.0,
+	max_steps: int = 3,
+) -> list[dict]:
+	"""Top-N action plan steps from the highest-impact findings.
+
+	Returns a list of dicts shaped for the template's
+	`.action-step` row::
+
+	    {"n": int, "title": str, "desc": str, "gain_ms": float,
+	     "gain_label": str, "callsite": "file:lineno" or None}
+
+	Sort: severity DESC, then estimated_impact_ms DESC. Findings with
+	zero impact are still eligible (they may not have a measurable
+	cost but still warrant attention). Empty input → empty list, and
+	the template hides the section.
+
+	The Action plan is conceptually the same top-3 as the old exec-
+	summary bullets; this function replaces that data layer.
+	"""
+	if not findings:
+		return []
+
+	def _sort_key(f: dict):
+		return (
+			_TLDR_SEVERITY_ORDER.get(f.get("severity") or "", 9),
+			-float(f.get("estimated_impact_ms") or 0),
+		)
+	ranked = sorted(findings, key=_sort_key)[:max_steps]
+
+	out: list[dict] = []
+	for i, f in enumerate(ranked, start=1):
+		ftype = f.get("finding_type") or ""
+		verb = _action_verb_for(ftype)
+		title = verb or (f.get("title") or "Investigate this finding")
+		desc = (f.get("customer_description") or "").strip()
+		if not desc:
+			# Fall back to the finding's title prose when no
+			# customer description is available — better than empty.
+			desc = (f.get("title") or "").strip()
+		callsite = None
+		detail = f.get("technical_detail") or {}
+		cs = detail.get("callsite") if isinstance(detail, dict) else None
+		if isinstance(cs, dict):
+			fname = cs.get("filename")
+			lineno = cs.get("lineno")
+			if fname and lineno:
+				callsite = f"{fname}:{lineno}"
+		# v0.7.x J.11: append the DocType suffix to the action-plan step
+		# callsite so the `.callsite` line under each step reads
+		# `ugly_code/python/common.py:13 (Sales Invoice)`. The
+		# detail.target_doc was attached by _attach_action_context earlier
+		# in the render flow; falls back to bare callsite when no doctype.
+		_td_dt = None
+		_td_obj = (detail.get("target_doc") if isinstance(detail, dict) else None) or {}
+		if isinstance(_td_obj, dict):
+			_td_dt = _td_obj.get("doctype")
+		if _td_dt and callsite and " (" not in callsite:
+			callsite = f"{callsite} ({_td_dt})"
+		out.append({
+			"n": i,
+			"title": title,
+			"desc": desc,
+			"gain_ms": float(f.get("estimated_impact_ms") or 0),
+			"gain_label": "est. saving",
+			"callsite": callsite,
+			"finding_type": ftype,
+		})
+	return out
+
+
+def _build_waterfall(
+	actions: list[dict],
+	findings: list[dict],
+	large_duration_threshold_ms: float = 1000.0,
+	max_rows: int = 8,
+) -> list[dict]:
+	"""Top-N actions by duration, formatted as a horizontal-bar
+	waterfall.
+
+	Returns a list of dicts::
+
+	    {"name": str, "duration_ms": float, "pct": float,
+	     "hot": bool, "bg": bool}
+
+	`pct` is scaled to the displayed slice's max duration — so the
+	longest row always renders at 100% and shorter rows are visible.
+	Scaling to the session total would make sub-second actions
+	invisible.
+
+	`hot` = the action has any High-severity linked finding (via
+	`action_ref`). `bg` = the action is a background job (event_type
+	== "RQ Job").
+
+	When ``actions`` is empty, returns an empty list and the template
+	hides the section.
+	"""
+	if not actions:
+		return []
+
+	# Build action_ref → high-severity-count once.
+	high_refs: set[str] = set()
+	for f in (findings or []):
+		if (f.get("severity") or "") == "High":
+			ref = str(f.get("action_ref") or "").strip()
+			if ref:
+				high_refs.add(ref)
+
+	def _duration(a: dict) -> float:
+		return float(a.get("duration_ms") or 0)
+
+	sorted_actions = sorted(
+		(a for a in actions if _duration(a) > 0),
+		key=_duration,
+		reverse=True,
+	)[:max_rows]
+	if not sorted_actions:
+		return []
+
+	max_ms = _duration(sorted_actions[0]) or 1.0
+
+	out: list[dict] = []
+	for a in sorted_actions:
+		dur = _duration(a)
+		idx = str(a.get("idx", "")).strip()
+		is_bg = (a.get("event_type") or "") == "RQ Job"
+		is_hot = idx in high_refs
+		# Name: action_label or the dotted path.
+		name = (
+			a.get("action_label")
+			or a.get("path")
+			or a.get("method")
+			or "?"
+		)
+		out.append({
+			"name": str(name),
+			"duration_ms": dur,
+			"pct": round((dur / max_ms) * 100.0, 1) if max_ms else 0.0,
+			"hot": is_hot,
+			"bg": is_bg,
+		})
+	return out
+
+
+_ORM_DOCTYPE_PATTERNS = [
+	# frappe.get_doc("User", ...) / frappe.get_cached_doc("User", ...) /
+	# frappe.db.get_value("User", ...) / frappe.get_all("User", ...) / frappe.db.exists("User", ...) etc.
+	re.compile(r"""frappe\.(?:db\.)?(?:get_doc|get_cached_doc|get_value|get_all|get_list|exists|get_single)\s*\(\s*['"]([A-Z][A-Za-z _]+)['"]"""),
+]
+
+
+def _doctype_from_orm_call(src_line: str | None) -> str | None:
+	"""Pull a DocType name out of common Frappe ORM call literals.
+
+	``frappe.get_doc("User", ...)`` -> ``"User"``. Returns None when the
+	line isn't a recognised ORM call. Used by ``_compose_tldr`` to write
+	"a User document fetched 100 times" instead of a generic "a document".
+	"""
+	if not src_line:
+		return None
+	s = str(src_line)
+	for pat in _ORM_DOCTYPE_PATTERNS:
+		m = pat.search(s)
+		if m:
+			return m.group(1).strip() or None
+	return None
+
+
+def _action_verb_from_label(action_label: str | None) -> str | None:
+	"""``"frappe.desk.form.save.savedocs:Submit"`` -> ``"Submit"``.
+
+	Returns the part after the final colon when present; ``None`` otherwise.
+	Used by ``_compose_tldr`` to write "Sales Invoice Submit" naturally.
+	"""
+	if not action_label or ":" not in action_label:
+		return None
+	tail = action_label.rsplit(":", 1)[-1].strip()
+	# Strip any J.8/J.9 doctype suffix "(Sales Invoice)" off the verb.
+	if " (" in tail:
+		tail = tail.split(" (", 1)[0].strip()
+	return tail or None
+
+
+def _savings_phrase(pct: float) -> str:
+	"""Fuzzy round of an impact percentage into a human phrase.
+
+	``pct`` is impact_ms / action_duration_ms (range 0..1). Returns
+	"by roughly half" / "by roughly two-thirds" / "by roughly a third"
+	near common fractions; falls back to "by roughly N%" outside those
+	bands so the prose stays accurate for awkward ratios.
+	"""
+	if pct is None or pct <= 0:
+		return ""
+	if pct >= 0.65:
+		return "by roughly two-thirds"
+	if 0.40 <= pct < 0.65:
+		return "by roughly half"
+	if 0.20 <= pct < 0.40:
+		return "by roughly a third"
+	return f"by roughly {pct * 100:.0f}%"
+
+
+_CALL_TREE_MAX_DEPTH = 12  # truncate ultra-deep stacks for sanity
+
+
+def _render_call_tree_node(node, parent_ms, depth=0):
+	"""Phase K.5: recursive nested-``<details>`` emit for a single
+	call_tree node. Auto-expands the first ``depth`` levels; deeper
+	branches start collapsed so the panel doesn't unfurl into thousands
+	of frames on first paint.
+	"""
+	if not isinstance(node, dict):
+		return ""
+	fn = node.get("function") or "<?>"
+	file = node.get("filename") or ""
+	lineno = node.get("lineno") or ""
+	cum_ms = float(node.get("cumulative_ms") or 0)
+	self_ms = float(node.get("self_ms") or 0)
+	children = node.get("children") or []
+
+	pct = (cum_ms / parent_ms * 100.0) if parent_ms else 0.0
+	cls = "call-tree-node"
+	if parent_ms and cum_ms / parent_ms >= 0.5:
+		cls += " call-tree-hot"
+
+	open_attr = " open" if depth < 1 else ""
+	meta_lineno = f":{lineno}" if lineno else ""
+	pct_label = f" &middot; {pct:.0f}%" if parent_ms else ""
+	self_label = ""
+	if self_ms and cum_ms - self_ms > 1:
+		self_label = f" &middot; self {self_ms:.0f}ms"
+
+	out = [
+		f'<details class="{cls}"{open_attr}>',
+		'<summary>',
+		f'<span class="frame-name">{_e(fn)}</span>',
+		f'<span class="frame-meta">{_e(file)}{meta_lineno} &middot; '
+		f'{cum_ms:.0f}ms{pct_label}{self_label}</span>',
+		'</summary>',
+	]
+	if children and depth < _CALL_TREE_MAX_DEPTH:
+		out.append('<div class="call-tree-children">')
+		children_sorted = sorted(
+			children,
+			key=lambda c: float((c or {}).get("cumulative_ms") or 0),
+			reverse=True,
+		)
+		for c in children_sorted:
+			out.append(_render_call_tree_node(c, cum_ms, depth + 1))
+		out.append('</div>')
+	elif children:
+		# Truncation note for very deep trees.
+		out.append(
+			'<div class="call-tree-children call-tree-truncated">'
+			f'<em>... {len(children)} child frame(s) hidden (depth limit reached) ...</em>'
+			'</div>'
+		)
+	out.append('</details>')
+	return "".join(out)
+
+
+def _render_call_tree_panel(actions):
+	"""Phase K.5: render the call-tree panel sourced from the slowest
+	action's ``call_tree_json``. Empty string when no action carries
+	a tree (the template's ``{% if %}`` guard hides the section).
+	"""
+	if not actions:
+		return ""
+	# Pick the action with the largest duration_ms that also has a tree.
+	candidates = [a for a in actions if isinstance(a, dict) and a.get("call_tree_json")]
+	if not candidates:
+		return ""
+	top = max(candidates, key=lambda a: float(a.get("duration_ms") or 0))
+	try:
+		tree = json.loads(top.get("call_tree_json") or "{}")
+	except Exception:
+		return ""
+	if not isinstance(tree, dict):
+		return ""
+	root_children = tree.get("children") or []
+	if not root_children:
+		return ""
+
+	total_ms = float(tree.get("cumulative_ms") or 0) or float(top.get("duration_ms") or 0)
+	action_label = top.get("action_label") or ""
+
+	parts = [
+		'<details class="section" id="call-tree">',
+		'<summary>',
+		'<div class="section-head">',
+		'<h2>Call tree (top action)</h2>',
+		f'<span class="section-tag">{_e(action_label)}</span>',
+		'</div>',
+		'</summary>',
+		'<p class="section-intro">'
+		'Hierarchical breakdown of where wall-clock time went inside the slowest '
+		'action. Click any frame to expand its children. Numbers are cumulative time '
+		'(including children) and percentage of the parent. Branches consuming '
+		'&ge;50% of their parent are highlighted as hot.'
+		'</p>',
+		'<div class="call-tree">',
+	]
+	root_children_sorted = sorted(
+		root_children,
+		key=lambda c: float((c or {}).get("cumulative_ms") or 0),
+		reverse=True,
+	)
+	for c in root_children_sorted:
+		parts.append(_render_call_tree_node(c, total_ms, depth=0))
+	parts.append('</div>')
+	parts.append('</details>')
+	return "".join(parts)
+
+
+def _compose_tldr(
+	findings: list[dict],
+	session_doc: Any,
+	large_duration_threshold_ms: float = 1000.0,
+	actions: list[dict] | None = None,
+) -> dict:
+	"""Compose the TL;DR hero block.
+
+	Picks the single highest-impact finding (severity desc, then impact
+	desc), looks up its category, and builds a one-sentence headline
+	with the impact / loop-count / hook-name highlighted via
+	``<span class="hot">…</span>``. The sub-line is session totals.
+
+	Returns a dict the template renders verbatim:
+	``{"label": str, "headline_markup": Markup, "sub_markup": Markup}``.
+
+	When ``findings`` is empty, returns the clean-session branch
+	(no <span class="hot"> — nothing's wrong, no signal red needed).
+
+	The Markup-aware composition mirrors the recently-fixed
+	executive-summary headline: f-strings would flatten Markup back
+	to str and Jinja would HTML-escape the spans, so we use
+	``Markup.format(...)`` — it escapes plain-string args and passes
+	Markup args through untouched.
+	"""
+	def _fmt(v):
+		return _format_duration_ms(v, large_duration_threshold_ms)
+
+	total_ms = float(getattr(session_doc, "total_duration_ms", 0) or 0)
+	total_queries = int(getattr(session_doc, "total_queries", 0) or 0)
+	total_actions = int(getattr(session_doc, "total_requests", 0) or 0)
+
+	if not findings:
+		# Clean-session branch — no signal red.
+		return {
+			"label": "Clean session",
+			"headline_markup": Markup(
+				"Nothing to fix in this session - total {duration} across "
+				"{actions} operation{plural}, all under threshold."
+			).format(
+				duration=_fmt(total_ms),
+				actions=total_actions,
+				plural="s" if total_actions != 1 else "",
+			),
+			"sub_markup": Markup(
+				"Session total {duration} &middot; {actions} operations "
+				"&middot; {queries} DB queries."
+			).format(
+				duration=_fmt(total_ms),
+				actions=total_actions,
+				queries=total_queries,
+			),
+		}
+
+	# Sort by severity DESC then impact_ms DESC — be defensive even
+	# though the upstream sort usually already has this order.
+	def _sort_key(f: dict):
+		return (
+			_TLDR_SEVERITY_ORDER.get(f.get("severity") or "", 9),
+			-float(f.get("estimated_impact_ms") or 0),
+		)
+	top = sorted(findings, key=_sort_key)[0]
+
+	finding_type = top.get("finding_type") or ""
+	category = _category_for(finding_type)
+	impact_ms = float(top.get("estimated_impact_ms") or 0)
+	affected = int(top.get("affected_count") or 0)
+	title = top.get("title") or ""
+	severity = top.get("severity") or "?"
+
+	impact_html = _fmt(impact_ms)
+
+	# v0.7.x J.15: rich Hot Line branch — narrative two-sentence
+	# headline that names the target DocType being fetched, the loop
+	# count, the action it's slowing, and the expected savings.
+	# Falls through to a slimmer sentence when any of those are missing.
+	if category == "hot_line" and affected:
+		_detail = (top.get("technical_detail") or {})
+		_cs = _detail.get("callsite") or {}
+		_target_doctype = None
+		# Find the hot line in the source snippet and parse a DocType
+		# literal off it.
+		_target_lineno = _cs.get("lineno") if isinstance(_cs, dict) else None
+		for _sl in (_cs.get("source_snippet") or []):
+			if isinstance(_sl, dict) and _sl.get("lineno") == _target_lineno:
+				_target_doctype = _doctype_from_orm_call(_sl.get("content"))
+				break
+		# Find the action this finding belongs to + compute savings.
+		_action_label_human = None
+		_savings = None
+		_ref = (top.get("action_ref") or "").strip()
+		if _ref.isdigit() and actions:
+			_idx = int(_ref)
+			for _a in actions:
+				if isinstance(_a, dict) and _a.get("idx") == _idx:
+					_a_dt = (_a.get("target_doc") or {}).get("doctype") if isinstance(_a.get("target_doc"), dict) else None
+					_verb = _action_verb_from_label(_a.get("action_label"))
+					if _a_dt and _verb:
+						_action_label_human = f"{_a_dt} {_verb}"
+					elif _verb:
+						_action_label_human = _verb
+					_a_ms = float(_a.get("duration_ms") or 0)
+					if _a_ms > 0:
+						_savings = _savings_phrase(impact_ms / _a_ms)
+					break
+		if _target_doctype and _action_label_human and _savings:
+			headline = Markup(
+				"One line of code is responsible for "
+				"<span class=\"hot\">~{impact}</span> of this session "
+				"&mdash; a <strong>{target}</strong> document fetched "
+				"<span class=\"hot\">{n} times inside a loop</span> that "
+				"should only run once. Fix it and the "
+				"<strong>{label}</strong> drops {savings}."
+			).format(
+				impact=impact_html,
+				target=_target_doctype,
+				n=affected,
+				label=_action_label_human,
+				savings=_savings,
+			)
+		else:
+			# Slimmer fallback when ORM target / action context isn't
+			# available (e.g. legacy data, framework call).
+			headline = Markup(
+				"One line of code is responsible for "
+				"<span class=\"hot\">~{impact}</span> of this session "
+				"&mdash; same line ran <span class=\"hot\">{n} times "
+				"inside a loop</span>. Tune that line and most of the "
+				"cost goes away."
+			).format(impact=impact_html, n=affected)
+	elif category == "n_plus_one" and affected:
+		headline = Markup(
+			"One line of code is responsible for <span class=\"hot\">~"
+			"{impact}</span> of this session &mdash; same query ran "
+			"<span class=\"hot\">{n}× inside a loop</span>. "
+			"Removing the redundant round-trips is the single biggest "
+			"win here."
+		).format(impact=impact_html, n=affected)
+	elif category == "slow_hook":
+		headline = Markup(
+			"<span class=\"hot\">{impact}</span> is spent inside a "
+			"doc-event hook — the slowest hook this session. {title}"
+		).format(impact=impact_html, title=title)
+	elif category in ("slow_query", "missing_index", "full_table_scan"):
+		headline = Markup(
+			"A single query took <span class=\"hot\">{impact}</span> "
+			"— {title}"
+		).format(impact=impact_html, title=title)
+	elif category == "redundant_call":
+		if affected:
+			headline = Markup(
+				"Same call repeated <span class=\"hot\">{n}×</span> "
+				"— {impact} of this session. {title}"
+			).format(n=affected, impact=impact_html, title=title)
+		else:
+			headline = Markup(
+				"<span class=\"hot\">{impact}</span> in redundant work — "
+				"{title}"
+			).format(impact=impact_html, title=title)
+	else:
+		# Fallback — verbatim title with the impact called out.
+		headline = Markup(
+			"<span class=\"hot\">{impact}</span> &middot; {title}"
+		).format(impact=impact_html, title=title)
+
+	same_sev_count = sum(
+		1 for f in findings if (f.get("severity") or "") == severity
+	)
+	# v0.7.x J.15: when every finding of the top severity points at the
+	# same callsite filename, append "all in <file>" to the sub-line so
+	# the reader sees the single hot file at a glance. Multi-file or
+	# missing-callsite cases fall through with no suffix.
+	_sev_filenames = set()
+	for _f in findings:
+		if (_f.get("severity") or "") != severity:
+			continue
+		_d = _f.get("technical_detail")
+		if not isinstance(_d, dict):
+			continue
+		_c = _d.get("callsite")
+		if isinstance(_c, dict):
+			_fname = _c.get("filename")
+			if _fname:
+				_sev_filenames.add(_fname)
+	_all_in = ""
+	if len(_sev_filenames) == 1:
+		_only = next(iter(_sev_filenames))
+		_all_in = Markup(", all in <code>{file}</code>").format(file=_only)
+	sub = Markup(
+		"Session total {duration} &middot; {actions} operations "
+		"&middot; {queries:,} DB queries &middot; "
+		"{n} {severity_lc}-severity finding{plural}{all_in}."
+	).format(
+		duration=_fmt(total_ms),
+		actions=total_actions,
+		queries=total_queries,
+		n=same_sev_count,
+		severity_lc=severity.lower(),
+		plural="s" if same_sev_count != 1 else "",
+		all_in=_all_in,
+	)
+
+	return {
+		"label": "The headline",
+		"headline_markup": headline,
+		"sub_markup": sub,
+	}
 
 
 def _build_executive_summary(
@@ -3349,8 +4230,17 @@ def build_donut_svg(slices: list) -> str:
 	return "".join(parts)
 
 
-def build_hot_frames_table(rows: list) -> list:
-	"""Build the hot-frames leaderboard rows."""
+def build_hot_frames_table(rows: list, is_hot: bool = False) -> list:
+	"""Build the hot-frames leaderboard rows.
+
+	``is_hot`` (Phase E): caller-controlled flag attached to each
+	emitted dict so the template can apply `tr.is-hot` styling on the
+	user-code rows (yellow tint) and leave the framework rows
+	unmarked. The renderer always splits hot frames into user-vs-
+	framework lists before calling this builder, so the flag is a
+	per-list constant — True for the user-code table, False for the
+	framework sibling.
+	"""
 	out = []
 	for row in rows or []:
 		display = redact_frame_name(
@@ -3362,5 +4252,6 @@ def build_hot_frames_table(rows: list) -> list:
 			"occurrences": row.get("occurrences", 0),
 			"distinct_actions": row.get("distinct_actions", 0),
 			"action_refs": row.get("action_refs", []),
+			"is_hot": is_hot,
 		})
 	return out

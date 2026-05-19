@@ -229,27 +229,32 @@ class TestEndToEndRender:
 
 		html = renderer.render(doc, recordings=[])
 
-		# Exec card class present, slow pace.
-		assert 'class="exec-summary pace-slow"' in html, (
-			"Slow-session card must have pace-slow class for red border"
-		)
-		# Headline has pace values, plain-English wording (operations, not actions).
-		# v0.7.x: 6000ms is above the 1000ms threshold, so the duration
-		# renders as seconds wrapped in .time-high (the timing rule the
-		# rest of the report already uses).
+		# v0.7.x redesign Phase B: the "At a glance" exec-summary card
+		# was replaced by the TL;DR hero (single composed headline).
+		# The exec_summary data layer still computes the pace + bullets
+		# (used by the Action plan section), so the data assertions
+		# below hold via the TL;DR composition + the KPI strip.
+		assert 'class="tldr"' in html, "TL;DR hero must render"
+		# Duration crosses the 1000ms threshold — rendered as seconds
+		# with .time-high (timing rule applies everywhere).
 		assert '<span class="time-high">6.00s</span>' in html
 		assert "operation" in html
-		# Top finding surfaced by its title.
+		# Top finding title surfaced — TL;DR fallback branch wraps it.
 		assert "Same query ran 50× at myapp/foo.py:10" in html
-		# Infra note emitted.
-		assert "90MB" in html
-		# v0.6.0: stat cards are plainly labelled, and the "Issues found" card's
-		# big number is the TOTAL finding count (not the High count), with a
-		# severity breakdown that sums to it.
+		# Infra note no longer rendered as a separate exec-summary line
+		# (moved into the Server resource section in a later phase).
+		# Sanity: it's still computed (data layer) — just not shown here.
+		# v0.7.x: KPI strip (replaces stat cards) — plainly-labelled cells,
+		# and the "Issues found" cell's big number is the TOTAL finding
+		# count (not the High count), with a severity breakdown that sums
+		# to it.
 		assert "Issues found" in html and "Database queries" in html
 		import re as _re
-		m = _re.search(r'Issues found</div>\s*<div class="value">(.*?)</div>\s*<div class="sub">(.*?)</div>', html, _re.S)
-		assert m, "could not locate the 'Issues found' stat card"
+		m = _re.search(
+			r'Issues found</div>\s*<div class="kpi-value[^"]*">(.*?)</div>\s*<div class="kpi-sub">(.*?)</div>',
+			html, _re.S,
+		)
+		assert m, "could not locate the 'Issues found' KPI cell"
 		assert _re.sub(r"<[^>]+>", "", m.group(1)).strip() == "1"  # one finding total
 		assert "1 high" in _re.sub(r"<[^>]+>", "", m.group(2))
 
@@ -283,7 +288,13 @@ class TestEndToEndRender:
 
 		html = renderer.render(doc, recordings=[])
 
-		# No exec card: zero findings + no infra signal.
+		# v0.7.x redesign Phase B: the exec-summary card was replaced
+		# by the TL;DR hero. The hero ALWAYS renders — clean sessions
+		# get a "Nothing to fix" branch instead of being hidden.
 		assert 'class="exec-summary' not in html, (
-			"Clean sessions must not render an exec summary card"
+			"Old exec-summary card markup must not be present"
+		)
+		assert 'class="tldr"' in html, "TL;DR hero must render even when clean"
+		assert "Nothing to fix" in html, (
+			"Clean-session TL;DR must use the 'Nothing to fix' headline"
 		)

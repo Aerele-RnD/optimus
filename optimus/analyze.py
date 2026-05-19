@@ -298,7 +298,7 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 	except Exception:
 		pass
 	_publish_progress(
-		2, f"Waiting for {len(still_running)} background job(s) to finish…", session_uuid
+		2, f"Waiting for {len(still_running)} RQ Job(s) to finish…", session_uuid
 	)
 
 	# Throttle, then re-enqueue ourselves so the worker can run the pending
@@ -391,9 +391,9 @@ def run(session_uuid: str, _bg_wait_until: float | None = None):
 		# v0.6.0: if we hit the wait cap with jobs still running, say so.
 		if bg_jobs_unfinished:
 			context.warnings.append(
-				f"{bg_jobs_unfinished} background job(s) the flow enqueued were still "
-				"running when analysis started — they aren't included. Click Retry "
-				"Analyze once they finish, or raise 'Wait for Background Jobs' in "
+				f"{bg_jobs_unfinished} RQ Job(s) the flow enqueued were still "
+				"running when analysis started - they aren't included. Click Retry "
+				"Analyze once they finish, or raise 'Wait for RQ Jobs' in "
 				"Optimus Settings."
 			)
 
@@ -1462,8 +1462,9 @@ def _ai_payload_for_finding(
 	renderer's normalized finding dict plus a wider source-code window around
 	the callsite, plus — when a Phase-2 line-profile pass instrumented this
 	finding's function — the hottest line from it (number / content / ms /
-	hits). ``phase2_index`` is a ``renderer._build_phase2_callsite_index``
-	result, ``{(basename, function): hotline}``.
+	hits). ``phase2_index`` is a
+	``renderer._build_line_drilldown_callsite_index`` result,
+	``{(basename, function): hotline}``.
 
 	v0.6.x: when both ``recordings_by_uuid`` (``{recording_uuid: recording}``)
 	and ``actions_by_idx`` (``{idx: action_dict}``) are provided AND the
@@ -1572,13 +1573,15 @@ def _maybe_attach_recorded_queries(
 
 
 def _phase2_index_for(doc_or_docname) -> dict:
-	"""``renderer._build_phase2_callsite_index`` for a session doc / docname,
-	or ``{}`` on any error (no phase-2 runs yet, doc gone, etc.)."""
+	"""``renderer._build_line_drilldown_callsite_index`` for a session
+	doc / docname, or ``{}`` on any error (no phase-2 runs yet, doc
+	gone, etc.).
+	"""
 	try:
 		doc = doc_or_docname
 		if isinstance(doc, str):
 			doc = frappe.get_doc("Optimus Session", doc)
-		return renderer._build_phase2_callsite_index(doc) or {}
+		return renderer._build_line_drilldown_callsite_index(doc) or {}
 	except Exception:
 		return {}
 
@@ -2127,7 +2130,7 @@ def _build_summary_html(
 	parts = [
 		f"This session covered <strong>{n_actions} operation"
 		f"{'s' if n_actions != 1 else ''}</strong> (page loads, saves and "
-		f"background jobs) with <strong>{total_queries} database "
+		f"RQ Jobs) with <strong>{total_queries} database "
 		f"quer{'ies' if total_queries != 1 else 'y'}</strong>."
 	]
 
@@ -2161,7 +2164,7 @@ def _build_summary_html(
 				title = title[len(prefix):]
 			pri = _PRIORITY_WORD.get(f.get("severity") or "", "")
 			impact = f.get("estimated_impact_ms") or 0
-			tail = f" (~{impact:.0f}ms" + (f" — {pri} priority" if pri else "") + ")"
+			tail = f" (~{impact:.0f}ms" + (f" - {pri} priority" if pri else "") + ")"
 			return f"<strong>{html.escape(title)}</strong>{tail}"
 
 		# Prefer a finding tied to this specific action (via action_ref);
@@ -2182,7 +2185,7 @@ def _build_summary_html(
 		if tied_finding:
 			parts.append(
 				f"The slowest one was <strong>{slowest_label_esc}</strong> at "
-				f"{slowest_ms:.0f}ms — and most of its time went into "
+				f"{slowest_ms:.0f}ms - and most of its time went into "
 				f"{_finding_phrase(tied_finding)}. See the Findings section below "
 				"for what to ask your developer to fix."
 			)
@@ -2202,14 +2205,14 @@ def _build_summary_html(
 	if not findings:
 		# Two-bullet reassurance (was one block of two <p>s pre-v0.7.x).
 		parts.append(
-			"We checked your flow for the usual culprits — "
+			"We checked your flow for the usual culprits - "
 			"<strong>repeated queries (N+1 patterns)</strong>, "
 			"<strong>full table scans</strong>, "
 			"<strong>filesort operations</strong>, "
 			"<strong>temporary table creation</strong>, "
 			"<strong>low filter ratios</strong>, "
 			"<strong>missing indexes</strong>, and "
-			"<strong>individually slow queries</strong> (&gt;200ms) — "
+			"<strong>individually slow queries</strong> (&gt;200ms) - "
 			"and nothing significant turned up."
 		)
 		parts.append(
@@ -2227,7 +2230,7 @@ def _build_summary_html(
 			bits.append(f"{medium} medium")
 		if low:
 			bits.append(f"{low} minor")
-		breakdown = (" — " + ", ".join(bits)) if bits else ""
+		breakdown = (" - " + ", ".join(bits)) if bits else ""
 		parts.append(
 			f"We found <strong>{total_issues} potential issue"
 			f"{'s' if total_issues != 1 else ''}</strong>{breakdown}. See the "
