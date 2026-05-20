@@ -175,3 +175,70 @@ class TestNormalization:
 		doc._normalize_tracked_apps()
 		names = [r.app_name for r in doc.tracked_apps]
 		assert names == ["myapp", "second"]
+
+
+class TestNumericFloorClamp:
+	"""``_clamp_numeric_floors`` floors each numeric setting at a safe
+	minimum so a typo (e.g. ``-1`` sampler interval, ``0`` session
+	retention) doesn't break the analyzer at runtime. Silently clamps —
+	no msgprint."""
+
+	def test_clamps_negative_sampler_interval_to_floor(self, monkeypatch):
+		OptimusSettings, stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		doc.pyinstrument_sampler_interval_ms = -1.0
+		doc._clamp_numeric_floors()
+		assert doc.pyinstrument_sampler_interval_ms == 0.1
+		# Silent clamp — no warning.
+		assert stub.msgprint_calls == []
+
+	def test_clamps_zero_session_retention_to_one(self, monkeypatch):
+		"""``session_retention_days = 0`` would make the janitor wipe
+		sessions immediately; clamp to 1 day minimum."""
+		OptimusSettings, _stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		doc.session_retention_days = 0
+		doc._clamp_numeric_floors()
+		assert doc.session_retention_days == 1
+
+	def test_preserves_valid_values(self, monkeypatch):
+		OptimusSettings, _stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		doc.session_retention_days = 30
+		doc.pyinstrument_sampler_interval_ms = 1.0
+		doc.slow_query_threshold_ms = 200
+		doc._clamp_numeric_floors()
+		assert doc.session_retention_days == 30
+		assert doc.pyinstrument_sampler_interval_ms == 1.0
+		assert doc.slow_query_threshold_ms == 200
+
+	def test_zero_min_action_duration_allowed(self, monkeypatch):
+		"""min_action_duration_ms uses 0 as the sentinel for 'no filter' —
+		must NOT be clamped above 0."""
+		OptimusSettings, _stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		doc.min_action_duration_ms = 0
+		doc._clamp_numeric_floors()
+		assert doc.min_action_duration_ms == 0
+
+	def test_unset_fields_ignored(self, monkeypatch):
+		"""None / unset fields are skipped — no AttributeError, no clamp."""
+		OptimusSettings, _stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		# Don't set anything — all fields default to None on the stub.
+		doc._clamp_numeric_floors()  # should not raise
+		# Confirm nothing got mutated to a floor value.
+		for fieldname in OptimusSettings._NUMERIC_FLOORS:
+			assert getattr(doc, fieldname, None) is None
+
+	def test_non_numeric_input_left_alone(self, monkeypatch):
+		"""A non-numeric value (someone passing a string by mistake)
+		is silently skipped — let Frappe's field-type validator handle
+		it. The clamp helper must not raise."""
+		OptimusSettings, _stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		doc.session_retention_days = "not a number"
+		doc._clamp_numeric_floors()  # should not raise
+		# String passes through unchanged — Frappe's Int validator
+		# rejects it on save.
+		assert doc.session_retention_days == "not a number"

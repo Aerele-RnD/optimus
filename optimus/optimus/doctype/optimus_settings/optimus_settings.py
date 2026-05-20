@@ -15,6 +15,7 @@ class OptimusSettings(Document):
 
 	def validate(self):
 		self._normalize_tracked_apps()
+		self._clamp_numeric_floors()
 		self._warn_on_framework_apps_in_tracked()
 		self._warn_on_incomplete_ai_config()
 
@@ -23,6 +24,51 @@ class OptimusSettings(Document):
 		# hooks_callbacks), so the cache version bumps on every save.
 		# The settings module's reader respects the cache version.
 		frappe.cache.delete_value("optimus_settings_cached")
+
+	# Numeric floors per field — a value below the floor would either
+	# break the analyzer at runtime (negative interval, zero retention)
+	# or render a useless report (sub-microsecond thresholds). Floors
+	# of 0 mean "0 is OK as a 'no filter' / 'always flag' sentinel".
+	_NUMERIC_FLOORS = {
+		"session_retention_days": 1,
+		"max_queries_per_recording": 1,
+		"pyinstrument_sampler_interval_ms": 0.1,
+		"min_action_duration_ms": 0,
+		"large_duration_threshold_ms": 0,
+		"background_job_wait_seconds": 0,
+		"slow_query_threshold_ms": 1,
+		"slow_hot_path_pct_threshold": 0,
+		"slow_hot_path_min_ms": 0,
+		"hot_line_high_pct": 0,
+		"hot_line_high_min_ms": 0,
+		"redundant_doc_threshold": 1,
+		"redundant_cache_threshold": 1,
+		"redundant_perm_threshold": 1,
+		"n_plus_one_min_occurrences": 1,
+		"ai_auto_suggest_max": 0,
+	}
+
+	def _clamp_numeric_floors(self):
+		"""Floor each numeric setting at a safe minimum so a typo
+		(e.g. ``-1`` for a sampler interval, ``0`` for session
+		retention) doesn't break the analyzer at runtime. Silently
+		clamps — the operator sees the corrected value on the form
+		after save."""
+		for fieldname, floor in self._NUMERIC_FLOORS.items():
+			current = self.get(fieldname)
+			if current is None:
+				continue
+			try:
+				if float(current) < float(floor):
+					# setattr instead of self.set so the helper works
+					# against a test stub that doesn't subclass Frappe's
+					# full Document. setattr matches Document.set's
+					# behaviour for non-child-table scalar fields.
+					setattr(self, fieldname, floor)
+			except (TypeError, ValueError):
+				# Non-numeric input — let Frappe's field-type validation
+				# handle it; nothing useful for us to do here.
+				continue
 
 	def _normalize_tracked_apps(self):
 		"""Trim whitespace and deduplicate app names, preserving order.

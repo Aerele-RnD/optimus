@@ -384,6 +384,94 @@
 		});
 	}
 
+	/**
+	 * Derive a contextual default for the Session label field from
+	 * the current Frappe Desk route. Used by openStartDialog() so the
+	 * user can click Start without typing — the most common "what am
+	 * I profiling" answer is already on screen.
+	 *
+	 * Route shapes handled (Frappe v16):
+	 *   Form      ["Form", "Sales Invoice", "SINV-2026-001"]
+	 *   List      ["List", "Sales Invoice"]
+	 *   Report    ["List", "Sales Invoice", "Report"]
+	 *   Kanban    ["List", "Sales Invoice", "Kanban", "<name>"]
+	 *   Dashboard ["List", "Sales Invoice", "Dashboard"]
+	 *   Tree      ["Tree", "Account"]
+	 *   Query Rpt ["query-report", "<report name>"]
+	 *   anything else → fallback "Profiling session"
+	 */
+	function getDefaultSessionLabel() {
+		// Compose the route-derived label first, then suffix the
+		// current time (HH:MM) so two sessions captured on the same
+		// route are easy to tell apart at a glance in the list view.
+		function _routeLabel() {
+			try {
+				const route = (typeof frappe !== "undefined" && frappe.get_route)
+					? frappe.get_route()
+					: [];
+				if (!route || !route.length) {
+					return "Profiling session";
+				}
+				const head = route[0];
+				const doctype = route[1];
+				const sub = route[2];
+				const leaf = route[3];
+				switch (head) {
+					case "Form":
+						return doctype && leaf
+							? `${doctype} — ${leaf}`
+							: doctype || "Form";
+					case "List":
+						if (!doctype) return "List";
+						if (sub === "Kanban") {
+							return leaf
+								? `${doctype} kanban — ${leaf}`
+								: `${doctype} kanban`;
+						}
+						if (sub === "Report") return `${doctype} report`;
+						if (sub === "Dashboard") return `${doctype} dashboard`;
+						if (sub === "Calendar") return `${doctype} calendar`;
+						if (sub === "Gantt") return `${doctype} gantt`;
+						return `${doctype} list`;
+					case "Tree":
+						return doctype ? `${doctype} tree` : "Tree";
+					case "query-report":
+						return doctype ? `Report — ${doctype}` : "Report";
+					case "dashboard-view":
+						return doctype ? `Dashboard — ${doctype}` : "Dashboard";
+					case "modules":
+					case "desk":
+					case "app":
+						return "Profiling session";
+					default:
+						if (head && doctype) return `${head} — ${doctype}`;
+						if (head) return String(head);
+						return "Profiling session";
+				}
+			} catch (e) {
+				return "Profiling session";
+			}
+		}
+
+		function _datetimeStamp() {
+			try {
+				const now = new Date();
+				const y = String(now.getFullYear());
+				const mo = String(now.getMonth() + 1).padStart(2, "0");
+				const d = String(now.getDate()).padStart(2, "0");
+				const hh = String(now.getHours()).padStart(2, "0");
+				const mm = String(now.getMinutes()).padStart(2, "0");
+				return `${y}-${mo}-${d} ${hh}:${mm}`;
+			} catch (e) {
+				return "";
+			}
+		}
+
+		const route = _routeLabel();
+		const t = _datetimeStamp();
+		return t ? `${route} · ${t}` : route;
+	}
+
 	function openStartDialog() {
 		const d = new frappe.ui.Dialog({
 			title: "Start profiling session",
@@ -393,6 +481,7 @@
 					fieldtype: "Data",
 					label: "Session label",
 					reqd: 1,
+					default: getDefaultSessionLabel(),
 					description:
 						"Give this session a name you'll recognize later — e.g. 'Sales Invoice flow with 50 items'.",
 				},

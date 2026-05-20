@@ -70,6 +70,10 @@
 
 			return origFetch.apply(this, arguments).then(function (response) {
 				try {
+					// Gate on active session: skip the header read entirely
+					// when no session is running. See the matching gate in
+					// the XHR wrap below for the full rationale.
+					if (!currentSessionUuid()) return response;
 					var recordingId = response.headers.get("X-Optimus-Recording-Id");
 					if (recordingId) {
 						var size = parseInt(
@@ -137,6 +141,18 @@
 			var start = performance.now();
 			xhr.addEventListener("loadend", function () {
 				try {
+					// Gate on active session — without this, Chromium
+					// browsers log "Refused to get unsafe header
+					// 'X-Optimus-Recording-Id'" on every API response
+					// because Frappe stamps Access-Control-Allow-Origin
+					// on /api/method/* responses (treats them as CORS),
+					// and the header isn't in Access-Control-Expose-
+					// Headers when no session is active (the server
+					// only adds it during recording). The read returns
+					// null harmlessly but spams the console. The gate
+					// uses the same widget-data-attribute check the
+					// flush path below already uses.
+					if (!currentSessionUuid()) return;
 					var recordingId = xhr.getResponseHeader("X-Optimus-Recording-Id");
 					if (!recordingId) return;
 					var size = parseInt(

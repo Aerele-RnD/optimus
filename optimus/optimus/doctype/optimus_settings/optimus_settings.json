@@ -11,22 +11,29 @@
   "enabled",
   "column_break_general",
   "session_retention_days",
-  "capacity_section",
-  "capacity_description",
-  "max_queries_per_recording",
-  "pyinstrument_sampler_interval_ms",
-  "min_action_duration_ms",
-  "large_duration_threshold_ms",
-  "hide_framework_tables",
-  "background_job_wait_seconds",
   "apps_section",
-  "apps_description",
+  "apps_description_tracked",
   "tracked_apps",
+  "column_break_apps",
+  "apps_description_ignored",
   "ignored_apps",
   "skip_section",
   "skip_description",
   "skip_request_paths",
+  "column_break_skip",
   "skip_users",
+  "capacity_section",
+  "capacity_description",
+  "max_queries_per_recording",
+  "pyinstrument_sampler_interval_ms",
+  "column_break_capacity",
+  "hide_framework_tables",
+  "background_job_wait_seconds",
+  "display_filters_section",
+  "display_filters_description",
+  "min_action_duration_ms",
+  "column_break_display_filters",
+  "large_duration_threshold_ms",
   "analysis_tab",
   "thresholds_section",
   "thresholds_description",
@@ -62,9 +69,11 @@
   "ai_sections_break",
   "ai_suggest_findings",
   "ai_suggest_indexes",
+  "column_break_ai_sections",
   "ai_humanize_steps",
   "ai_auto_section",
   "ai_auto_suggest",
+  "column_break_ai_auto",
   "ai_auto_suggest_max"
  ],
  "fields": [
@@ -91,67 +100,10 @@
   },
   {
    "default": "30",
-   "description": "Optimus Session records older than this are eligible for automatic deletion by the daily housekeeping job. Set to 0 to keep forever.",
+   "description": "Optimus Session records older than this are eligible for automatic deletion by the daily housekeeping job. Set to 0 to keep forever. Reference values — Strict: 90  ·  Recommended: 30  ·  Relaxed: 7.",
    "fieldname": "session_retention_days",
    "fieldtype": "Int",
    "label": "Session Retention (days)",
-   "non_negative": 1
-  },
-  {
-   "fieldname": "capacity_section",
-   "fieldtype": "Section Break",
-   "label": "Capture Capacity"
-  },
-  {
-   "fieldname": "capacity_description",
-   "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">Long-running flows (bulk inserts, complex Submit chains) can exceed the per-recording query cap during analyze-time enrichment — each query needs an <code>EXPLAIN</code> round-trip, so very high counts would exceed RQ's job timeout. When capped, the report covers the first N queries and the rest are truncated; a red banner at the top of the report surfaces the truncation so you know the analysis is partial.</p><p class=\"text-muted small\"><b>Default: 2000</b> — comfortable for most flows. Raise to 5000 or 10000 for flows that legitimately touch more rows (e.g. Manufacturing Plan Submit creating 100+ child orders). Analyze-time cost scales roughly linearly with this value.</p>"
-  },
-  {
-   "default": "2000",
-   "description": "Max queries per recording that get enriched (sqlparse format + EXPLAIN + normalization). Anything beyond this is truncated with a warning. Keep reasonable — each query costs one EXPLAIN round-trip.",
-   "fieldname": "max_queries_per_recording",
-   "fieldtype": "Int",
-   "label": "Max Queries per Recording",
-   "non_negative": 1
-  },
-  {
-   "default": "1.0",
-   "description": "pyinstrument statistical-sampler interval in milliseconds. Lower = finer call-tree resolution but higher overhead. 1ms is the recommended default; raise to 5-10ms for prod-like profiling. Cannot be lower than 0.1ms.",
-   "fieldname": "pyinstrument_sampler_interval_ms",
-   "fieldtype": "Float",
-   "label": "Sampler Interval (ms)",
-   "non_negative": 1
-  },
-  {
-   "default": "0",
-   "description": "Drop actions shorter than this many milliseconds from the per-action breakdown in reports. 0 = show everything. Useful for declutter when a flow generates many sub-millisecond background polls.",
-   "fieldname": "min_action_duration_ms",
-   "fieldtype": "Float",
-   "label": "Min Action Duration to Show (ms)",
-   "non_negative": 1
-  },
-  {
-   "default": "1000",
-   "description": "Render any duration above this threshold (in milliseconds) as seconds — e.g. with the default of 1000, 5234ms displays as 5.23s but 800ms stays as 800ms. Set to a very large value (e.g. 99999999) to effectively disable.",
-   "fieldname": "large_duration_threshold_ms",
-   "fieldtype": "Float",
-   "label": "Render durations in seconds above (ms)",
-   "non_negative": 1
-  },
-  {
-   "default": "1",
-   "description": "When checked, the \"Time spent per database table\" section in the report drops Frappe schema/meta tables (tabDocType, tabDocField, tabSingles, tabPatch Log, tabWorkspace, tabRole, tabDocType Link/Action/State, …), framework-internal tables (tabHas Role, tabDefaultValue, tabUser Social Login, tabUser Role Profile, tabBlock Module, tabUser Email), and information_schema.* — touched by every request via framework machinery, not user-actionable. A small \"(N tables hidden)\" note replaces them. Other sections (top-queries leaderboard, per-action drill-down, full recordings) are unaffected. Uncheck to see them all.",
-   "fieldname": "hide_framework_tables",
-   "fieldtype": "Check",
-   "label": "Hide framework / internal database tables in the breakdown"
-  },
-  {
-   "default": "60",
-   "description": "How long (seconds, capped at 300) the analyze job waits for the background jobs the profiled flow enqueued to finish before generating the report — so jobs a worker picks up shortly after you click Stop aren't lost. 0 = don't wait (pre-v0.6.0 behavior). On a single-worker bench the analyze job yields the worker between checks so those jobs can actually run; if the scheduler is disabled / no worker is available, the wait is skipped. Captured jobs are analyzed like requests and listed in the report's \"Background jobs\" section.",
-   "fieldname": "background_job_wait_seconds",
-   "fieldtype": "Int",
-   "label": "Wait for Background Jobs (seconds)",
    "non_negative": 1
   },
   {
@@ -160,9 +112,9 @@
    "label": "Apps"
   },
   {
-   "fieldname": "apps_description",
+   "fieldname": "apps_description_tracked",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\"><b>Tracked Apps</b> is an <i>allowlist</i> — when populated, only those apps' findings are actionable; everything else routes to <i>Framework-level observations</i>. Leave it empty to keep the default (frappe / erpnext / hrms / lms / helpdesk / insights / crm / builder / wiki / drive / payments and pip libs are treated as framework code).</p><p class=\"text-muted small\"><b>Ignored Apps</b> is an <i>exclusion list</i> — findings whose blame app falls in this list are <b>dropped from the report entirely</b> (both sections). Use it for apps you can't (or won't) patch (typically <code>frappe</code>, <code>optimus</code>, sometimes <code>erpnext</code>). The two compose: an app in Ignored is dropped before bucketing, regardless of Tracked.</p><p class=\"text-muted small\" style=\"color:#b91c1c\"><b>Do not add frappe or erpnext to Tracked Apps.</b> Doing so flips them to \"user code\" and floods your actionable findings with framework noise — the opposite of what most users want. If you want them gone, add them to <b>Ignored Apps</b> instead.</p>"
+   "options": "<p class=\"text-muted small\"><b>Tracked Apps</b> is an <i>allowlist</i> — when populated, only those apps' findings are actionable; everything else routes to <i>Framework-level observations</i>. Leave it empty to keep the default (frappe / erpnext / hrms / lms / helpdesk / insights / crm / builder / wiki / drive / payments and pip libs are treated as framework code).</p><p class=\"text-muted small\" style=\"color:#b91c1c\"><b>Do not add frappe or erpnext to Tracked Apps.</b> Doing so flips them to \"user code\" and floods your actionable findings with framework noise — the opposite of what most users want. If you want them gone, add them to <b>Ignored Apps</b> (right) instead.</p>"
   },
   {
    "fieldname": "tracked_apps",
@@ -171,161 +123,19 @@
    "options": "Optimus Tracked App"
   },
   {
-   "description": "Findings whose blame app falls in this list are dropped from the report entirely — both \"Findings — what to fix\" and \"Framework-level observations\". Use it for apps you can't or won't patch (typically frappe, optimus, sometimes erpnext). Default empty (nothing dropped). The \"Issues found\" stat card shows the kept count + a small note (\"N findings hidden from ignored apps: …\") so the total stays honest.",
+   "fieldname": "column_break_apps",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "apps_description_ignored",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\"><b>Ignored Apps</b> is an <i>exclusion list</i> — findings whose blame app falls in this list are <b>dropped from the report entirely</b> (both the \"Findings — what to fix\" and \"Framework-level observations\" sections). Use it for apps you can't (or won't) patch (typically <code>frappe</code>, <code>optimus</code>, sometimes <code>erpnext</code>). Default empty. The \"Issues found\" stat card shows the kept count plus a \"N findings hidden\" note, so the total stays honest.</p>"
+  },
+  {
    "fieldname": "ignored_apps",
    "fieldtype": "Table",
    "label": "Ignored Apps",
    "options": "Optimus Tracked App"
-  },
-  {
-   "fieldname": "analysis_tab",
-   "fieldtype": "Tab Break",
-   "label": "Analysis"
-  },
-  {
-   "fieldname": "thresholds_section",
-   "fieldtype": "Section Break",
-   "label": "Analyzer Thresholds"
-  },
-  {
-   "fieldname": "thresholds_description",
-   "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">How many identical calls from the same callsite qualify as a <b>Redundant Call</b> finding, and how many identical queries from the same callsite qualify as an <b>N+1</b> finding. Lower = more sensitive = more findings; higher = fewer findings but less noise.</p>"
-  },
-  {
-   "default": "5",
-   "description": "Minimum get_doc calls for the same (doctype, name) from the same callsite before a Redundant Call finding is emitted.",
-   "fieldname": "redundant_doc_threshold",
-   "fieldtype": "Int",
-   "label": "Redundant get_doc Threshold",
-   "non_negative": 1
-  },
-  {
-   "default": "50",
-   "description": "Minimum cache lookups for the same key from the same callsite before a Redundant Call finding is emitted. Cache lookups aren't individually timed, so low-count loops are indistinguishable from framework background noise — 50 matches the high-severity threshold and cuts 0ms noise.",
-   "fieldname": "redundant_cache_threshold",
-   "fieldtype": "Int",
-   "label": "Redundant Cache Lookup Threshold",
-   "non_negative": 1
-  },
-  {
-   "fieldname": "column_break_thresholds",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "10",
-   "description": "Minimum has_permission calls for the same (doctype, name, ptype) from the same callsite before a Redundant Call finding is emitted.",
-   "fieldname": "redundant_perm_threshold",
-   "fieldtype": "Int",
-   "label": "Redundant Permission Check Threshold",
-   "non_negative": 1
-  },
-  {
-   "default": "10",
-   "description": "Minimum identical queries from the same callsite before an N+1 Query finding is emitted.",
-   "fieldname": "n_plus_one_min_occurrences",
-   "fieldtype": "Int",
-   "label": "N+1 Minimum Occurrences",
-   "non_negative": 1
-  },
-  {
-   "fieldname": "severity_section",
-   "fieldtype": "Section Break",
-   "label": "Severity Thresholds"
-  },
-  {
-   "fieldname": "severity_description",
-   "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">Tune what counts as a high-severity finding. Sites with intentionally slow analytical flows (legitimate full-table scans, large reports) want higher numbers to suppress false positives; sites with strict latency budgets want lower numbers to surface anything borderline.</p>"
-  },
-  {
-   "default": "200",
-   "description": "Single SQL query duration above this is flagged as a Slow Query finding. Default 200ms — anything below is usually within acceptable per-query budget.",
-   "fieldname": "slow_query_threshold_ms",
-   "fieldtype": "Float",
-   "label": "Slow Query Threshold (ms)",
-   "non_negative": 1
-  },
-  {
-   "default": "25",
-   "description": "Slow Hot Path threshold as a percentage of the action's wall time. A subtree consuming >= this % AND >= the min-ms below qualifies. Default 25% with 200ms minimum.",
-   "fieldname": "slow_hot_path_pct_threshold",
-   "fieldtype": "Float",
-   "label": "Slow Hot Path Threshold (% of action wall time)",
-   "non_negative": 1
-  },
-  {
-   "default": "200",
-   "description": "Slow Hot Path minimum absolute time. A subtree needs both >= the % above AND >= this many ms to qualify.",
-   "fieldname": "slow_hot_path_min_ms",
-   "fieldtype": "Float",
-   "label": "Slow Hot Path Minimum (ms)",
-   "non_negative": 1
-  },
-  {
-   "fieldname": "column_break_severity",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "50",
-   "description": "Phase 2 Hot Line: a single line consuming this %% of the function's total time AND >= the min-ms below is flagged High severity. Default 50% / 100ms.",
-   "fieldname": "hot_line_high_pct",
-   "fieldtype": "Float",
-   "label": "Hot Line High Severity (% of function time)",
-   "non_negative": 1
-  },
-  {
-   "default": "100",
-   "description": "Phase 2 Hot Line minimum absolute time for High severity.",
-   "fieldname": "hot_line_high_min_ms",
-   "fieldtype": "Float",
-   "label": "Hot Line High Severity Min (ms)",
-   "non_negative": 1
-  },
-  {
-   "fieldname": "phase2_section",
-   "fieldtype": "Section Break",
-   "label": "Phase 2 Defaults"
-  },
-  {
-   "fieldname": "phase2_description",
-   "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">Defaults for the phase-2 line-profile pass. The picker dialog still lets the user override these per run.</p>"
-  },
-  {
-   "default": "10",
-   "description": "Cap on how many phase-2 runs can be retained per Optimus Session. When exceeded, the oldest run's full results are archived to a private File and only the row metadata is kept in the DocType.",
-   "fieldname": "phase2_max_runs_per_session",
-   "fieldtype": "Int",
-   "label": "Phase 2: Max Runs per Session",
-   "non_negative": 1
-  },
-  {
-   "default": "1",
-   "description": "When checked, the picker dialog's 'Auto-expand hot chain' checkbox starts ticked. Auto-expansion walks each curated pick down phase-1's call tree to instrument the full hot chain in one shot.",
-   "fieldname": "phase2_default_auto_expand",
-   "fieldtype": "Check",
-   "label": "Phase 2: Default Auto-Expand Hot Chain"
-  },
-  {
-   "fieldname": "column_break_phase2",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "10",
-   "description": "Maximum levels deep that auto-expand will follow into the call tree from a curated pick.",
-   "fieldname": "auto_expand_max_depth",
-   "fieldtype": "Int",
-   "label": "Auto-Expand: Max Depth",
-   "non_negative": 1
-  },
-  {
-   "default": "50",
-   "description": "Auto-expand stops descending when the next-hottest child consumes less than this many milliseconds. Lower = follow deeper into smaller hot spots; higher = stop earlier and instrument fewer functions.",
-   "fieldname": "auto_expand_min_ms",
-   "fieldtype": "Float",
-   "label": "Auto-Expand: Minimum Child Time (ms)",
-   "non_negative": 1
   },
   {
    "fieldname": "skip_section",
@@ -344,10 +154,239 @@
    "label": "Skip Request Paths"
   },
   {
+   "fieldname": "column_break_skip",
+   "fieldtype": "Column Break"
+  },
+  {
    "description": "One user email per line. Requests / jobs running as one of these users are NOT profiled. Useful for excluding system bot users (scheduler, health-checks). Lines starting with # are treated as comments.",
    "fieldname": "skip_users",
    "fieldtype": "Small Text",
    "label": "Skip Users"
+  },
+  {
+   "fieldname": "capacity_section",
+   "fieldtype": "Section Break",
+   "label": "Capture Capacity"
+  },
+  {
+   "fieldname": "capacity_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Long-running flows (bulk inserts, complex Submit chains) can exceed the per-recording query cap during analyze-time enrichment — each query needs an <code>EXPLAIN</code> round-trip, so very high counts would exceed RQ's job timeout. When capped, the report covers the first N queries and the rest are truncated; a red banner at the top of the report surfaces the truncation so you know the analysis is partial.</p><p class=\"text-muted small\"><b>Default: 2000</b> — comfortable for most flows. Raise to 5000 or 10000 for flows that legitimately touch more rows (e.g. Manufacturing Plan Submit creating 100+ child orders). Analyze-time cost scales roughly linearly with this value.</p>"
+  },
+  {
+   "default": "2000",
+   "description": "Max queries per recording that get enriched (sqlparse format + EXPLAIN + normalization). Anything beyond this is truncated with a warning. Keep reasonable — each query costs one EXPLAIN round-trip. Reference values — Strict: 5000  ·  Recommended: 2000  ·  Relaxed: 1000.",
+   "fieldname": "max_queries_per_recording",
+   "fieldtype": "Int",
+   "label": "Max Queries per Recording",
+   "non_negative": 1
+  },
+  {
+   "default": "1.0",
+   "description": "pyinstrument statistical-sampler interval in milliseconds. Lower = finer call-tree resolution but higher overhead. 1ms is the recommended default; raise to 5-10ms for prod-like profiling. Cannot be lower than 0.1ms. Reference values — Strict: 0.5  ·  Recommended: 1.0  ·  Relaxed: 5.0.",
+   "fieldname": "pyinstrument_sampler_interval_ms",
+   "fieldtype": "Float",
+   "label": "Sampler Interval (ms)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_capacity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "When checked, the \"Time spent per database table\" section in the report drops Frappe schema/meta tables (tabDocType, tabDocField, tabSingles, tabPatch Log, tabWorkspace, tabRole, tabDocType Link/Action/State, …), framework-internal tables (tabHas Role, tabDefaultValue, tabUser Social Login, tabUser Role Profile, tabBlock Module, tabUser Email), and information_schema.* — touched by every request via framework machinery, not user-actionable. A small \"(N tables hidden)\" note replaces them. Other sections (top-queries leaderboard, per-action drill-down, full recordings) are unaffected. Uncheck to see them all.",
+   "fieldname": "hide_framework_tables",
+   "fieldtype": "Check",
+   "label": "Hide framework / internal database tables in the breakdown"
+  },
+  {
+   "default": "60",
+   "description": "How long (seconds, capped at 300) the analyze job waits for the background jobs the profiled flow enqueued to finish before generating the report — so jobs a worker picks up shortly after you click Stop aren't lost. 0 = don't wait (pre-v0.6.0 behavior). On a single-worker bench the analyze job yields the worker between checks so those jobs can actually run; if the scheduler is disabled / no worker is available, the wait is skipped. Captured jobs are analyzed like requests and listed in the report's \"Background jobs\" section. Reference values — Strict: 120  ·  Recommended: 60  ·  Relaxed: 0.",
+   "fieldname": "background_job_wait_seconds",
+   "fieldtype": "Int",
+   "label": "Wait for Background Jobs (seconds)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "display_filters_section",
+   "fieldtype": "Section Break",
+   "label": "Display Filters"
+  },
+  {
+   "fieldname": "display_filters_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">These thresholds affect how Optimus <i>renders</i> the report — they don't change what's captured or analyzed.</p>"
+  },
+  {
+   "default": "0",
+   "description": "Drop actions shorter than this many milliseconds from the per-action breakdown in reports. 0 = show everything. Useful for declutter when a flow generates many sub-millisecond background polls. Reference values — Strict: 0  ·  Recommended: 0  ·  Relaxed: 50.",
+   "fieldname": "min_action_duration_ms",
+   "fieldtype": "Float",
+   "label": "Min Action Duration to Show (ms)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_display_filters",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1000",
+   "description": "Render any duration above this threshold (in milliseconds) as seconds — e.g. with the default of 1000, 5234ms displays as 5.23s but 800ms stays as 800ms. Set to a very large value (e.g. 99999999) to effectively disable. Reference values — Strict: 500  ·  Recommended: 1000  ·  Relaxed: 99999999.",
+   "fieldname": "large_duration_threshold_ms",
+   "fieldtype": "Float",
+   "label": "Render durations in seconds above (ms)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "analysis_tab",
+   "fieldtype": "Tab Break",
+   "label": "Analysis"
+  },
+  {
+   "fieldname": "thresholds_section",
+   "fieldtype": "Section Break",
+   "label": "Analyzer Thresholds"
+  },
+  {
+   "fieldname": "thresholds_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">How many identical calls from the same callsite qualify as a <b>Redundant Call</b> finding, and how many identical queries from the same callsite qualify as an <b>N+1</b> finding. Lower = more sensitive = more findings; higher = fewer findings but less noise.</p>"
+  },
+  {
+   "default": "5",
+   "description": "Minimum get_doc calls for the same (doctype, name) from the same callsite before a Redundant Call finding is emitted. Reference values — Strict: 3  ·  Recommended: 5  ·  Relaxed: 10.",
+   "fieldname": "redundant_doc_threshold",
+   "fieldtype": "Int",
+   "label": "Redundant get_doc Threshold",
+   "non_negative": 1
+  },
+  {
+   "default": "50",
+   "description": "Minimum cache lookups for the same key from the same callsite before a Redundant Call finding is emitted. Cache lookups aren't individually timed, so low-count loops are indistinguishable from framework background noise — 50 matches the high-severity threshold and cuts 0ms noise. Reference values — Strict: 20  ·  Recommended: 50  ·  Relaxed: 100.",
+   "fieldname": "redundant_cache_threshold",
+   "fieldtype": "Int",
+   "label": "Redundant Cache Lookup Threshold",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_thresholds",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "10",
+   "description": "Minimum has_permission calls for the same (doctype, name, ptype) from the same callsite before a Redundant Call finding is emitted. Reference values — Strict: 5  ·  Recommended: 10  ·  Relaxed: 25.",
+   "fieldname": "redundant_perm_threshold",
+   "fieldtype": "Int",
+   "label": "Redundant Permission Check Threshold",
+   "non_negative": 1
+  },
+  {
+   "default": "10",
+   "description": "Minimum identical queries from the same callsite before an N+1 Query finding is emitted. Reference values — Strict: 5  ·  Recommended: 10  ·  Relaxed: 25.",
+   "fieldname": "n_plus_one_min_occurrences",
+   "fieldtype": "Int",
+   "label": "N+1 Minimum Occurrences",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "severity_section",
+   "fieldtype": "Section Break",
+   "label": "Severity Thresholds"
+  },
+  {
+   "fieldname": "severity_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Tune what counts as a high-severity finding. Sites with intentionally slow analytical flows (legitimate full-table scans, large reports) want higher numbers to suppress false positives; sites with strict latency budgets want lower numbers to surface anything borderline.</p>"
+  },
+  {
+   "default": "200",
+   "description": "Single SQL query duration above this is flagged as a Slow Query finding. Default 200ms — anything below is usually within acceptable per-query budget. Reference values — Strict: 100  ·  Recommended: 200  ·  Relaxed: 500.",
+   "fieldname": "slow_query_threshold_ms",
+   "fieldtype": "Float",
+   "label": "Slow Query Threshold (ms)",
+   "non_negative": 1
+  },
+  {
+   "default": "25",
+   "description": "Slow Hot Path threshold as a percentage of the action's wall time. A subtree consuming >= this % AND >= the min-ms below qualifies. Default 25% with 200ms minimum. Reference values — Strict: 15  ·  Recommended: 25  ·  Relaxed: 40.",
+   "fieldname": "slow_hot_path_pct_threshold",
+   "fieldtype": "Float",
+   "label": "Slow Hot Path Threshold (% of action wall time)",
+   "non_negative": 1
+  },
+  {
+   "default": "200",
+   "description": "Slow Hot Path minimum absolute time. A subtree needs both >= the % above AND >= this many ms to qualify. Reference values — Strict: 100  ·  Recommended: 200  ·  Relaxed: 500.",
+   "fieldname": "slow_hot_path_min_ms",
+   "fieldtype": "Float",
+   "label": "Slow Hot Path Minimum (ms)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_severity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "50",
+   "description": "Phase 2 Hot Line: a single line consuming this %% of the function's total time AND >= the min-ms below is flagged High severity. Default 50% / 100ms. Reference values — Strict: 35  ·  Recommended: 50  ·  Relaxed: 70.",
+   "fieldname": "hot_line_high_pct",
+   "fieldtype": "Float",
+   "label": "Hot Line High Severity (% of function time)",
+   "non_negative": 1
+  },
+  {
+   "default": "100",
+   "description": "Phase 2 Hot Line minimum absolute time for High severity. Reference values — Strict: 50  ·  Recommended: 100  ·  Relaxed: 250.",
+   "fieldname": "hot_line_high_min_ms",
+   "fieldtype": "Float",
+   "label": "Hot Line High Severity Min (ms)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "phase2_section",
+   "fieldtype": "Section Break",
+   "label": "Phase 2 Defaults"
+  },
+  {
+   "fieldname": "phase2_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Defaults for the phase-2 line-profile pass. The picker dialog still lets the user override these per run.</p>"
+  },
+  {
+   "default": "10",
+   "description": "Cap on how many phase-2 runs can be retained per Optimus Session. When exceeded, the oldest run's full results are archived to a private File and only the row metadata is kept in the DocType. Reference values — Strict: 25  ·  Recommended: 10  ·  Relaxed: 5.",
+   "fieldname": "phase2_max_runs_per_session",
+   "fieldtype": "Int",
+   "label": "Phase 2: Max Runs per Session",
+   "non_negative": 1
+  },
+  {
+   "default": "1",
+   "description": "When checked, the picker dialog's 'Auto-expand hot chain' checkbox starts ticked. Auto-expansion walks each curated pick down phase-1's call tree to instrument the full hot chain in one shot.",
+   "fieldname": "phase2_default_auto_expand",
+   "fieldtype": "Check",
+   "label": "Phase 2: Default Auto-Expand Hot Chain"
+  },
+  {
+   "fieldname": "column_break_phase2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "10",
+   "description": "Maximum levels deep that auto-expand will follow into the call tree from a curated pick. Reference values — Strict: 15  ·  Recommended: 10  ·  Relaxed: 5.",
+   "fieldname": "auto_expand_max_depth",
+   "fieldtype": "Int",
+   "label": "Auto-Expand: Max Depth",
+   "non_negative": 1
+  },
+  {
+   "default": "50",
+   "description": "Auto-expand stops descending when the next-hottest child consumes less than this many milliseconds. Lower = follow deeper into smaller hot spots; higher = stop earlier and instrument fewer functions. Reference values — Strict: 25  ·  Recommended: 50  ·  Relaxed: 100.",
+   "fieldname": "auto_expand_min_ms",
+   "fieldtype": "Float",
+   "label": "Auto-Expand: Minimum Child Time (ms)",
+   "non_negative": 1
   },
   {
    "fieldname": "ai_tab",
@@ -429,6 +468,11 @@
    "label": "Index recommendations (DB-tables breakdown)"
   },
   {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "column_break_ai_sections",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "1",
    "depends_on": "eval:doc.ai_enabled",
    "description": "When checked, the auto-generated \"Steps to Reproduce\" note on each session is rewritten by the LLM into a friendly, human-readable flow (the raw captured-actions list is kept below it; falls back to it if the LLM call fails). When off: the note stays the plain action list, the \"Humanize Steps (AI)\" button is hidden, and the API refuses. (An already-humanized older session keeps its note until re-analyzed.)",
@@ -451,9 +495,14 @@
    "label": "Suggest AI fixes in the report by default"
   },
   {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "column_break_ai_auto",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "5",
    "depends_on": "eval:doc.ai_enabled && doc.ai_auto_suggest",
-   "description": "Cap on how many findings get an automatic suggestion per session — the highest-severity, highest-impact ones first. 0 = every eligible finding (can be slow + costly on big sessions).",
+   "description": "Cap on how many findings get an automatic suggestion per session — the highest-severity, highest-impact ones first. 0 = every eligible finding (can be slow + costly on big sessions). Reference values — Strict: 10  ·  Recommended: 5  ·  Relaxed: 3.",
    "fieldname": "ai_auto_suggest_max",
    "fieldtype": "Int",
    "label": "Max auto-suggested findings per session",

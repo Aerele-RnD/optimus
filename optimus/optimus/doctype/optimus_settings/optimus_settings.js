@@ -11,6 +11,13 @@
 
 frappe.ui.form.on("Optimus Settings", {
 	refresh(frm) {
+		frm.set_intro(
+			__(
+				"Optimus app-wide settings. Changes apply to new sessions; in-flight recordings keep the values they started with."
+			),
+			"blue"
+		);
+
 		frappe.call({
 			method: "optimus.api.get_installed_apps_for_tracking",
 			callback(r) {
@@ -37,6 +44,10 @@ frappe.ui.form.on("Optimus Settings", {
 		// "Test AI connection" — only when the feature is on. Saves the
 		// operator a profiling round-trip just to find out the key/model
 		// are wrong.
+		// Also re-evaluate the "Test AI connection" button visibility
+		// when the operator toggles ai_enabled (see the ai_enabled
+		// handler below — it re-runs refresh() so this conditional
+		// fires again).
 		if (frm.doc.ai_enabled) {
 			frm.add_custom_button(__("Test AI connection"), () => {
 				if (frm.is_dirty()) {
@@ -72,5 +83,29 @@ frappe.ui.form.on("Optimus Settings", {
 				});
 			});
 		}
+	},
+
+	ai_enabled(frm) {
+		// Force the form to re-evaluate `depends_on` directives so the
+		// AI subfields (provider / base URL / model / API key / the
+		// per-section toggles / the Automatic Suggestions block) show or
+		// hide immediately when the master checkbox flips, without
+		// requiring a save + reload. Also re-fires refresh() so the
+		// "Test AI connection" custom button appears / disappears in
+		// step with the toggle.
+		frm.refresh_field("ai_provider");
+		frm.refresh_field("ai_base_url");
+		frm.refresh_field("ai_model");
+		frm.refresh_field("ai_api_key");
+		frm.refresh_field("ai_sections_break");
+		frm.refresh_field("ai_suggest_findings");
+		frm.refresh_field("ai_suggest_indexes");
+		frm.refresh_field("ai_humanize_steps");
+		frm.refresh_field("ai_auto_section");
+		frm.refresh_field("ai_auto_suggest");
+		frm.refresh_field("ai_auto_suggest_max");
+		// Clear and re-attach the custom button.
+		frm.clear_custom_buttons();
+		frm.trigger("refresh");
 	},
 });
