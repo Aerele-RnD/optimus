@@ -446,6 +446,104 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 	return None
 
 
+def _auto_arm_phase2(docname: str, context) -> None:
+	"""v0.7.x (P3): when ``optimus_phase2_auto_arm`` is set in site_config, arm
+	a phase-2 line-profile pass on the recommended hot-path functions right
+	after analyze finishes — so the user just re-runs the flow ONCE to get
+	line-level data, with no manual picking.
+
+	Opt-in + admin-only (site_config, not a casual UI toggle): arming
+	instruments the user's NEXT execution of the flow, so it's only sensible
+	for replay-safe flows / non-production. Heavily guarded and fully
+	best-effort — it must NEVER fail analyze (the report is already saved)."""
+	try:
+		if not frappe.conf.get("optimus_phase2_auto_arm"):
+			return
+
+		import uuid as _uuid
+
+		from frappe.utils import now_datetime
+
+		from optimus.line_profile import capture as _lp_capture
+		from optimus.line_profile import picker as _lp_picker
+		from optimus.settings import get_config
+
+		doc = frappe.get_doc("Optimus Session", docname)
+		user = getattr(doc, "user", None)
+		if not user:
+			return
+
+		# Guard: respect the per-session run cap.
+		cap = int(getattr(get_config(), "phase2_max_runs_per_session", 10) or 10)
+		if len(doc.get("phase_2_runs") or []) >= cap:
+			return
+
+		# Guard: don't arm over an active phase-1 or phase-2 pass for this user.
+		try:
+			if (
+				frappe.cache.get_value(f"profiler:lp:active:{user}")
+				or frappe.cache.get_value(f"profiler:active:{user}")
+			):
+				return
+		except Exception:
+			pass
+
+		# Recommended hot paths, derived from the persisted call trees (same
+		# candidate builder the picker uses).
+		trees: list = []
+		for action in (doc.get("actions") or []):
+			raw = getattr(action, "call_tree_json", None)
+			if not raw:
+				continue
+			try:
+				tree = json.loads(raw)
+			except (TypeError, ValueError):
+				continue
+			if isinstance(tree, dict) and "root" in tree:
+				tree = tree["root"]
+			trees.append(tree)
+
+		candidates = _lp_picker._build_tree_indented_candidates(trees)
+		picks = [
+			{"dotted_path": c["dotted_path"], "source": "curated"}
+			for c in candidates
+			if c.get("recommended") and c.get("dotted_path")
+		]
+		if not picks:
+			return
+
+		run_uuid = _uuid.uuid4().hex
+		resolved = _lp_capture.start_line_profile_pass(
+			session_uuid=context.session_uuid,
+			run_uuid=run_uuid,
+			user=user,
+			picks=picks,
+		)
+		eligible = [r for r in (resolved or []) if r.get("eligible")]
+		if not eligible:
+			return
+
+		doc.append("phase_2_runs", {
+			"run_uuid": run_uuid,
+			"status": "Recording",
+			"started_at": now_datetime(),
+			"picks_json": frappe.as_json([
+				{"dotted_path": r["dotted_path"], "source": r.get("source", "curated")}
+				for r in eligible
+			]),
+		})
+		doc.flags.ignore_validate_update_after_submit = True
+		doc.save(ignore_permissions=True)
+		safe_commit()
+		frappe.logger().info(
+			f"optimus: auto-armed phase-2 pass {run_uuid} for {docname} "
+			f"({len(eligible)} function(s)) — re-run the flow to capture line data."
+		)
+	except Exception:
+		# Never let auto-arm break a finished analyze.
+		frappe.log_error(title="optimus auto-arm phase 2")
+
+
 def run(session_uuid: str, _bg_wait_until: float | None = None,
 	_singleflight_deadline: float | None = None):
 	"""Background-job entry point. Called from api.stop() via frappe.enqueue.
@@ -679,6 +777,9 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 		# Phase: Ready
 		frappe.db.set_value("Optimus Session", docname, "status", "Ready")
 		safe_commit()
+		# v0.7.x (P3): opt-in — arm a phase-2 pass on the hot paths so the user
+		# just re-runs the flow once for line data. Best-effort; never fails analyze.
+		_auto_arm_phase2(docname, context)
 		_publish_progress(100, "Report ready", session_uuid)
 
 		# Notify the UI so the floating widget can navigate the user to
