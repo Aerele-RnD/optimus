@@ -373,9 +373,12 @@ function show_phase2_dialog(frm, data) {
 		function row(node) {
 			var c = node.c;
 			var dotted = esc(c.dotted_path);
+			// v0.7.x (P2): pre-tick the recommended hot paths so the user can
+			// run a line-profile pass in one click without hunting for them.
 			var cb = (
 				"<input type='checkbox' class='fp-pick'" +
 				" data-pick=\"" + dotted + "\"" +
+				(c.recommended ? " checked" : "") +
 				" onclick='event.stopPropagation()'" +
 				" style='margin-right:6px;vertical-align:middle;'>"
 			);

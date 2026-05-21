@@ -563,3 +563,29 @@ class TestResolveFreeformClassMethodFallback:
 		msg = str(exc.value)
 		assert "Worker.do_work" in msg
 		assert "OtherWorker.do_work" in msg
+
+
+class TestRecommendedFlag:
+	"""v0.7.x (P2): candidates carry a ``recommended`` flag so the picker can
+	pre-tick the real hot paths (non-framework user code above a time
+	threshold) — one click to line-profile them, no manual hunting."""
+
+	def test_user_hot_frame_recommended(self):
+		tree = _root(
+			_frame("bg_recheck_users", "ugly_code/python/common.py", 199, 500.0, children=[
+				_frame("compute_totals", "erpnext/controllers/taxes.py", 50, 300.0),
+			]),
+			_frame("tiny_helper", "ugly_code/python/common.py", 300, 10.0),
+		)
+		candidates = picker._build_tree_indented_candidates([tree])
+		by_fn = {c["qualname"]: c for c in candidates}
+		# Every candidate exposes the flag.
+		assert all("recommended" in c for c in candidates)
+		# Hot user-app frame → recommended.
+		assert by_fn["bg_recheck_users"]["recommended"] is True
+		# Cold user-app frame (below the ms threshold) → not recommended.
+		assert by_fn["tiny_helper"]["recommended"] is False
+		# Framework frames are never recommended.
+		for c in candidates:
+			if c["is_framework"]:
+				assert c["recommended"] is False

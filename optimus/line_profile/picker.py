@@ -28,6 +28,10 @@ from optimus.analyzers.base import FRAMEWORK_APPS
 from optimus.analyzers.call_tree import _is_pure_helper_frame
 
 CANDIDATE_CAP = 30
+# v0.7.x (P2): non-framework frames at/above this cumulative-ms are "recommended"
+# — the picker pre-ticks them so the real hot paths are one click to line-profile.
+# Matches the auto_expand_min_ms default so "worth expanding" == "worth ticking".
+RECOMMEND_MIN_MS = 50.0
 
 
 class PickerError(Exception):
@@ -218,16 +222,20 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 			)
 			is_framework = app in FRAMEWORK_APPS
 			my_depth = fw_depth if is_framework else ua_depth
+			cml = round(float(node.get("cumulative_ms") or 0), 2)
 			out.append({
 				"dotted_path": dotted,
 				"qualname": function,
 				"file": filename,
 				"lineno": int(node.get("lineno") or 0),
 				"app": app,
-				"cumulative_ms": round(float(node.get("cumulative_ms") or 0), 2),
+				"cumulative_ms": cml,
 				"hit_count": int(node.get("hit_count") or 1),
 				"is_framework": is_framework,
 				"depth": my_depth,
+				# v0.7.x (P2): pre-tick the real hot paths — user code above the
+				# time threshold (the frames that become self-time findings).
+				"recommended": (not is_framework) and cml >= RECOMMEND_MIN_MS,
 			})
 			# Crossing back into the other list starts a fresh subtree
 			# at depth 0 in that list; stay-in-list increments by 1.
