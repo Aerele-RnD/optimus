@@ -882,11 +882,14 @@ class TestRenderTimeCallsiteResolution:
 		assert "appeared in 3 actions" not in html
 		assert 'class="smoking"' not in html
 
-	def test_function_not_invoked_shows_def_line(self):
+	def test_function_not_invoked_is_filtered_out(self):
+		# v0.7.x: "X was picked but never invoked during phase 2" is
+		# non-actionable noise — render() drops these findings entirely (the
+		# Line-Level Drilldown notes uninvoked picks in one concise line).
 		doc = _fake_doc([_function_not_invoked("optimus.renderer.render")])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "optimus/renderer.py:" in html
-		assert "def render(" in _plain(html)
+		assert "never invoked" not in html.lower()
+		assert "was picked but never invoked" not in html
 
 	def test_missing_index_gets_representative_callsite_from_recordings(self):
 		nq = "SELECT ... FROM `tabUser` WHERE x = ?"

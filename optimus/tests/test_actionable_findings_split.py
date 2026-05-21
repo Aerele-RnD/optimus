@@ -129,6 +129,25 @@ def test_template_has_observations_subsection_inside_findings():
 	)
 
 
+def test_render_drops_function_not_invoked_findings():
+	"""'Function Not Invoked' ("X was picked but never invoked during phase 2")
+	is non-actionable noise — the pick simply didn't run in the replay. render()
+	must filter it from ``all_findings`` (not merely re-bucket it) so it leaves
+	the Findings list, the Observations subsection, AND the severity counts with
+	no phantom rows. The Line-Level Drilldown notes uninvoked picks concisely
+	instead. Done at render so existing reports declutter on regenerate too."""
+	src = inspect.getsource(renderer.render)
+	assert '"Function Not Invoked"' in src
+	assert 'f.get("finding_type") != "Function Not Invoked"' in src
+	# Must be filtered out of all_findings BEFORE the severity-count / split
+	# derivations so the "Issues found" card and Observations agree.
+	drop_idx = src.find('!= "Function Not Invoked"')
+	sev_idx = src.find('"severity_counts"')
+	split_idx = src.find("_ACTIONABLE_FINDING_TYPES")
+	assert 0 < drop_idx < sev_idx, "Function Not Invoked filter must precede severity_counts"
+	assert 0 < drop_idx < split_idx, "Function Not Invoked filter must precede the actionable split"
+
+
 def test_severity_counts_cover_all_findings():
 	"""v0.6.0: `severity_counts` (the "Issues found" stat card's sub-line)
 	must count ALL findings — actionable + observational — so the card's

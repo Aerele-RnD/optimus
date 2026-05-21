@@ -416,6 +416,13 @@ def render(
 		return bool((callsite.get("filename") or "").strip())
 
 	all_findings = [f for f in all_findings if _has_renderable_callsite(f)]
+	# v0.7.x: "X was picked but never invoked during phase 2" is non-actionable
+	# noise — it just means the replay didn't exercise that pick. The Line-Level
+	# Drilldown already notes uninvoked picks in one concise line. Drop these
+	# globally at render so existing reports declutter on regenerate too (the
+	# analyzer no longer emits them for new runs); global so they also leave the
+	# severity counts / observations with no phantom rows.
+	all_findings = [f for f in all_findings if f.get("finding_type") != "Function Not Invoked"]
 	# v0.7.x: line-drilldown callsite index built once and reused for the
 	# Jinja lookup the template uses for cross-link callouts ("Line-Level
 	# Drilldown: hottest line N - Mms / X hits"). The smoking-gun
