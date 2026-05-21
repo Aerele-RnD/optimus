@@ -55,12 +55,15 @@ def arm_env(monkeypatch):
 		candidates=[{"dotted_path": "ugly_code.python.common.bg_recheck_users",
 			"recommended": True}],
 		start_calls=[],
+		published=[],
 	)
 	monkeypatch.setattr(frappe, "conf",
 		types.SimpleNamespace(get=lambda k, d=None: state.conf.get(k, d)), raising=False)
 	monkeypatch.setattr(frappe, "cache", state.cache, raising=False)
 	monkeypatch.setattr(frappe, "get_doc", lambda *a, **k: state.doc, raising=False)
 	monkeypatch.setattr(frappe, "as_json", lambda v: "[]", raising=False)
+	monkeypatch.setattr(frappe, "publish_realtime",
+		lambda *a, **k: state.published.append((a, k)), raising=False)
 	monkeypatch.setattr(frappe, "log_error", lambda *a, **k: None, raising=False)
 	monkeypatch.setattr(frappe, "logger",
 		lambda: types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None),
@@ -110,10 +113,22 @@ class TestAutoArmPhase2:
 		assert len(runs) == 1 and runs[0]["status"] == "Recording"
 		assert arm_env.doc.saved is True
 
+	def test_publishes_armed_alert_with_count(self, arm_env):
+		"""On arm, the user gets a realtime alert telling them to re-run + Stop
+		(auto-arm happens async during analyze, off-form)."""
+		analyze._auto_arm_phase2("PS-1", _ctx())
+		assert len(arm_env.published) == 1
+		args, kwargs = arm_env.published[0]
+		event = args[0] if args else kwargs.get("event")
+		assert event == "optimus_phase2_armed"
+		payload = (args[1] if len(args) > 1 else kwargs.get("message")) or {}
+		assert payload.get("count") == 1
+
 	def test_noop_when_disabled(self, arm_env):
 		arm_env.conf["optimus_phase2_auto_arm"] = False
 		analyze._auto_arm_phase2("PS-1", _ctx())
 		assert arm_env.start_calls == []
+		assert arm_env.published == []  # no alert when nothing armed
 
 	def test_noop_when_no_recommended_candidates(self, arm_env):
 		arm_env.candidates = [{"dotted_path": "x.y", "recommended": False}]

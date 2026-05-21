@@ -25,6 +25,31 @@ import frappe
 from optimus import hooks_callbacks
 from optimus.line_profile import capture
 
+
+def _overhead_budget_seconds() -> float:
+	"""Wall-clock seconds line tracing may run before the watchdog disengages
+	it, so profiling can't freeze the user's flow (observe, don't spoil).
+	``optimus_phase2_overhead_budget_seconds`` in site_config; default 10,
+	``0`` disables the budget (unlimited profiling)."""
+	try:
+		return float(frappe.conf.get("optimus_phase2_overhead_budget_seconds", 10) or 0)
+	except Exception:
+		return 10.0
+
+
+def _cancel_watchdog() -> None:
+	"""Stop and clear this request/job's overhead watchdog. Called first in the
+	after_* teardown so a request that finished within budget keeps full data
+	and no stale timer disengages a later request."""
+	watchdog = getattr(frappe.local, "_lp_watchdog", None)
+	frappe.local._lp_watchdog = None
+	if watchdog is not None:
+		try:
+			watchdog.cancel()
+		except Exception:
+			pass
+
+
 # ---------------------------------------------------------------------------
 # Request hooks
 # ---------------------------------------------------------------------------
@@ -52,9 +77,20 @@ def before_request_line_profile(*args, **kwargs) -> None:
 		if profiler is None:
 			return
 
+		# Self-heal: if a prior request was killed mid-flight (skipping its
+		# after_request teardown) and left tool 2 registered, clear the orphan
+		# before enabling so the worker recovers without a bench restart. Guarded
+		# on "no active profiler in this thread" so it can't drop our own run.
+		if getattr(frappe.local, "_lp_profiler", None) is None:
+			capture.release_monitoring_tool()
 		profiler.enable_by_count()
 		frappe.local._lp_profiler = profiler
 		frappe.local._lp_run_uuid = run_uuid
+		# Arm the overhead watchdog: if this request runs past the budget,
+		# tracing is disengaged so the flow completes (observe, don't spoil).
+		frappe.local._lp_watchdog = capture.start_overhead_watchdog(
+			run_uuid, _overhead_budget_seconds()
+		)
 	except Exception as exc:
 		frappe.log_error(
 			title="phase 2 before_request failed",
@@ -73,12 +109,19 @@ def after_request_line_profile(*args, **kwargs) -> None:
 	frappe.local._lp_profiler = None
 	frappe.local._lp_run_uuid = None
 	frappe.local._lp_active = None  # invalidate the per-request is_active cache
+	_cancel_watchdog()
 
 	if profiler is None or not run_uuid:
 		return
 
 	try:
-		profiler.disable()
+		try:
+			# Pair with before_request's enable_by_count(); count-guarded so it's
+			# safe even if line_profiler already tore down (the "tool 2 is not in
+			# use" path). Stats are still readable after, so don't skip serialize.
+			profiler.disable_by_count()
+		except Exception:
+			pass
 		samples = capture.serialize_stats(profiler)
 		capture.flush_samples(run_uuid, samples)
 	except Exception as exc:
@@ -86,6 +129,10 @@ def after_request_line_profile(*args, **kwargs) -> None:
 			title="phase 2 after_request failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
+	finally:
+		# Guarantee no process-global sys.monitoring line-trace hook survives
+		# this request — a leaked tool would line-trace every later request.
+		capture.release_monitoring_tool()
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +182,17 @@ def before_job_line_profile(method=None, kwargs=None, **rest) -> None:
 		if profiler is None:
 			return
 
+		# Self-heal a tool 2 orphaned by a previously-killed job (see
+		# before_request_line_profile). RQ workers run one job at a time, so
+		# there's no in-process concurrency to disturb here.
+		if getattr(frappe.local, "_lp_profiler", None) is None:
+			capture.release_monitoring_tool()
 		profiler.enable_by_count()
 		frappe.local._lp_profiler = profiler
 		frappe.local._lp_run_uuid = run_uuid
+		frappe.local._lp_watchdog = capture.start_overhead_watchdog(
+			run_uuid, _overhead_budget_seconds()
+		)
 	except Exception as exc:
 		frappe.log_error(
 			title="phase 2 before_job failed",
@@ -155,12 +210,16 @@ def after_job_line_profile(method=None, kwargs=None, result=None, **rest) -> Non
 	frappe.local._lp_profiler = None
 	frappe.local._lp_run_uuid = None
 	frappe.local._lp_active = None
+	_cancel_watchdog()
 
 	if profiler is None or not run_uuid:
 		return
 
 	try:
-		profiler.disable()
+		try:
+			profiler.disable_by_count()
+		except Exception:
+			pass
 		samples = capture.serialize_stats(profiler)
 		capture.flush_samples(run_uuid, samples)
 	except Exception as exc:
@@ -168,3 +227,5 @@ def after_job_line_profile(method=None, kwargs=None, result=None, **rest) -> Non
 			title="phase 2 after_job failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
+	finally:
+		capture.release_monitoring_tool()

@@ -164,6 +164,48 @@ class TestSweepStuckAnalyzing:
 
 
 # --------------------------------------------------------------------------
+# Stale Stopping sweep — re-enqueue analyze for sessions stranded at Stopping.
+# --------------------------------------------------------------------------
+
+class TestSweepStaleStopping:
+	def test_reenqueues_each_stale_stopping_row(self, monkeypatch):
+		stub = _install_frappe_stub(monkeypatch)
+		stub._get_all_return["Optimus Session"] = [
+			{"name": "PS-1", "session_uuid": "u1"},
+			{"name": "PS-2", "session_uuid": "u2"},
+		]
+		janitor = _reload_janitor(monkeypatch)
+		janitor._sweep_stale_stopping()
+
+		# One batched set_value re-affirming Stopping (bumps modified → backoff).
+		set_value_calls = [c for c in stub._set_value_calls if c[0] == "Optimus Session"]
+		assert len(set_value_calls) == 1
+		_, filters, fields = set_value_calls[0]
+		assert filters == {"name": ("in", ["PS-1", "PS-2"])}
+		assert fields["status"] == "Stopping"
+		# Analyze re-enqueued once per stranded row.
+		assert len(stub._enqueue_calls) == 2
+		methods = [c[0][0] for c in stub._enqueue_calls]
+		assert methods == ["optimus.analyze.run", "optimus.analyze.run"]
+
+	def test_filters_on_stopping_status(self, monkeypatch):
+		stub = _install_frappe_stub(monkeypatch)
+		stub._get_all_return["Optimus Session"] = []
+		janitor = _reload_janitor(monkeypatch)
+		janitor._sweep_stale_stopping()
+		# Selected by status="Stopping".
+		ga = [c for c in stub._get_all_calls if c[0] == "Optimus Session"]
+		assert ga and ga[0][1].get("status") == "Stopping"
+		assert stub._enqueue_calls == []
+
+	def test_wired_into_sweep_stale_sessions(self, monkeypatch):
+		import inspect
+		_install_frappe_stub(monkeypatch)
+		janitor = _reload_janitor(monkeypatch)
+		assert "_sweep_stale_stopping" in inspect.getsource(janitor.sweep_stale_sessions)
+
+
+# --------------------------------------------------------------------------
 # Stale Phase-2 sweep — one batched UPDATE per branch (Recording + Analyzing).
 # --------------------------------------------------------------------------
 

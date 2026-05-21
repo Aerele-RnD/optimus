@@ -121,6 +121,13 @@ def _patch_enqueue():
 				from optimus import session as _profiler_session
 
 				_profiler_session.register_pending_job(active, job.id)
+				# v0.7.x: also record the job's identity in the never-pruned
+				# jobs hash so analyze can report its terminal status (incl.
+				# failed / timed-out jobs that produce no recording).
+				_method_str = method if isinstance(method, str) else getattr(
+					method, "__name__", str(method)
+				)
+				_profiler_session.record_job(active, job.id, _method_str)
 		except Exception:
 			pass
 

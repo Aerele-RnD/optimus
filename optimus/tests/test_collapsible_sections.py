@@ -405,3 +405,17 @@ def test_xhr_timing_table_has_fixed_layout_class():
 		"Per-action XHR timing table must include a <colgroup> defining "
 		"column widths immediately after the <table> opening tag"
 	)
+
+
+def test_how_to_read_fixes_stale_refs_and_verbs():
+	"""v0.7.x: How-to-read fixed — 'Click' (not 'Hover') to open callsites, and
+	no references to sections that don't exist by those names / a non-existent
+	'index candidate per table'."""
+	template = _read_template()
+	hr = template[template.find("<h2>How to read this report</h2>"):]
+	hr = hr[:hr.find("</section>")]
+	assert "Click any" in hr
+	assert "Hover any" not in hr
+	assert "full-recordings" not in hr
+	assert "queries-per-action" not in hr
+	assert "index candidate per table" not in hr

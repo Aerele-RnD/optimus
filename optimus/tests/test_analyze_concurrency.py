@@ -143,39 +143,31 @@ def _stub_scheduler(monkeypatch, disabled):
 	monkeypatch.setitem(sys.modules, "frappe.utils.scheduler", mod)
 
 
-def _stub_is_job_enqueued(monkeypatch, value):
-	import sys
-	mod = types.ModuleType("frappe.utils.background_jobs")
-	mod.is_job_enqueued = lambda job_id: value
-	monkeypatch.setitem(sys.modules, "frappe.utils.background_jobs", mod)
+class TestEnqueueAnalyzeAsync:
+	"""The async enqueue must NOT use a stable job_id + is_job_enqueued dedup.
+	That guard stranded sessions at 'Stopping' when an OOM-killed worker left a
+	zombie STARTED job: the guard skipped the enqueue and nothing transitioned
+	the session. Concurrent-analyze RAM is bounded by analyze.run's
+	single-flight, so we always enqueue (anonymously)."""
 
-
-class TestPerSessionDedup:
-	"""M3: a stable job_id + is_job_enqueued guard collapses duplicate analyze
-	enqueues for the SAME session (double-Stop, retry racing the janitor)."""
-
-	def test_async_enqueue_sets_stable_job_id(self, monkeypatch):
+	def test_async_enqueue_is_anonymous_and_always_fires(self, monkeypatch):
 		from optimus import api
 		_stub_scheduler(monkeypatch, disabled=False)
-		_stub_is_job_enqueued(monkeypatch, value=False)
 		captured = {}
 		monkeypatch.setattr(frappe, "enqueue", lambda *a, **k: captured.update(k))
 		monkeypatch.setattr(frappe, "log_error", lambda *a, **k: None, raising=False)
 
 		ran_inline = api._enqueue_analyze("uuid-1", docname="PS-1")
-		assert ran_inline is False  # async path
-		assert captured.get("job_id") == "optimus-analyze-uuid-1"
+		assert ran_inline is False  # async path, session still mid-flight
 		assert captured.get("now") is False
+		assert captured.get("session_uuid") == "uuid-1"
+		# No stable job_id → no is_job_enqueued strand.
+		assert "job_id" not in captured
 
-	def test_dedups_when_already_enqueued(self, monkeypatch):
+	def test_enqueue_analyze_has_no_is_job_enqueued_dedup(self):
+		# Source guard: the dedup that stranded sessions must stay gone. Check
+		# the import + the call (not prose — the comment explains the removal).
 		from optimus import api
-		_stub_scheduler(monkeypatch, disabled=False)
-		_stub_is_job_enqueued(monkeypatch, value=True)
-		calls = []
-		monkeypatch.setattr(frappe, "enqueue", lambda *a, **k: calls.append((a, k)))
-		monkeypatch.setattr(frappe, "log_error", lambda *a, **k: None, raising=False)
-
-		ran_inline = api._enqueue_analyze("uuid-1", docname="PS-1")
-		# A job is already in flight → don't enqueue a duplicate.
-		assert calls == []
-		assert ran_inline is False  # still async/in-flight, session not finalized
+		src = inspect.getsource(api._enqueue_analyze)
+		assert "import is_job_enqueued" not in src
+		assert "is_job_enqueued(" not in src

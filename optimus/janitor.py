@@ -57,6 +57,13 @@ def sweep_stale_sessions():
 	except Exception:
 		frappe.log_error(title="optimus janitor sweep_stuck_analyzing")
 
+	# v0.7.x: sessions stranded in "Stopping" (analyze never ran — no worker,
+	# backlog, or an OOM-killed worker left a zombie job) — re-enqueue analyze.
+	try:
+		_sweep_stale_stopping()
+	except Exception:
+		frappe.log_error(title="optimus janitor sweep_stale_stopping")
+
 	# v0.6.0: phase-2 line-profile runs follow the same staleness model
 	# but live on the Optimus Phase Two Run child rows. Reuses the same
 	# thresholds (recording → 11min, analyzing → 30min).
@@ -380,6 +387,50 @@ def _sweep_stuck_analyzing():
 	safe_commit()
 
 
+def _sweep_stale_stopping():
+	"""Find rows stuck in ``Stopping`` longer than STALE_RECORDING_MINUTES and
+	re-enqueue analyze.
+
+	``Stopping`` is meant to last only the instant between ``api._mark_stopping``
+	and ``analyze.run`` setting ``Analyzing``. Lingering there means the analyze
+	job never ran — no worker on the ``long`` queue, a queue backlog, or a
+	worker OOM-killed mid-analyze that left a zombie job. Re-enqueue so the
+	session self-heals once a worker is available (analyze is idempotent and
+	handles empty sessions). We bump ``modified`` (re-affirming the status) so a
+	still-stuck row backs off ~one window between retries instead of stacking a
+	job every sweep; if the re-enqueued analyze then wedges in ``Analyzing``,
+	``_sweep_stuck_analyzing`` is the next backstop."""
+	cutoff = add_to_date(now_datetime(), minutes=-STALE_RECORDING_MINUTES)
+	stale = frappe.db.get_all(
+		"Optimus Session",
+		filters={"status": "Stopping", "modified": ["<", cutoff]},
+		fields=["name", "session_uuid"],
+	)
+	if not stale:
+		return
+
+	# Re-affirm the status to bump ``modified`` → next sweep waits another
+	# window before re-enqueuing the same row.
+	frappe.db.set_value(
+		"Optimus Session",
+		{"name": ("in", [r["name"] for r in stale])},
+		{"status": "Stopping"},
+	)
+	safe_commit()
+
+	for row in stale:
+		try:
+			frappe.enqueue(
+				"optimus.analyze.run",
+				queue="long",
+				session_uuid=row["session_uuid"],
+			)
+		except Exception:
+			frappe.log_error(
+				title=f"optimus janitor stopping re-enqueue {row['session_uuid']}"
+			)
+
+
 def _sweep_stale_phase2_runs():
 	"""Force-stop Optimus Phase Two Run rows stuck in Recording (>11min) or
 	Analyzing (>30min). Mirrors the phase-1 sweep logic but operates on
@@ -411,7 +462,10 @@ def _sweep_stale_phase2_runs():
 				{
 					"status": "Failed",
 					"warnings_json": frappe.as_json([
-						"Phase 2 run stuck in Recording — auto-stopped by janitor.",
+						"Phase 2 run expired before any line data was captured "
+						"(no flow re-run within the window) — auto-stopped by "
+						"janitor. To retry: click \"Run Line-Profile Pass\", "
+						"re-run your flow, then \"Stop Phase 2 Run\".",
 					]),
 					"ended_at": now_datetime(),
 				},

@@ -66,6 +66,22 @@ class TestSummaryProse:
 		# The query count is still there.
 		assert "1702 database queries" in text
 
+	def test_findings_pointer_appears_once(self):
+		# v0.7.x: "See the Findings section below" must appear ONCE, not twice
+		# (it used to be on both the slowest-action sentence and the issue-count
+		# sentence). Built at render time too, so this fixes existing reports.
+		ctx = _ctx(
+			actions=[{"action_label": "frappe.desk.form.save.savedocs:Submit",
+			          "recording_uuid": "r0", "duration_ms": 1554}],
+			findings=[
+				{"severity": "High", "action_ref": "0", "estimated_impact_ms": 751,
+				 "title": "In savedocs:Submit, 95% of the time was spent in looped_validate",
+				 "finding_type": "Slow Hot Path"},
+			],
+		)
+		html = analyze._build_summary_html(ctx, 100, [{"uuid": "r0"}])
+		assert html.count("See the Findings section below") == 1
+
 	def test_issue_count_equals_severity_breakdown(self):
 		ctx = _ctx(
 			actions=[{"action_label": "x", "recording_uuid": "r0", "duration_ms": 10}],

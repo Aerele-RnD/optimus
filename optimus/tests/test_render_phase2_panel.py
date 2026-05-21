@@ -84,12 +84,16 @@ class TestRenderPhase2PanelSingleRun:
 
 		assert "literal_value" in html
 
-	def test_zero_invocation_function_shows_warning(self):
+	def test_zero_invocation_function_listed_in_not_exercised_note(self):
+		# v0.7.x: no per-function "never invoked" panel (it bloated the
+		# drilldown). Uninvoked picks collapse into one concise note.
 		session = self._session([_function("my_app.never_runs", [])])
 
 		html = renderer._render_phase2_panel(session)
 
-		assert "never invoked" in html.lower()
+		assert "never invoked" not in html.lower()
+		assert "not exercised" in html.lower()
+		assert "my_app.never_runs" in html
 
 
 class TestRenderPhase2PanelDiff:
@@ -150,8 +154,7 @@ class TestRenderPhase2PanelAutoExpandChain:
 
 		html = renderer._render_phase2_panel(session)
 
-		# rfind targets the function-table header (the descendant appears
-		# earlier in the run's "Picks:" summary line as well).
+		# Anchor on the root pick's function-table header.
 		root_idx = html.rfind("my_app.x.root_fn")
 		assert root_idx > -1
 		nearby = html[max(0, root_idx - 200):root_idx]
@@ -275,3 +278,36 @@ class TestRenderPhase2PanelPosition:
 		assert 'id="line-drilldown"' not in html
 		assert 'href="#line-drilldown"' not in html
 		assert ">Line-Level Drilldown</a>" not in html
+
+
+class TestRenderPhase2PanelRefinements:
+	"""v0.7.x refinements: reworded intro, dimmed 0-hit lines, dropped Picks line."""
+
+	def _panel(self, results, picks=None):
+		return renderer._render_phase2_panel(
+			SimpleNamespace(phase_2_runs=[_run("r1", "Ready", results, picks=picks or [])])
+		)
+
+	def test_intro_points_to_not_exercised_note(self):
+		out = self._panel([_function("my_app.x", [_line(2, "y = 1", 5, 10.0)])])
+		assert "not exercised in this pass" in out.lower()
+		# the old stale phrasing is gone
+		assert "function-not-invoked warnings" not in out.lower()
+
+	def test_zero_hit_lines_get_dim_class(self):
+		results = [_function("my_app.x", [
+			_line(1, "def x():", 0, 0.0),        # never ran → dim
+			_line(2, "# comment", 0, 0.0),        # never ran → dim
+			_line(3, "y = compute()", 5, 50.0),   # ran → not dim
+		])]
+		out = self._panel(results)
+		assert 'class="zero"' in out  # the 0-hit context rows are dimmed
+
+	def test_no_picks_line(self):
+		out = self._panel(
+			[_function("my_app.x", [_line(1, "y = 1", 5, 10.0)])],
+			picks=[{"dotted_path": "my_app.x", "source": "curated"}],
+		)
+		# the redundant "Picks:" summary line is gone (function tables +
+		# "Not exercised" note already enumerate the picks)
+		assert "Picks:" not in out

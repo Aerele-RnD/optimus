@@ -115,20 +115,19 @@ class TestHotLineFinding:
 
 
 class TestFunctionNotInvoked:
-	def test_empty_lines_emits_warning_and_finding(self):
+	# v0.7.x: a picked-but-uninvoked function no longer emits a per-function
+	# "Function Not Invoked" finding (it cluttered the Findings list). It's
+	# folded into ONE consolidated warning instead — the report stays clean.
+	def test_empty_lines_emits_warning_not_finding(self):
 		fn = _function("my_app.never_runs", [])
 
 		result = analyzer.analyze([fn])
 
-		not_invoked = [f for f in result.findings if f["finding_type"] == "Function Not Invoked"]
-		assert len(not_invoked) == 1
-		assert not_invoked[0]["severity"] == "Low"
-		assert "my_app.never_runs" in not_invoked[0]["title"]
-
+		assert not [f for f in result.findings if f["finding_type"] == "Function Not Invoked"]
 		assert any("never_runs" in w for w in result.warnings)
 
-	def test_all_zero_hits_emits_warning(self):
-		# Some line_profiler versions still report the lines but with hits=0
+	def test_all_zero_hits_emits_warning_not_finding(self):
+		# Some line_profiler versions still report the lines but with hits=0.
 		fn = _function("my_app.never_runs", [
 			_line(1, "x = 1", 0, 0.0),
 			_line(2, "return x", 0, 0.0),
@@ -136,8 +135,19 @@ class TestFunctionNotInvoked:
 
 		result = analyzer.analyze([fn])
 
-		not_invoked = [f for f in result.findings if f["finding_type"] == "Function Not Invoked"]
-		assert len(not_invoked) == 1
+		assert not [f for f in result.findings if f["finding_type"] == "Function Not Invoked"]
+		assert any("never_runs" in w for w in result.warnings)
+
+	def test_multiple_uninvoked_share_one_warning(self):
+		result = analyzer.analyze([
+			_function("my_app.a", []),
+			_function("my_app.b", [_line(1, "x = 1", 0, 0.0)]),
+		])
+
+		assert not [f for f in result.findings if f["finding_type"] == "Function Not Invoked"]
+		# One consolidated warning names every uninvoked pick.
+		consolidated = [w for w in result.warnings if "my_app.a" in w and "my_app.b" in w]
+		assert len(consolidated) == 1
 
 
 class TestAggregate:

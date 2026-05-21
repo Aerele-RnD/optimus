@@ -416,6 +416,13 @@ def render(
 		return bool((callsite.get("filename") or "").strip())
 
 	all_findings = [f for f in all_findings if _has_renderable_callsite(f)]
+	# v0.7.x: "X was picked but never invoked during phase 2" is non-actionable
+	# noise — it just means the replay didn't exercise that pick. The Line-Level
+	# Drilldown already notes uninvoked picks in one concise line. Drop these
+	# globally at render so existing reports declutter on regenerate too (the
+	# analyzer no longer emits them for new runs); global so they also leave the
+	# severity counts / observations with no phantom rows.
+	all_findings = [f for f in all_findings if f.get("finding_type") != "Function Not Invoked"]
 	# v0.7.x: line-drilldown callsite index built once and reused for the
 	# Jinja lookup the template uses for cross-link callouts ("Line-Level
 	# Drilldown: hottest line N - Mms / X hits"). The smoking-gun
@@ -503,7 +510,10 @@ def render(
 	# recordings, surfaced on their own (they also stay in the per-action
 	# table). Derived from the persisted action rows; uses all findings
 	# (actionable + observational) for the per-job findings tally.
-	background_jobs = build_background_jobs(actions, recordings_by_uuid, all_findings)
+	background_jobs = build_background_jobs(
+		actions, recordings_by_uuid, all_findings,
+		tracked_jobs=getattr(session_doc, "background_jobs", None),
+	)
 
 	try:
 		top_queries = json.loads(session_doc.top_queries_json or "[]")
@@ -1159,18 +1169,27 @@ def _build_line_drilldown_callsite_index(session_doc: Any) -> dict:
 			)
 			if not hot_line or not hot_line.get("total_ms"):
 				continue
-			key = (os.path.basename(file_path), qualname)
-			existing = index.get(key)
 			candidate_ms = hot_line.get("total_ms", 0) or 0
-			if existing is None or candidate_ms > (existing.get("total_ms") or 0):
-				index[key] = {
-					"lineno": hot_line.get("lineno"),
-					"content": hot_line.get("content") or "",
-					"total_ms": candidate_ms,
-					"hits": hot_line.get("hits") or 0,
-					"run_uuid": run_uuid,
-					"dotted_path": dotted,
-				}
+			entry = {
+				"lineno": hot_line.get("lineno"),
+				"content": hot_line.get("content") or "",
+				"total_ms": candidate_ms,
+				"hits": hot_line.get("hits") or 0,
+				"run_uuid": run_uuid,
+				"dotted_path": dotted,
+			}
+			# v0.7.x: key under BOTH the full qualname and its bare last
+			# segment. resolve_freeform may emit a prefixed qualname
+			# (``common.bg_recheck_users`` / ``SalesInvoice.validate``) while a
+			# call_tree finding's callsite carries the bare function name — the
+			# callout silently missed when the two disagreed on the prefix even
+			# though the function was profiled (and showing in the panel).
+			basename = os.path.basename(file_path)
+			bare = qualname.rsplit(".", 1)[-1]
+			for k in {(basename, qualname), (basename, bare)}:
+				existing = index.get(k)
+				if existing is None or candidate_ms > (existing.get("total_ms") or 0):
+					index[k] = entry
 	return index
 
 
@@ -1187,7 +1206,14 @@ def _make_line_drilldown_lookup(index: dict):
 	def lookup(filename, function_name):
 		if not filename or not function_name:
 			return None
-		return index.get((os.path.basename(filename), function_name))
+		base = os.path.basename(filename)
+		# Try the function name as-is, then its bare last segment — mirrors the
+		# dual keying in _build_line_drilldown_callsite_index so a prefix
+		# mismatch (qualname vs callsite function) can't break the callout.
+		return (
+			index.get((base, function_name))
+			or index.get((base, function_name.rsplit(".", 1)[-1]))
+		)
 
 	return lookup
 
@@ -1601,6 +1627,13 @@ def _group_findings_by_root_cause(findings: list[dict]) -> list[dict]:
 	return result
 
 
+def _phase2_invoked(fn: dict) -> bool:
+	"""Whether a picked phase-2 function actually ran (≥1 line with hits or
+	time). Reuses the analyzer's canonical check so render + analyze agree."""
+	from optimus.line_profile.analyzer import _function_invoked
+	return _function_invoked(fn)
+
+
 def _render_phase2_function_table(fn: dict) -> str:
 	"""Per-function line table inside one phase-2 run.
 
@@ -1626,6 +1659,12 @@ def _render_phase2_function_table(fn: dict) -> str:
 	file_path = fn.get("file", "")
 	source = fn.get("source") or "curated"
 
+	# v0.7.x: a picked function that never ran (no lines, or all hits/total
+	# zero) renders nothing — the caller folds it into one "Not exercised in
+	# this pass" note instead of a noisy empty per-line table.
+	if not _phase2_invoked(fn):
+		return ""
+
 	is_descendant = source == "auto_expand"
 	indent_cls = " indent-1" if is_descendant else ""
 	header_prefix = (
@@ -1637,14 +1676,6 @@ def _render_phase2_function_table(fn: dict) -> str:
 		f'<div class="fn-name">{header_prefix}{_e(dotted)}</div>',
 		f'<div class="fn-path">{_e(file_path)}</div>',
 	]
-
-	if not rows:
-		html.append(
-			'<div class="picks"><em>'
-			'Function was instrumented but never invoked during phase 2.'
-			'</em></div></div>'
-		)
-		return "".join(html)
 
 	html.append(
 		'<table class="line-prof">'
@@ -1668,8 +1699,16 @@ def _render_phase2_function_table(fn: dict) -> str:
 
 	for line in rows:
 		ms = line.get("total_ms") or 0
+		hits = line.get("hits", 0) or 0
 		is_hot = max_ms > 0 and ms > 0 and ms / max_ms >= 0.25
-		tr_cls = ' class="hot"' if is_hot else ""
+		if is_hot:
+			tr_cls = ' class="hot"'
+		elif hits == 0 and ms == 0:
+			# v0.7.x: dim pure-context lines (def/comments/blank/closing parens)
+			# that never executed, so the lines that actually ran stand out.
+			tr_cls = ' class="zero"'
+		else:
+			tr_cls = ""
 		# `per_hit_us` is microseconds — convert to ms so the timing
 		# rule (1s threshold for the `.time-high` highlight) applies.
 		per_hit_ms = (line.get("per_hit_us") or 0) / 1000.0
@@ -1843,20 +1882,20 @@ def _render_line_drilldown_panel(session_doc: Any) -> str:
 		f'<span class="section-tag">{n_runs} run{"s" if n_runs != 1 else ""}</span>'
 		'</div>',
 		'<p class="section-intro">'
-		'Line-Level Drilldown captures only the flow you ran during the '
-		'line-profile recording. Make sure the line-profile reproduction '
-		'exercises the same code paths as the initial session recording - '
-		'function-not-invoked warnings indicate otherwise.'
+		'Line-Level Drilldown captures only the code paths you actually ran '
+		'during the line-profile pass. Any picked function that was not '
+		'exercised is listed under "Not exercised in this pass" below - re-run '
+		'the flow that calls it to capture its lines.'
 		'</p>',
 	]
 
 	for run_idx, run in enumerate(parsed_runs, start=1):
 		started = _e(run.get("started_at"))
-		picks_summary = ", ".join(
-			_e(p.get("dotted_path", "?")) for p in run.get("picks", [])
-		)
 		status = _e(run.get("status", ""))
 		total_ms = run.get("total_ms", 0)
+		# v0.7.x: the "Picks:" line is dropped — the per-function tables below
+		# enumerate the picks that ran, and the "Not exercised in this pass" note
+		# lists the rest, so listing all picks again here is redundant.
 		html.append(
 			'<div class="phase2-run">'
 			'<div class="phase2-run-head">'
@@ -1866,10 +1905,21 @@ def _render_line_drilldown_panel(session_doc: Any) -> str:
 			f'{total_ms:.2f}ms &middot; {started}'
 			'</span>'
 			'</div>'
-			f'<div class="picks"><em>Picks:</em> {picks_summary or "-"}</div>'
 		)
+		# Render only functions that actually ran; collapse the rest into one
+		# concise note so the drilldown isn't padded with empty zero-hit tables.
+		not_exercised = []
 		for fn in run.get("functions", []):
-			html.append(_render_phase2_function_table(fn))
+			if _phase2_invoked(fn):
+				html.append(_render_phase2_function_table(fn))
+			else:
+				not_exercised.append(fn.get("dotted_path", "?"))
+		if not_exercised:
+			html.append(
+				'<div class="picks"><em>Not exercised in this pass:</em> '
+				+ ", ".join(_e(p) for p in not_exercised)
+				+ '</div>'
+			)
 		html.append('</div>')
 
 	if diffs:
@@ -1992,20 +2042,39 @@ def _clean_job_method(action_label, path, recording) -> str:
 	return "RQ Job"
 
 
-def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
+def _tracked_row_get(row, key, default=None):
+	"""Read a key from a tracked-job row, tolerating both a plain dict (test
+	fixtures) and a Frappe child Document (``session_doc.background_jobs``)."""
+	if row is None:
+		return default
+	if isinstance(row, dict):
+		return row.get(key, default)
+	return getattr(row, key, default)
+
+
+def build_background_jobs(actions, recordings_by_uuid, findings=None, tracked_jobs=None) -> dict:
 	"""Build the "RQ Jobs" section payload from the (already
-	min-duration-filtered) action dicts.
+	min-duration-filtered) action dicts, merged with the persisted per-job
+	terminal-status rows so failed / timed-out / still-running jobs are
+	reported instead of silently vanishing.
 
 	``actions`` items are ``_action_to_dict`` output plus an ``idx`` key
 	holding the action's original position (so findings — whose ``action_ref``
 	is that index as a string — can be tallied per job). ``recordings_by_uuid``
 	enriches each job with its slowest queries when the recording is still in
 	Redis (TTL ~10 min; a re-render long after analyze has none → the section
-	still renders from the persisted action rows alone). Pure — no I/O (the
+	still renders from the persisted action rows alone). ``tracked_jobs`` are
+	the ``Optimus Background Job`` child rows analyze persisted (one per RQ job
+	the flow enqueued, carrying ``status`` / ``error`` / timing); they link to a
+	captured action by ``recording_uuid``. A job that ran with profiling has
+	both an action (rich query data) and a tracked row (status); a job that
+	failed / timed out / ran past the wait has only a tracked row and still
+	appears, with its status + error but no query data. Pure — no I/O (the
 	``entry_callsite`` on each job is pre-computed by ``render()`` and copied
 	through here).
 
-	Returns ``{jobs, count, total_ms, total_queries, any_findings_counted}``.
+	Returns ``{jobs, count, total_ms, total_queries, any_findings_counted,
+	status_counts}``.
 	"""
 	findings_by_idx: dict[str, int] = {}
 	for f in (findings or []):
@@ -2014,7 +2083,15 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 			findings_by_idx[ref] = findings_by_idx.get(ref, 0) + 1
 	any_findings_counted = bool(findings_by_idx)
 
+	tracked_list = list(tracked_jobs or [])
+	tracked_by_uuid: dict[str, Any] = {}
+	for row in tracked_list:
+		ruuid = (_tracked_row_get(row, "recording_uuid") or "").strip()
+		if ruuid:
+			tracked_by_uuid[ruuid] = row
+
 	jobs: list[dict] = []
+	matched_uuids: set[str] = set()
 	for a in (actions or []):
 		if a.get("event_type") != "RQ Job":
 			continue
@@ -2041,6 +2118,13 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 				for c in ranked[:_BG_JOB_TOP_QUERIES]
 			]
 
+		# A captured RQ-Job action ran and produced a recording → its terminal
+		# status is Completed unless the tracked row says otherwise (older
+		# sessions recorded before job-tracking have no tracked row).
+		trow = tracked_by_uuid.get(uuid) if uuid else None
+		if uuid:
+			matched_uuids.add(uuid)
+
 		jobs.append({
 			"method": _clean_job_method(a.get("action_label"), a.get("path"), rec),
 			"recording_uuid": uuid,
@@ -2056,15 +2140,46 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 			# attach ``related_findings`` (the actual list of finding
 			# objects, not just the count) for embedding in the row.
 			"idx": idx,
+			"status": (_tracked_row_get(trow, "status") or "Completed") if trow else "Completed",
+			"error": _tracked_row_get(trow, "error") if trow else None,
+		})
+
+	# Append every tracked job that produced no captured action (failed, timed
+	# out, still running, or below the action threshold): status + error +
+	# timing, but no query data. The user requires that no enqueued job is
+	# missed from the report.
+	for row in tracked_list:
+		ruuid = (_tracked_row_get(row, "recording_uuid") or "").strip()
+		if ruuid and ruuid in matched_uuids:
+			continue
+		jobs.append({
+			"method": _tracked_row_get(row, "method") or "RQ Job",
+			"recording_uuid": ruuid,
+			"duration_ms": _tracked_row_get(row, "duration_ms") or 0,
+			"queries_count": 0,
+			"query_time_ms": 0,
+			"slowest_query_ms": 0,
+			"findings_count": None,
+			"top_queries": None,
+			"recording_available": False,
+			"entry_callsite": None,
+			"idx": None,
+			"status": _tracked_row_get(row, "status") or "Running",
+			"error": _tracked_row_get(row, "error"),
 		})
 
 	jobs.sort(key=lambda j: -(j.get("duration_ms") or 0))
+	status_counts: dict[str, int] = {}
+	for j in jobs:
+		st = j.get("status") or "Running"
+		status_counts[st] = status_counts.get(st, 0) + 1
 	return {
 		"jobs": jobs,
 		"count": len(jobs),
 		"total_ms": sum(j.get("duration_ms") or 0 for j in jobs),
 		"total_queries": sum(j.get("queries_count") or 0 for j in jobs),
 		"any_findings_counted": any_findings_counted,
+		"status_counts": status_counts,
 	}
 
 
@@ -2352,9 +2467,12 @@ def _walk_drilldown_chain(
 		children = node.get("children") or []
 		if not children:
 			break
-		# Pick the hottest child by cumulative_ms.
+		# Pick the hottest child by cumulative_ms, skipping synthetic
+		# "[other: N frames]" collapse nodes (v0.7.x: not shown in chains —
+		# you can't drill into a collapsed bucket).
 		hottest = max(
-			(c for c in children if isinstance(c, dict)),
+			(c for c in children
+			 if isinstance(c, dict) and not _ct_is_other_frame(c.get("function"))),
 			key=lambda c: float(c.get("cumulative_ms") or 0),
 			default=None,
 		)
@@ -3805,11 +3923,64 @@ _CALL_TREE_MAX_DEPTH = 12  # default cap shown without a click
 _CALL_TREE_HARD_CAP = 64   # absolute ceiling — runaway protection
 
 
-def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False):
+_CT_OTHER_RE = re.compile(r"^\[other: \d+ frames?\]$")
+
+
+def _ct_is_other_frame(fn) -> bool:
+	"""A synthetic ``[other: N frames]`` collapse node — dropped from the
+	call tree per user request (v0.7.x)."""
+	return bool(_CT_OTHER_RE.match((fn or "").strip()))
+
+
+def _ct_is_user_frame(node) -> bool:
+	"""A real user-app python frame (not framework, not a synthetic
+	``<sql>`` / ``[other]`` / ``<root>`` node). Used to auto-open the tree
+	down to the first user-app frame."""
+	fn = node.get("function") or ""
+	if not fn or fn.startswith("<") or fn.startswith("["):
+		return False
+	fname = (node.get("filename") or "").replace("\\", "/")
+	app = fname.split("/", 1)[0] if fname else ""
+	if not app:
+		return False
+	try:
+		from optimus.analyzers.base import FRAMEWORK_APPS
+	except Exception:
+		FRAMEWORK_APPS = frozenset()
+	return app not in FRAMEWORK_APPS
+
+
+def _ct_sql_summary(sql_children) -> str:
+	"""Collapse a node's ``<sql>`` leaf siblings into one expandable
+	'N SQL queries · Xms total' line. The call tree shows the Python call
+	hierarchy; individual query rows are noise here (they live, itemised, in
+	the Slowest-queries / DB-tables sections). Collapsed one-click-away, not
+	dropped — the aggregate time stays visible."""
+	n = len(sql_children)
+	total = sum(float((c or {}).get("cumulative_ms") or 0) for c in sql_children)
+	inner = []
+	for c in sql_children:
+		cn = c or {}
+		loc = (cn.get("filename") or "") + (f":{cn.get('lineno')}" if cn.get("lineno") else "")
+		inner.append(
+			'<div class="call-tree-node">'
+			'<span class="frame-name">&lt;sql&gt;</span> '
+			f'<span class="frame-meta">{_e(loc)} &middot; '
+			f'{float(cn.get("cumulative_ms") or 0):.1f}ms</span></div>'
+		)
+	plural = "y" if n == 1 else "ies"
+	return (
+		'<details class="call-tree-deeper-toggle">'
+		f'<summary><em>{n} SQL quer{plural} &middot; {total:.0f}ms total (click to expand)</em></summary>'
+		'<div class="call-tree-children">' + "".join(inner) + '</div></details>'
+	)
+
+
+def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False, breadcrumb=True):
 	"""Phase K.5: recursive nested-``<details>`` emit for a single
-	call_tree node. Auto-expands the first ``depth`` levels; deeper
-	branches start collapsed so the panel doesn't unfurl into thousands
-	of frames on first paint.
+	call_tree node. Auto-opens the hottest path down to the first user-app
+	frame (``breadcrumb``); deeper branches start collapsed so the panel
+	doesn't unfurl into thousands of frames on first paint.
 
 	Past ``_CALL_TREE_MAX_DEPTH`` the remaining subtree is wrapped in
 	a click-to-expand ``<details>`` so users can traverse deeper when
@@ -3820,6 +3991,10 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False):
 	if not isinstance(node, dict):
 		return ""
 	fn = node.get("function") or "<?>"
+	# v0.7.x: drop synthetic "[other: N frames]" collapse nodes entirely (user
+	# request — accepts that a branch's visible children may not sum to its total).
+	if _ct_is_other_frame(fn):
+		return ""
 	file = node.get("filename") or ""
 	lineno = node.get("lineno") or ""
 	cum_ms = float(node.get("cumulative_ms") or 0)
@@ -3831,7 +4006,10 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False):
 	if parent_ms and cum_ms / parent_ms >= 0.5:
 		cls += " call-tree-hot"
 
-	open_attr = " open" if depth < 1 else ""
+	# v0.7.x: auto-open the hottest path down to the first user-app frame so the
+	# tree "opens at" the user's code; collapse below it.
+	is_user = _ct_is_user_frame(node)
+	open_attr = " open" if breadcrumb else ""
 	meta_lineno = f":{lineno}" if lineno else ""
 	pct_label = f" &middot; {pct:.0f}%" if parent_ms else ""
 	self_label = ""
@@ -3847,20 +4025,44 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False):
 		'</summary>',
 	]
 	if children:
+		# Drop [other: N frames] synthetic nodes, then order hottest-first.
+		real_children = [
+			c for c in children
+			if not _ct_is_other_frame((c or {}).get("function"))
+		]
 		children_sorted = sorted(
-			children,
+			real_children,
 			key=lambda c: float((c or {}).get("cumulative_ms") or 0),
 			reverse=True,
 		)
+		# Collapse ALL <sql> leaf siblings into one expandable summary — the
+		# call tree is the Python hierarchy; per-query rows belong in the
+		# Slowest-queries / DB-tables sections.
+		main, sql_leaves = [], []
+		for c in children_sorted:
+			cn = c or {}
+			if cn.get("function") == "<sql>" and not cn.get("children"):
+				sql_leaves.append(c)
+			else:
+				main.append(c)
+
 		within_default = unlimited or depth < _CALL_TREE_MAX_DEPTH
 		within_hard = depth < _CALL_TREE_HARD_CAP
 
 		if within_default and within_hard:
 			out.append('<div class="call-tree-children">')
-			for c in children_sorted:
+			for idx, c in enumerate(main):
+				# Continue the auto-open breadcrumb down the single hottest path
+				# until we reach a user-app frame; collapse once we're there.
+				child_bc = (
+					breadcrumb and not is_user and idx == 0
+					and depth < _CALL_TREE_MAX_DEPTH
+				)
 				out.append(_render_call_tree_node(
-					c, cum_ms, depth + 1, unlimited,
+					c, cum_ms, depth + 1, unlimited, breadcrumb=child_bc,
 				))
+			if sql_leaves:
+				out.append(_ct_sql_summary(sql_leaves))
 			out.append('</div>')
 		elif within_hard:
 			# Past default cap — click-to-expand the rest of the
@@ -3870,15 +4072,17 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False):
 				'<div class="call-tree-children call-tree-deeper">'
 				'<details class="call-tree-deeper-toggle">'
 				'<summary>'
-				f'<em>show {len(children)} deeper frame(s) &middot; '
+				f'<em>show {len(main)} deeper frame(s) &middot; '
 				f'depth {depth + 1}+</em>'
 				'</summary>'
 				'<div class="call-tree-children">'
 			)
-			for c in children_sorted:
+			for c in main:
 				out.append(_render_call_tree_node(
-					c, cum_ms, depth + 1, unlimited=True,
+					c, cum_ms, depth + 1, unlimited=True, breadcrumb=False,
 				))
+			if sql_leaves:
+				out.append(_ct_sql_summary(sql_leaves))
 			out.append('</div></details></div>')
 		else:
 			# depth >= HARD_CAP; absolute truncation as safety net.
@@ -3964,9 +4168,10 @@ def _render_call_tree_panel(actions):
 		'</div>',
 		'<p class="section-intro">'
 		'Hierarchical breakdown of where wall-clock time went inside the slowest '
-		'action. Click any frame to expand its children. Numbers are cumulative time '
-		'(including children) and percentage of the parent. Branches consuming '
-		'&ge;50% of their parent are highlighted as hot.'
+		'action. The tree auto-opens down to your app\'s first hot frame; click any '
+		'frame to expand or collapse it. Numbers are cumulative time (including '
+		'children) and percentage of the parent. Branches consuming &ge;50% of their '
+		'parent are highlighted as hot.'
 		'</p>',
 		'<div class="call-tree">',
 	]
@@ -3975,8 +4180,22 @@ def _render_call_tree_panel(actions):
 		key=lambda c: float((c or {}).get("cumulative_ms") or 0),
 		reverse=True,
 	)
+	# The profiler attributes SQL queries as root-level siblings of the entry
+	# frame, so the panel renders them directly (bypassing the per-node child
+	# loop). Drop [other] nodes and collapse the root <sql> leaves here too.
+	root_main, root_sql = [], []
 	for c in root_children_sorted:
+		cn = c or {}
+		if _ct_is_other_frame(cn.get("function")):
+			continue
+		if cn.get("function") == "<sql>" and not cn.get("children"):
+			root_sql.append(c)
+		else:
+			root_main.append(c)
+	for c in root_main:
 		parts.append(_render_call_tree_node(c, total_ms, depth=0))
+	if root_sql:
+		parts.append(_ct_sql_summary(root_sql))
 	parts.append('</div>')
 	parts.append('</section>')
 	return "".join(parts)
@@ -4742,9 +4961,10 @@ def build_hot_frames_table(rows: list, is_hot: bool = False) -> list:
 	"""
 	out = []
 	for row in rows or []:
-		display = redact_frame_name(
-			{"function": row.get("function"), "filename": "", "lineno": 0},
-		)
+		# The hot-frame key already encodes "<short_path>::<func>" — use it
+		# directly. Routing through redact_frame_name appended a bogus "(?:0)"
+		# (placeholder file "?" + lineno 0, since no file/line is known here).
+		display = row.get("function") or "<unknown>"
 		if is_hot:
 			display_ms = row.get("total_ms", 0)
 		else:

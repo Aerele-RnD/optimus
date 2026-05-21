@@ -78,6 +78,25 @@ function subscribe_session_progress(frm) {
 		frm.dashboard.clear_headline();
 		setTimeout(() => frm.reload_doc(), 800);
 	});
+	// v0.7.x: auto-arm fires server-side during analyze (off-form). Tell the
+	// user a pass is armed and what to do next; the reload re-runs
+	// render_phase2_button → the in-form banner + Stop button appear.
+	frappe.realtime.on("optimus_phase2_armed", (p) => {
+		if (!p || p.docname !== frm.doc.name) return;
+		const fns = (p.functions || []).join(", ");
+		frappe.show_alert(
+			{
+				message: __(
+					"Line profiling armed for {0} hot path(s){1}. Re-run your " +
+					"flow, then click Stop Phase 2 Run to capture the exact lines.",
+					[p.count || 0, fns ? " (" + frappe.utils.escape_html(fns) + ")" : ""]
+				),
+				indicator: "orange",
+			},
+			12
+		);
+		setTimeout(() => frm.reload_doc(), 800);
+	});
 }
 
 // Single AI button: "Refresh AI suggestions" — replaces five legacy
@@ -199,6 +218,23 @@ function render_phase2_button(frm) {
 		try {
 			stop_btn.removeClass("btn-default").addClass("btn-warning");
 		} catch (e) { /* noop */ }
+
+		// v0.7.x: a Recording pass does nothing until the flow re-executes and
+		// the pass is stopped. Auto-arm (and the picker) leave users staring at
+		// a Stop button with no context — spell out the two steps.
+		frm.set_intro(
+			__(
+				"🔬 Line profiling is armed. Re-run your flow now so the hot " +
+				"path(s) execute again, then click \"Stop Phase 2 Run\" above — " +
+				"the report will then pinpoint the exact hot line(s). " +
+				"(Profiling has to re-execute your code; it can't replay the " +
+				"original run.)"
+			),
+			"orange"
+		);
+	} else {
+		// Clear the armed banner once no pass is Recording (e.g. after Stop).
+		frm.set_intro(null);
 	}
 
 	// Surface a Retry button for any Phase 2 Run row stuck in Analyzing

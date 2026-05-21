@@ -38,7 +38,7 @@ def _action_dict(idx, **kw):
 	return d
 
 
-def _doc(actions, findings=None):
+def _doc(actions, findings=None, background_jobs=None):
 	return types.SimpleNamespace(
 		name="PS-bg", session_uuid="bg-uuid", title="bg test", user="a@example.com",
 		status="Ready", started_at="2026-05-12T00:00:00", stopped_at="2026-05-12T00:00:05",
@@ -47,7 +47,20 @@ def _doc(actions, findings=None):
 		table_breakdown_json="[]", hot_frames_json=None, session_time_breakdown_json=None,
 		total_python_ms=None, total_sql_ms=None, analyzer_warnings=None, v5_aggregate_json="{}",
 		actions=actions, findings=(findings or []), phase_2_runs=[],
+		background_jobs=(background_jobs or []),
 	)
+
+
+def _tracked(**kw):
+	"""An ``Optimus Background Job`` child row (dict shape; build_background_jobs
+	tolerates dicts and Frappe child Documents alike)."""
+	base = {
+		"job_id": "", "method": "", "status": "", "error": None,
+		"recording_uuid": "", "duration_ms": 0,
+		"enqueued_at": None, "started_at": None, "ended_at": None,
+	}
+	base.update(kw)
+	return base
 
 
 # --------------------------------------------------------------------------
@@ -155,6 +168,85 @@ class TestBuildBackgroundJobs:
 		out = renderer.build_background_jobs(actions, {}, [{"action_ref": ""}, {}])
 		assert out["any_findings_counted"] is False
 		assert out["jobs"][0]["findings_count"] is None
+
+
+# --------------------------------------------------------------------------
+# build_background_jobs — merge with persisted terminal-status rows
+# --------------------------------------------------------------------------
+
+class TestBuildBackgroundJobsStatusMerge:
+	def test_completed_captured_job_keeps_rich_data_and_status(self):
+		actions = [_action_dict(0, action_label="Job: myapp.a", event_type="RQ Job",
+		                        recording_uuid="r1", duration_ms=200, queries_count=4)]
+		tracked = [_tracked(job_id="j1", method="myapp.a", status="Completed",
+		                    recording_uuid="r1", duration_ms=200)]
+		out = renderer.build_background_jobs(actions, {}, tracked_jobs=tracked)
+		assert out["count"] == 1
+		job = out["jobs"][0]
+		assert job["status"] == "Completed"
+		assert job["queries_count"] == 4  # rich captured data preserved
+		assert out["status_counts"] == {"Completed": 1}
+
+	def test_failed_job_without_recording_still_appears(self):
+		# Job raised → no captured action, only a tracked row. Must not vanish.
+		tracked = [_tracked(job_id="j2", method="myapp.boom", status="Failed",
+		                    error="ValueError: bad doc_name", duration_ms=50)]
+		out = renderer.build_background_jobs([], {}, tracked_jobs=tracked)
+		assert out["count"] == 1
+		job = out["jobs"][0]
+		assert job["status"] == "Failed"
+		assert job["error"] == "ValueError: bad doc_name"
+		assert job["method"] == "myapp.boom"
+		assert job["recording_available"] is False
+		assert job["top_queries"] is None
+		assert out["status_counts"]["Failed"] == 1
+
+	def test_timeout_and_running_jobs_appear(self):
+		tracked = [
+			_tracked(job_id="j3", method="myapp.slow", status="Timeout",
+			         error="rq.timeouts.JobTimeoutException: ..."),
+			_tracked(job_id="j4", method="myapp.hung", status="Running"),
+		]
+		out = renderer.build_background_jobs([], {}, tracked_jobs=tracked)
+		statuses = {j["method"]: j["status"] for j in out["jobs"]}
+		assert statuses == {"myapp.slow": "Timeout", "myapp.hung": "Running"}
+		assert out["status_counts"]["Timeout"] == 1
+		assert out["status_counts"]["Running"] == 1
+
+	def test_captured_job_defaults_to_completed_without_tracked_row(self):
+		# Back-compat: an old session with captured RQ-Job actions but no
+		# tracked rows still renders, defaulting to Completed.
+		actions = [_action_dict(0, action_label="Job: a", event_type="RQ Job",
+		                        recording_uuid="r1", duration_ms=200)]
+		out = renderer.build_background_jobs(actions, {})
+		assert out["jobs"][0]["status"] == "Completed"
+		assert out["status_counts"] == {"Completed": 1}
+
+	def test_job_both_captured_and_tracked_is_not_duplicated(self):
+		actions = [_action_dict(0, action_label="Job: a", event_type="RQ Job",
+		                        recording_uuid="r1", duration_ms=200)]
+		tracked = [_tracked(job_id="j1", method="myapp.a", status="Completed",
+		                    recording_uuid="r1")]
+		out = renderer.build_background_jobs(actions, {}, tracked_jobs=tracked)
+		assert out["count"] == 1  # merged by recording_uuid, not duplicated
+
+	def test_mixed_captured_and_failed(self):
+		actions = [_action_dict(0, action_label="Job: ok", event_type="RQ Job",
+		                        recording_uuid="r1", duration_ms=300, queries_count=2)]
+		tracked = [
+			_tracked(job_id="j1", method="myapp.ok", status="Completed", recording_uuid="r1"),
+			_tracked(job_id="j2", method="myapp.boom", status="Failed",
+			         error="KeyError: x", duration_ms=20),
+		]
+		out = renderer.build_background_jobs(actions, {}, tracked_jobs=tracked)
+		assert out["count"] == 2
+		assert out["status_counts"] == {"Completed": 1, "Failed": 1}
+		by_method = {j["method"]: j for j in out["jobs"]}
+		# The captured job keeps its action-derived name ("Job: ok" → "ok");
+		# the tracked row's dotted method only names uncaptured (thin) jobs.
+		assert by_method["ok"]["queries_count"] == 2
+		assert by_method["ok"]["status"] == "Completed"
+		assert by_method["myapp.boom"]["error"] == "KeyError: x"
 
 
 # --------------------------------------------------------------------------
@@ -278,6 +370,50 @@ class TestRenderedBackgroundJobsSection:
 		# Two card-titles for "x": one in Findings section, one in BG embed.
 		# (If embedding broke, the title count would drop to 1.)
 		assert html.count(">x<") >= 2
+
+	def test_status_column_badge_and_summary_render(self):
+		# A captured (Completed) job plus a Failed and a Timeout tracked job
+		# with no recording. All three must appear; failures show their error.
+		doc = _doc(
+			actions=[self._job_action(action_label="Job: myapp.ok", path="myapp.ok",
+			                          recording_uuid="r1", duration_ms=500, queries_count=2)],
+			background_jobs=[
+				_tracked(job_id="j1", method="myapp.ok", status="Completed", recording_uuid="r1"),
+				_tracked(job_id="j2", method="myapp.boom", status="Failed",
+				         error="ValueError: bad doc_name", duration_ms=40),
+				_tracked(job_id="j3", method="myapp.slow", status="Timeout",
+				         error="rq.timeouts.JobTimeoutException: exceeded 180s"),
+			],
+		)
+		html = renderer.render_raw(doc, recordings=[])
+		assert "<h2>RQ Jobs</h2>" in html
+		# Status column header + the three badges.
+		assert "<th>Status</th>" in html
+		assert "job-status-ok" in html      # Completed
+		assert "job-status-fail" in html    # Failed
+		assert "job-status-warn" in html    # Timeout
+		# Failed / timed-out jobs appear with their method + error.
+		assert "myapp.boom" in html
+		assert "ValueError: bad doc_name" in html
+		assert "myapp.slow" in html
+		assert "JobTimeoutException" in html
+		# Section summary breaks down statuses and flags failures.
+		assert "1 failed" in html
+		assert "1 timed out" in html
+		assert "Failed / timed-out jobs are listed below" in html
+
+	def test_running_job_appears_without_error(self):
+		# A job that hadn't finished by the wait ceiling is marked Running and
+		# must still be listed (visible, not vanished).
+		doc = _doc(
+			actions=[],
+			background_jobs=[_tracked(job_id="j9", method="myapp.hung", status="Running")],
+		)
+		html = renderer.render_raw(doc, recordings=[])
+		assert "<h2>RQ Jobs</h2>" in html
+		assert "myapp.hung" in html
+		assert "job-status-info" in html  # Running badge
+		assert "1 running" in html
 
 
 # --------------------------------------------------------------------------
@@ -617,3 +753,14 @@ class TestBgJobActionLabelNormalisation:
 		out = renderer._action_to_dict(child)
 		# Label unchanged because the path was empty.
 		assert out["action_label"] == "GET something_weird"
+
+
+def test_rq_jobs_table_has_method_colgroup():
+	# v0.7.x: the RQ Jobs table was cramped across 8 columns — it now carries a
+	# colgroup that gives the Method column room.
+	doc = _doc([_action(action_label="Job: myapp.tasks.x", event_type="RQ Job",
+	                    path="myapp.tasks.x", recording_uuid="r1", duration_ms=500,
+	                    queries_count=2)])
+	html = renderer.render_raw(doc, recordings=[])
+	assert "bg-jobs-table" in html
+	assert "bgcol-method" in html

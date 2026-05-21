@@ -189,3 +189,17 @@ def test_framework_variant_re_sorts_by_displayed_metric():
 		"framework variant must sort by cumulative DESC — got "
 		f"{displayed}"
 	)
+
+
+def test_hot_frame_display_name_has_no_placeholder_suffix():
+	# v0.7.x: the hot-frame key already encodes "<short_path>::<func>"; the
+	# display name must not carry the bogus "(?:0)" (placeholder file + lineno 0)
+	# that redact_frame_name used to append.
+	from optimus import renderer
+	out = renderer.build_hot_frames_table(
+		[{"function": "python/common.py::_compute_aggregates",
+		  "total_ms": 100, "occurrences": 3, "distinct_actions": 3}],
+		is_hot=True,
+	)
+	assert out[0]["display_name"] == "python/common.py::_compute_aggregates"
+	assert "(?:0)" not in out[0]["display_name"]

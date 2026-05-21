@@ -25,6 +25,8 @@ without its dependency raises ``RuntimeError``.
 import importlib
 import inspect
 import json
+import sys
+import threading
 
 from optimus.line_profile import diff
 
@@ -365,6 +367,134 @@ def _get_or_resolve_picks(run_uuid: str) -> list:
 	return fns
 
 
+def release_monitoring_tool() -> None:
+	"""Guarantee phase-2 leaves no ``sys.monitoring`` line-trace hook behind.
+
+	On Python 3.12+ line_profiler drives the *process-global* ``sys.monitoring``
+	``PROFILER_ID`` (tool id 2). If a per-request teardown fails (e.g.
+	line_profiler's own ``disable()`` raising ``ValueError: tool 2 is not in
+	use``), tool 2's line events stay registered and EVERY subsequent request in
+	the worker is line-traced → CPU saturation and a frozen UI. This forcibly
+	clears + frees tool 2 so the hook can't leak, regardless of line_profiler's
+	(fragile) internal bookkeeping.
+
+	Idempotent and version-safe: a no-op on Python < 3.12 (no ``sys.monitoring``)
+	and when tool 2 isn't ours. Only reclaims the tool when it's registered to
+	``line_profiler``, so it never stomps a different profiler tool."""
+	mon = getattr(sys, "monitoring", None)
+	if mon is None:
+		return
+	try:
+		pid = mon.PROFILER_ID
+		if mon.get_tool(pid) != "line_profiler":
+			return
+		mon.set_events(pid, 0)
+		mon.free_tool_id(pid)
+	except Exception:
+		pass
+
+
+def disengage_monitoring() -> None:
+	"""Stop line-trace overhead *without* unseating line_profiler — zero tool 2's
+	events but leave the tool registered.
+
+	This is the watchdog's disengage (vs ``release_monitoring_tool``'s full free).
+	The distinction is load-bearing: ``free_tool_id`` from the watchdog's *timer
+	thread*, while the request thread's profiler is still active, yanks tool 2 out
+	from under line_profiler's shared manager. Its own ``disable_by_count`` then
+	raises ``ValueError: tool 2 is not in use`` and leaves a half-torn-down
+	``LineProfiler`` whose weakref finalizer later fires ``handle_raise_event``
+	with the interpreter's ``sys`` torn down → ``'NoneType' object has no
+	attribute 'monitoring'``, which PEP 669 can surface into a live request and
+	break the user's submit. Zeroing events stops the overhead (observe, don't
+	spoil the flow) while keeping the manager consistent, so the request thread's
+	``disable_by_count`` still does the real, clean teardown.
+
+	Idempotent + version-safe: no-op on Python < 3.12 and when tool 2 isn't ours."""
+	mon = getattr(sys, "monitoring", None)
+	if mon is None:
+		return
+	try:
+		pid = mon.PROFILER_ID
+		if mon.get_tool(pid) != "line_profiler":
+			return
+		mon.set_events(pid, 0)
+	except Exception:
+		pass
+
+
+# ---------------------------------------------------------------------------
+# Overhead budget — observe without spoiling the flow
+# ---------------------------------------------------------------------------
+# line_profiler does deterministic per-line tracing, so instrumenting a hot
+# loop multiplies its runtime and would freeze the user's request. A watchdog
+# timer disengages tracing after a wall-clock budget so a profiled request can
+# never take more than ~budget longer than its natural time; the partial line
+# data still pinpoints the hot line. See feedback_observe_dont_spoil_flow.
+
+
+def _budget_hit_key(run_uuid: str) -> str:
+	return f"profiler:lp:budget_hit:{run_uuid}"
+
+
+def mark_budget_hit(run_uuid: str) -> None:
+	"""Record that this run's profiling was cut short by the overhead budget,
+	so analyze can flag the line data as partial. Best-effort."""
+	if not _FRAPPE_AVAILABLE or not run_uuid:
+		return
+	try:
+		frappe.cache.set_value(_budget_hit_key(run_uuid), "1", expires_in_sec=3600)
+	except Exception:
+		pass
+
+
+def budget_was_hit(run_uuid: str) -> bool:
+	if not _FRAPPE_AVAILABLE or not run_uuid:
+		return False
+	try:
+		return bool(frappe.cache.get_value(_budget_hit_key(run_uuid)))
+	except Exception:
+		return False
+
+
+def clear_budget_hit(run_uuid: str) -> None:
+	if not _FRAPPE_AVAILABLE or not run_uuid:
+		return
+	try:
+		frappe.cache.delete_value(_budget_hit_key(run_uuid))
+	except Exception:
+		pass
+
+
+def _disengage_run(run_uuid: str) -> None:
+	"""Watchdog callback: stop line tracing so the request finishes at its
+	natural speed, and flag the run as budget-truncated. Runs on a timer thread,
+	so it uses ``disengage_monitoring`` (zero events) — NOT ``release_monitoring_tool``
+	(free the tool): freeing tool 2 out from under the request thread's still-active
+	profiler desyncs line_profiler's manager and orphans it (see
+	``disengage_monitoring``). The request thread's own ``disable_by_count`` does
+	the real teardown afterward."""
+	disengage_monitoring()
+	mark_budget_hit(run_uuid)
+
+
+def start_overhead_watchdog(run_uuid: str, budget_seconds):
+	"""Arm a one-shot timer that disengages line tracing after ``budget_seconds``
+	of wall time. Returns the started ``threading.Timer`` (cancel it in the
+	after_* hook when the request finishes within budget), or None when the
+	budget is disabled (``<= 0``)."""
+	try:
+		budget = float(budget_seconds or 0)
+	except (TypeError, ValueError):
+		budget = 0.0
+	if budget <= 0:
+		return None
+	timer = threading.Timer(budget, _disengage_run, args=(run_uuid,))
+	timer.daemon = True
+	timer.start()
+	return timer
+
+
 def make_profiler(run_uuid: str):
 	"""Build a fresh ``LineProfiler`` with the run's picks attached. Returns
 	None if line_profiler is unavailable, the run has no resolvable picks,
@@ -491,7 +621,7 @@ def cleanup_run(run_uuid: str) -> None:
 	Called at the end of analyze.run_analyze (success or failure) and from
 	the janitor for stale runs."""
 	_require_frappe()
-	for key_fn in (_picks_key, _source_key, _samples_key):
+	for key_fn in (_picks_key, _source_key, _samples_key, _budget_hit_key):
 		try:
 			frappe.cache.delete_value(key_fn(run_uuid))
 		except Exception:

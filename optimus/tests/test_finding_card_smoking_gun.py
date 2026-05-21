@@ -171,14 +171,16 @@ class TestSmokingGunBlockHoisting:
 
 		html = renderer.render_raw(doc, recordings=[])
 
-		# Both elements present.
+		# Callsite + fix_hint present.
 		callsite_pos = html.find(":42")
 		fix_hint_pos = html.find("Add an index on")
-		query_pos = html.find("SELECT * FROM")
-		assert callsite_pos > -1 and fix_hint_pos > -1 and query_pos > -1
-		# Callsite block (smoking gun) appears BEFORE both.
+		assert callsite_pos > -1 and fix_hint_pos > -1
+		# Callsite block (smoking gun) appears BEFORE the fix hint.
 		assert callsite_pos < fix_hint_pos
-		assert callsite_pos < query_pos
+		# v0.7.x: the "Query (normalized)" block was dropped from finding cards
+		# (the normalized SQL lives in the Slowest-queries / per-action tables).
+		assert "Query (normalized)" not in html
+		assert "SELECT * FROM" not in html
 
 
 class TestPhase2Crosslink:
@@ -882,11 +884,14 @@ class TestRenderTimeCallsiteResolution:
 		assert "appeared in 3 actions" not in html
 		assert 'class="smoking"' not in html
 
-	def test_function_not_invoked_shows_def_line(self):
+	def test_function_not_invoked_is_filtered_out(self):
+		# v0.7.x: "X was picked but never invoked during phase 2" is
+		# non-actionable noise — render() drops these findings entirely (the
+		# Line-Level Drilldown notes uninvoked picks in one concise line).
 		doc = _fake_doc([_function_not_invoked("optimus.renderer.render")])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "optimus/renderer.py:" in html
-		assert "def render(" in _plain(html)
+		assert "never invoked" not in html.lower()
+		assert "was picked but never invoked" not in html
 
 	def test_missing_index_gets_representative_callsite_from_recordings(self):
 		nq = "SELECT ... FROM `tabUser` WHERE x = ?"
@@ -970,13 +975,10 @@ class TestDocEventHookInsideSmokingGun:
 			"Doc-event hook breadcrumb must render INSIDE the smoking-gun "
 			f"block (after sg_open={sg_open}), got {hook_pos}"
 		)
-		# v0.7.x: no empty finding-detail container should appear for a
-		# Slow Hot Path-shaped finding (no inner rows match the gate).
-		fd_open = html.find('class="finding-detail"', sg_open)
-		assert fd_open == -1, (
-			"v0.7.x: finding-detail container suppressed when no inner "
-			"rows apply. Found one at " + str(fd_open)
-		)
+		# v0.7.x: actionable findings with no canonical fix now carry a uniform
+		# "Where to start" next-step, so the finding-detail container renders
+		# (with that one row) rather than being suppressed as an empty box.
+		assert "Where to start" in html
 
 	def test_target_doc_appears_with_hook(self):
 		"""When both target_doc + hook_events are set, both render on the
@@ -1204,3 +1206,73 @@ class TestDrilldownPlaceholder:
 		# Placeholder branch NOT taken.
 		assert "no deeper user-code frame" not in html
 
+
+
+def test_phase2_callout_renders_for_empty_drilldown_self_time_finding():
+	"""User's exact case: a Slow Hot Path finding with NO deeper user-code
+	frame (empty drilldown_chain) — e.g. bg_recheck_users — plus a completed
+	phase-2 run on that function. The card MUST show the Line-Level callout."""
+	import json as _json
+	from types import SimpleNamespace as _NS
+
+	finding = _NS(
+		finding_type="Slow Hot Path",
+		severity="High",
+		title="bg_recheck_users is a self-time hot path (75% of the action, 574ms)",
+		customer_description="own body is the bottleneck",
+		estimated_impact_ms=574.0,
+		affected_count=1,
+		action_ref="0",
+		technical_detail_json=_json.dumps({
+			"function": "bg_recheck_users",
+			"filename": "ugly_code/python/common.py",
+			"lineno": 199,
+			"drilldown_chain": [],  # "no deeper user-code frame"
+		}),
+	)
+	phase2 = _NS(
+		run_uuid="r1", status="Ready",
+		started_at="2026-05-21 11:00:00", ended_at="2026-05-21 11:00:05",
+		total_ms=574.0, picks_json="[]",
+		results_json=_json.dumps([{
+			"dotted_path": "ugly_code.python.common.bg_recheck_users",
+			"qualname": "bg_recheck_users",
+			"file": "/abs/apps/ugly_code/ugly_code/python/common.py",
+			"lines": [
+				{"lineno": 204, "content": "_maybe_log_user(user, i)",
+				 "total_ms": 300.0, "hits": 100},
+			],
+		}]),
+	)
+	# No matching action → _attach_drilldown_chains leaves the empty chain as-is.
+	doc = _fake_doc([finding], phase_2_runs=[phase2], actions=[])
+	html = renderer.render_raw(doc, recordings=[])
+	assert "hottest line 204" in _plain(html), (
+		"empty-drilldown self-time finding did NOT get the Line-Level callout"
+	)
+
+
+class TestFindingsRefinements:
+	"""v0.7.x Findings refinements: uniform fix fallback + single-app intro."""
+
+	def test_actionable_finding_without_fix_hint_shows_where_to_start(self):
+		# A Slow Hot Path with no fix_hint and no AI fix gets a uniform
+		# next-step instead of a blank "what to do".
+		doc = _fake_doc([_finding_child(finding_type="Slow Hot Path")])
+		html = renderer.render_raw(doc, recordings=[])
+		assert "Where to start" in html
+
+	def test_finding_with_fix_hint_keeps_it(self):
+		doc = _fake_doc([_finding_child(
+			finding_type="N+1 Query",
+			extra_detail={"fix_hint": "Batch the query outside the loop."},
+		)])
+		html = renderer.render_raw(doc, recordings=[])
+		assert "Batch the query outside the loop." in html
+		assert "Where to start" not in html  # has a real fix → no fallback
+
+	def test_single_app_intro_drops_grouped_by_app(self):
+		doc = _fake_doc([_finding_child(filename="/abs/path/to/myapp/x.py")])
+		html = renderer.render_raw(doc, recordings=[])
+		assert "Sorted by severity, then by impact." in html
+		assert "Grouped by app" not in html  # only one user app → no grouping claim

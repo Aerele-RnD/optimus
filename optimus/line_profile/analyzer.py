@@ -244,28 +244,6 @@ def _hot_line_finding(fn: dict, line: dict, severity: str) -> dict:
 	}
 
 
-def _not_invoked_finding(fn: dict) -> dict:
-	dotted_path = fn["dotted_path"]
-	return {
-		"finding_type": "Function Not Invoked",
-		"severity": "Low",
-		"title": f"{dotted_path} was picked but never invoked during phase 2",
-		"customer_description": (
-			f"The function **{dotted_path}** was instrumented for phase 2 but "
-			"no calls into it were recorded. Either the flow you reproduced "
-			"didn't exercise it, or the function name in the picker doesn't "
-			"resolve to the code path you intended."
-		),
-		"technical_detail_json": json.dumps({
-			"dotted_path": dotted_path,
-			"file": fn.get("file"),
-		}, default=str),
-		"estimated_impact_ms": 0.0,
-		"affected_count": 0,
-		"action_ref": None,
-	}
-
-
 def _summary_for_function(fn: dict, invoked: bool) -> dict:
 	lines = fn.get("lines") or []
 	total_ms = sum((line.get("total_ms") or 0) for line in lines)
@@ -488,12 +466,13 @@ def analyze(
 			callers_to.setdefault(callee, []).append(caller_q)
 
 	# Phase B: emit findings.
+	# v0.7.x: uninvoked picks no longer each emit a "Function Not Invoked"
+	# finding (they cluttered the Findings list). Collect them and fold into a
+	# single consolidated warning after the loop.
+	uninvoked_paths: list[str] = []
 	for qualname, c in classifications.items():
 		if not c["invoked"]:
-			findings.append(_not_invoked_finding(c["fn"]))
-			warnings.append(
-				f"Function {c['fn']['dotted_path']} was picked but never invoked"
-			)
+			uninvoked_paths.append(c["fn"].get("dotted_path") or qualname)
 			continue
 		if c["passthrough_to"]:
 			# Suppress — defer to the deeper leaf's finding. The chain is
@@ -517,6 +496,13 @@ def analyze(
 			if hint:
 				_attach_phase1_hint(finding, hint)
 		findings.append(finding)
+
+	if uninvoked_paths:
+		warnings.append(
+			f"{len(uninvoked_paths)} picked function(s) weren't exercised in this "
+			f"pass: {', '.join(uninvoked_paths)}. Re-run the flow that calls them "
+			"to capture their lines."
+		)
 
 	return AnalyzerResult(
 		findings=findings,
@@ -595,6 +581,16 @@ def run_analyze(session_uuid: str, run_uuid: str) -> None:
 			# fall back to regex-only pass-through detection.
 			call_trees = []
 		result = analyze(results_json, call_trees=call_trees or None)
+		# Observe, don't spoil: if the overhead watchdog cut tracing short to
+		# protect the user's flow, the line data is partial — say so (read the
+		# flag before cleanup_run clears it below).
+		if capture.budget_was_hit(run_uuid):
+			result.warnings.append(
+				"Line profiling was time-budgeted to avoid freezing the flow, so "
+				"results are partial for the longest-running call(s). Tune "
+				"optimus_phase2_overhead_budget_seconds in site_config (lower = "
+				"snappier flow, higher = fuller data; 0 = unlimited)."
+			)
 		total_ms = sum(s.get("total_ms") or 0 for s in result.aggregate.get("phase2_functions", []))
 
 		# Persist to the run row + propagate findings to the parent session.
