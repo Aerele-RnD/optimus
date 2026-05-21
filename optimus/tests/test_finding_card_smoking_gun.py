@@ -1204,3 +1204,47 @@ class TestDrilldownPlaceholder:
 		# Placeholder branch NOT taken.
 		assert "no deeper user-code frame" not in html
 
+
+
+def test_phase2_callout_renders_for_empty_drilldown_self_time_finding():
+	"""User's exact case: a Slow Hot Path finding with NO deeper user-code
+	frame (empty drilldown_chain) — e.g. bg_recheck_users — plus a completed
+	phase-2 run on that function. The card MUST show the Line-Level callout."""
+	import json as _json
+	from types import SimpleNamespace as _NS
+
+	finding = _NS(
+		finding_type="Slow Hot Path",
+		severity="High",
+		title="bg_recheck_users is a self-time hot path (75% of the action, 574ms)",
+		customer_description="own body is the bottleneck",
+		estimated_impact_ms=574.0,
+		affected_count=1,
+		action_ref="0",
+		technical_detail_json=_json.dumps({
+			"function": "bg_recheck_users",
+			"filename": "ugly_code/python/common.py",
+			"lineno": 199,
+			"drilldown_chain": [],  # "no deeper user-code frame"
+		}),
+	)
+	phase2 = _NS(
+		run_uuid="r1", status="Ready",
+		started_at="2026-05-21 11:00:00", ended_at="2026-05-21 11:00:05",
+		total_ms=574.0, picks_json="[]",
+		results_json=_json.dumps([{
+			"dotted_path": "ugly_code.python.common.bg_recheck_users",
+			"qualname": "bg_recheck_users",
+			"file": "/abs/apps/ugly_code/ugly_code/python/common.py",
+			"lines": [
+				{"lineno": 204, "content": "_maybe_log_user(user, i)",
+				 "total_ms": 300.0, "hits": 100},
+			],
+		}]),
+	)
+	# No matching action → _attach_drilldown_chains leaves the empty chain as-is.
+	doc = _fake_doc([finding], phase_2_runs=[phase2], actions=[])
+	html = renderer.render_raw(doc, recordings=[])
+	assert "hottest line 204" in _plain(html), (
+		"empty-drilldown self-time finding did NOT get the Line-Level callout"
+	)

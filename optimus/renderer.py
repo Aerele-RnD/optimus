@@ -1159,18 +1159,27 @@ def _build_line_drilldown_callsite_index(session_doc: Any) -> dict:
 			)
 			if not hot_line or not hot_line.get("total_ms"):
 				continue
-			key = (os.path.basename(file_path), qualname)
-			existing = index.get(key)
 			candidate_ms = hot_line.get("total_ms", 0) or 0
-			if existing is None or candidate_ms > (existing.get("total_ms") or 0):
-				index[key] = {
-					"lineno": hot_line.get("lineno"),
-					"content": hot_line.get("content") or "",
-					"total_ms": candidate_ms,
-					"hits": hot_line.get("hits") or 0,
-					"run_uuid": run_uuid,
-					"dotted_path": dotted,
-				}
+			entry = {
+				"lineno": hot_line.get("lineno"),
+				"content": hot_line.get("content") or "",
+				"total_ms": candidate_ms,
+				"hits": hot_line.get("hits") or 0,
+				"run_uuid": run_uuid,
+				"dotted_path": dotted,
+			}
+			# v0.7.x: key under BOTH the full qualname and its bare last
+			# segment. resolve_freeform may emit a prefixed qualname
+			# (``common.bg_recheck_users`` / ``SalesInvoice.validate``) while a
+			# call_tree finding's callsite carries the bare function name — the
+			# callout silently missed when the two disagreed on the prefix even
+			# though the function was profiled (and showing in the panel).
+			basename = os.path.basename(file_path)
+			bare = qualname.rsplit(".", 1)[-1]
+			for k in {(basename, qualname), (basename, bare)}:
+				existing = index.get(k)
+				if existing is None or candidate_ms > (existing.get("total_ms") or 0):
+					index[k] = entry
 	return index
 
 
@@ -1187,7 +1196,14 @@ def _make_line_drilldown_lookup(index: dict):
 	def lookup(filename, function_name):
 		if not filename or not function_name:
 			return None
-		return index.get((os.path.basename(filename), function_name))
+		base = os.path.basename(filename)
+		# Try the function name as-is, then its bare last segment — mirrors the
+		# dual keying in _build_line_drilldown_callsite_index so a prefix
+		# mismatch (qualname vs callsite function) can't break the callout.
+		return (
+			index.get((base, function_name))
+			or index.get((base, function_name.rsplit(".", 1)[-1]))
+		)
 
 	return lookup
 
