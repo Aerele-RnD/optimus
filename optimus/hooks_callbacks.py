@@ -625,6 +625,10 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 			_su = getattr(frappe.local, "optimus_session_id", None)
 			if _rq_jid and _su:
 				session.clear_pending_job(_su, _rq_jid)
+				# v0.7.x: link this job to the recording it produced so the
+				# report can join the captured query data to the job's row.
+				if recording_uuid_for_dump:
+					session.set_job_recording(_su, _rq_jid, recording_uuid_for_dump)
 		except Exception:
 			pass
 

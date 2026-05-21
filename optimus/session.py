@@ -18,6 +18,7 @@ into a `Optimus Session` DocType row and explicitly deletes them.
 
 import hashlib
 import hmac
+import json
 import time
 
 import frappe
@@ -127,6 +128,15 @@ def _recordings_key(session_uuid: str) -> str:
 
 def _pending_jobs_key(session_uuid: str) -> str:
 	return f"profiler:session:{session_uuid}:pending_jobs"
+
+
+def _jobs_key(session_uuid: str) -> str:
+	# v0.7.x: per-job metadata hash (job_id -> JSON). Distinct from the
+	# pending-jobs SET, which is pruned as jobs go inactive to drive the wait;
+	# this hash is the NEVER-pruned full record so analyze can report every
+	# enqueued job's terminal status (completed / failed / timeout / running),
+	# including jobs that failed or timed out and produced no recording.
+	return f"profiler:session:{session_uuid}:jobs"
 
 
 # ----- active session pointer (per-user) -----------------------------------
@@ -300,6 +310,97 @@ def get_pending_jobs(session_uuid: str) -> set[str]:
 	return {m.decode() if isinstance(m, bytes) else m for m in members}
 
 
+# ----- per-job terminal-status tracking (v0.7.x) ---------------------------
+# A flow's enqueued jobs are tracked in two places: the pending-jobs SET above
+# (pruned as jobs finish, drives analyze's wait) and the jobs HASH below
+# (job_id -> JSON metadata, never pruned until session cleanup). analyze reads
+# the hash to persist one Optimus Background Job row per enqueued job with its
+# terminal status, so failed / timed-out jobs are reported instead of vanishing.
+
+
+def _read_job(session_uuid: str, job_id: str) -> dict | None:
+	try:
+		raw = frappe.cache.hget(_jobs_key(session_uuid), job_id)
+	except Exception:
+		return None
+	if not raw:
+		return None
+	if isinstance(raw, bytes):
+		raw = raw.decode()
+	try:
+		return json.loads(raw)
+	except Exception:
+		return None
+
+
+def _write_job(session_uuid: str, job_id: str, meta: dict) -> None:
+	try:
+		frappe.cache.hset(_jobs_key(session_uuid), job_id, json.dumps(meta))
+	except Exception:
+		pass
+
+
+def record_job(session_uuid: str, job_id: str, method: str) -> None:
+	"""Record an enqueued RQ job's identity + method so analyze can report its
+	terminal status later. Idempotent; never overwrites a status already set.
+	Best-effort."""
+	if not session_uuid or not job_id:
+		return
+	meta = _read_job(session_uuid, job_id) or {}
+	meta.setdefault("method", method or "")
+	if "enqueued_at" not in meta:
+		try:
+			from frappe.utils import now_datetime
+
+			meta["enqueued_at"] = str(now_datetime())
+		except Exception:
+			pass
+	_write_job(session_uuid, job_id, meta)
+
+
+def set_job_recording(session_uuid: str, job_id: str, recording_uuid: str) -> None:
+	"""Link a job to the recording it produced (so the report can join to the
+	captured query data). Best-effort."""
+	if not session_uuid or not job_id or not recording_uuid:
+		return
+	meta = _read_job(session_uuid, job_id) or {}
+	meta["recording_uuid"] = recording_uuid
+	_write_job(session_uuid, job_id, meta)
+
+
+def set_job_status(session_uuid: str, job_id: str, **fields) -> None:
+	"""Merge terminal-status fields (status, error, started_at, ended_at,
+	duration_ms, …) onto a tracked job. Best-effort."""
+	if not session_uuid or not job_id:
+		return
+	meta = _read_job(session_uuid, job_id) or {}
+	meta.update({k: v for k, v in fields.items() if v is not None})
+	_write_job(session_uuid, job_id, meta)
+
+
+def get_jobs(session_uuid: str) -> list[dict]:
+	"""Return every tracked job as a dict (each carries ``job_id``). Empty list
+	if none / on any error."""
+	if not session_uuid:
+		return []
+	try:
+		raw = frappe.cache.hgetall(_jobs_key(session_uuid)) or {}
+	except Exception:
+		return []
+	jobs: list[dict] = []
+	for k, v in raw.items():
+		jid = k.decode() if isinstance(k, bytes) else k
+		if isinstance(v, bytes):
+			v = v.decode()
+		try:
+			meta = json.loads(v)
+		except Exception:
+			meta = {}
+		meta["job_id"] = jid
+		jobs.append(meta)
+	return jobs
+
+
 # ----- post-Stop "draining" window (v0.6.0) --------------------------------
 # Stop clears the active-session pointer immediately (so the UI shows
 # "stopped/analyzing"), but a draining deadline on the session keeps before_job
@@ -348,6 +449,9 @@ def delete_session_state(session_uuid: str) -> None:
 	# v0.6.0: pending-jobs set (the draining_until flag lives inside the
 	# meta hash, deleted above).
 	frappe.cache.delete_value(_pending_jobs_key(session_uuid))
+	# v0.7.x: per-job metadata hash (terminal statuses) — persisted to the
+	# Optimus Background Job child table by analyze before this runs.
+	frappe.cache.delete_value(_jobs_key(session_uuid))
 	# v0.5.0: clean up the frontend metrics Redis lists written by
 	# api.submit_frontend_metrics. Pre-v0.5.1 used a single JSON dict
 	# at profiler:frontend:<uuid> (deleted below for forward compat with

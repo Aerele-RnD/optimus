@@ -308,8 +308,10 @@ class TestBackgroundJobWaitSeconds:
 	def test_default(self):
 		from optimus import settings
 
-		assert settings.OptimusConfig().background_job_wait_seconds == 60
-		assert settings._DEFAULTS["background_job_wait_seconds"] == 60
+		# v0.7.x: default raised 60 → 300 ("wait until all jobs reach a terminal
+		# state", capped at the 300s hard ceiling).
+		assert settings.OptimusConfig().background_job_wait_seconds == 300
+		assert settings._DEFAULTS["background_job_wait_seconds"] == 300
 
 	def _min_row(self, **overrides):
 		row = {
@@ -341,4 +343,4 @@ class TestBackgroundJobWaitSeconds:
 
 		with patch.object(settings, "_read_doctype_row", return_value=self._min_row()), \
 		     patch.object(settings, "_site_conf_fallback", return_value=None):
-			assert settings._resolve().background_job_wait_seconds == 60
+			assert settings._resolve().background_job_wait_seconds == 300

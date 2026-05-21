@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-05-21 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "method",
+  "status",
+  "duration_ms",
+  "job_id",
+  "enqueued_at",
+  "started_at",
+  "ended_at",
+  "recording_uuid",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "method",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Method",
+   "read_only": 1
+  },
+  {
+   "description": "Terminal RQ status. 'Running' = still active when the analyze wait ceiling elapsed (re-run Analyze once it finishes to capture it).",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Queued\nStarted\nCompleted\nFailed\nTimeout\nStopped\nRunning",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Duration (ms)",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "job_id",
+   "fieldtype": "Data",
+   "label": "RQ Job ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "enqueued_at",
+   "fieldtype": "Datetime",
+   "label": "Enqueued At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ended_at",
+   "fieldtype": "Datetime",
+   "label": "Ended At",
+   "read_only": 1
+  },
+  {
+   "description": "UUID of the captured recording for this job (when it ran with profiling), linking it to the per-action breakdown.",
+   "fieldname": "recording_uuid",
+   "fieldtype": "Data",
+   "label": "Recording UUID",
+   "read_only": 1
+  },
+  {
+   "description": "Exception summary for Failed / Timeout jobs.",
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-21 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Optimus",
+ "name": "Optimus Background Job",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

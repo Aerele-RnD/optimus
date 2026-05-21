@@ -1378,6 +1378,19 @@
   .phase2-run-head .status-Recording { background: var(--info-soft); color: var(--info); }
   .phase2-run-head .status-Analyzing { background: var(--warn-soft); color: var(--warn); }
   .phase2-run-head .status-Failed { background: var(--accent-soft); color: var(--accent); }
+  /* v0.7.x: per-job terminal-status pill for the RQ Jobs section. Same
+     shape as the phase-2 status badge; colour maps to the outcome so a
+     failure/timeout is visible at a glance. */
+  .job-status {
+    display: inline-block; padding: 1px 7px; border-radius: 2px;
+    font-size: 10px; letter-spacing: 0.05em; font-weight: 600;
+    text-transform: uppercase; white-space: nowrap;
+  }
+  .job-status-ok   { background: var(--ok-soft); color: var(--ok); }
+  .job-status-fail { background: var(--accent-soft); color: var(--accent); }
+  .job-status-warn { background: var(--warn-soft); color: var(--warn); }
+  .job-status-info { background: var(--info-soft); color: var(--info); }
+  .job-status-mute { background: var(--rule); color: var(--ink-mute); }
   .picks {
     font-size: 12px; color: var(--ink-mute);
     margin-bottom: 8px; font-family: var(--mono);
@@ -2032,6 +2045,12 @@
   {% endif %}
 {% endmacro %}
 
+{% macro bg_status_badge(status) %}
+  {%- set _s = status or "Running" -%}
+  {%- set _cls = {"Completed": "ok", "Failed": "fail", "Timeout": "warn", "Running": "info", "Started": "info", "Stopped": "mute", "Queued": "mute"}.get(_s, "mute") -%}
+  <span class="job-status job-status-{{ _cls }}">{{ _s }}</span>
+{%- endmacro %}
+
 {% macro bg_job_row(job, idx, cols, any_findings_counted, max_ms=1.0, large_duration_threshold_ms=1000) %}
   {# v0.7.x redesign Phase E: mirror of action_row for background
      jobs - `.action-name` for the dotted method, `.bar-cell` for the
@@ -2048,6 +2067,7 @@
         </div>
       {% endif %}
     </td>
+    <td>{{ bg_status_badge(job.status) }}</td>
     {% set _ms = job.duration_ms or 0 %}
     {% set _pct = (_ms / max_ms * 100) if max_ms else 0 %}
     <td class="num bar-cell">
@@ -2065,6 +2085,15 @@
   </tr>
   <tr>
     <td colspan="{{ cols }}" style="background:#f9fafb;border-top:none;padding:4px 12px 10px 28px;">
+      {# v0.7.x: surface a non-Completed job's outcome + error up front so a
+         failure / timeout isn't buried (the status pill is also in the row's
+         Status column). Completed jobs skip this - their pill says it all. #}
+      {% if job.status and job.status != "Completed" %}
+      <div class="small" style="margin: 0 0 8px;">
+        {{ bg_status_badge(job.status) }}
+        {% if job.error %}<code style="color: var(--accent); margin-left: 6px; word-break: break-word;">{{ job.error }}</code>{% endif %}
+      </div>
+      {% endif %}
       {# v0.7.x: mirror the action_row trim - drop the entry-callsite
          snippet (the bare ``def function_name`` line was noise) and
          embed finding cards in its place when this job has linked
@@ -2091,6 +2120,8 @@
               <pre style="margin:0;white-space:pre-wrap;word-break:break-word;">{{ q.query }}</pre>
             </div>
           {% endfor %}
+        {% elif job.status and job.status != "Completed" %}
+          <p class="small muted">This job {{ job.status | lower }}{% if job.status == "Running" %} - it hadn't finished when analysis ran; click <em>Retry Analyze</em> once it's done to capture its queries{% else %} and produced no recording{% endif %}.</p>
         {% elif not job.recording_available %}
           <p class="small muted">The recording for this job has expired from Redis (kept ~10&nbsp;min after analyze) - expand the matching action in <strong>Full recordings</strong> below if it's still listed.</p>
         {% else %}
@@ -2628,6 +2659,12 @@
       {{ report_data.background_jobs_summary.total_queries }} quer{{ 'ies' if report_data.background_jobs_summary.total_queries != 1 else 'y' }}.
       These also appear in the per-action breakdown above.
     </p>
+    {% if report_data.background_jobs_summary.status_breakdown %}
+    <p class="small{% if not report_data.background_jobs_summary.has_failures %} muted{% endif %}">
+      Status: {% for s in report_data.background_jobs_summary.status_breakdown %}{{ s.count }} {{ s.label }}{{ ", " if not loop.last else "" }}{% endfor %}.
+      {% if report_data.background_jobs_summary.has_failures %} <strong>Failed / timed-out jobs are listed below with their error.</strong>{% endif %}
+    </p>
+    {% endif %}
     <p class="small muted" style="font-style: italic;">
       Note: the consolidated total sums each job's wall time. If your
       bench runs multiple RQ workers in parallel, the actual elapsed
@@ -2639,7 +2676,7 @@
       wasn't running, or a job ran longer than the wait, it may be missing -
       click <em>Retry Analyze</em> once it's done to pick it up.
     </p>
-    {% set cols = 7 if report_data.background_jobs_summary.any_findings_counted else 6 %}
+    {% set cols = 8 if report_data.background_jobs_summary.any_findings_counted else 7 %}
     {% set _threshold_ms = (report_data.large_duration_threshold_ms or 1000) | float %}
     {# v0.7.x Phase J.2.3: iterate report_data.background_jobs; entries
        preserve the legacy job keys so bg_job_row reads job.method /
@@ -2653,6 +2690,7 @@
         <tr>
           <th>#</th>
           <th>Method</th>
+          <th>Status</th>
           <th class="num">Duration <small class="scope-tag">per hit</small></th>
           <th class="num">Queries</th>
           <th class="num">DB time <small class="scope-tag">per req &middot; all queries</small></th>
@@ -2668,6 +2706,7 @@
       <tfoot>
         <tr class="totals-row">
           <td colspan="2"><strong>Total / {{ report_data.background_jobs | length }} job{{ 's' if report_data.background_jobs | length != 1 else '' }}</strong></td>
+          <td class="muted">&mdash;</td>
           <td class="num"><strong>{{ fmt_ms(report_data.background_jobs | map(attribute='duration_ms') | map('default', 0) | sum) }}</strong></td>
           <td class="num"><strong>{{ report_data.background_jobs | map(attribute='queries_count') | map('default', 0) | sum }}</strong></td>
           <td class="num"><strong>{{ fmt_ms(report_data.background_jobs | map(attribute='query_time_ms') | map('default', 0) | sum) }}</strong></td>
@@ -2692,6 +2731,7 @@
           <tr>
             <th>#</th>
             <th>Method</th>
+            <th>Status</th>
             <th class="num">Duration <small class="scope-tag">per hit</small></th>
             <th class="num">Queries</th>
             <th class="num">DB time <small class="scope-tag">per req &middot; all queries</small></th>

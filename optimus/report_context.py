@@ -1054,10 +1054,26 @@ def _build_background_jobs_summary(background_jobs) -> dict:
 	dict can be dropped.
 	"""
 	bj = background_jobs or {}
+	# v0.7.x: per-status tally so the section heading can break down "N jobs —
+	# X completed, Y failed, Z timed out, W running" and flag failures. Ordered
+	# worst-first; zero categories are dropped so the line stays terse.
+	sc = bj.get("status_counts") or {}
+	_order = [
+		("Failed", "failed"), ("Timeout", "timed out"), ("Stopped", "stopped"),
+		("Running", "running"), ("Queued", "queued"), ("Started", "started"),
+		("Completed", "completed"),
+	]
+	status_breakdown = [
+		{"status": key, "label": label, "count": sc[key]}
+		for key, label in _order if sc.get(key)
+	]
 	return {
 		"count": bj.get("count", 0) or 0,
 		"total_ms": bj.get("total_ms", 0) or 0,
 		"total_queries": bj.get("total_queries", 0) or 0,
 		"any_findings_counted": bool(bj.get("any_findings_counted", False)),
 		"framework_count": bj.get("framework_count", 0) or 0,
+		"status_counts": sc,
+		"status_breakdown": status_breakdown,
+		"has_failures": bool(sc.get("Failed") or sc.get("Timeout")),
 	}

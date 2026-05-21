@@ -29,6 +29,7 @@
   "actions",
   "findings",
   "phase_2_runs",
+  "background_jobs",
   "reports_section",
   "raw_report_file",
   "raw_report_pdf_file",
@@ -187,6 +188,14 @@
    "fieldtype": "Table",
    "label": "Findings",
    "options": "Optimus Finding",
+   "read_only": 1
+  },
+  {
+   "description": "Background (RQ) jobs the recorded flow enqueued, with their terminal status (completed / failed / timeout / running).",
+   "fieldname": "background_jobs",
+   "fieldtype": "Table",
+   "label": "Background Jobs",
+   "options": "Optimus Background Job",
    "read_only": 1
   },
   {

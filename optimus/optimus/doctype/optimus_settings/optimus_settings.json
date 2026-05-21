@@ -204,8 +204,8 @@
    "label": "Hide framework / internal database tables in the breakdown"
   },
   {
-   "default": "60",
-   "description": "How long (seconds, capped at 300) the analyze job waits for the background jobs the profiled flow enqueued to finish before generating the report — so jobs a worker picks up shortly after you click Stop aren't lost. 0 = don't wait (pre-v0.6.0 behavior). On a single-worker bench the analyze job yields the worker between checks so those jobs can actually run; if the scheduler is disabled / no worker is available, the wait is skipped. Captured jobs are analyzed like requests and listed in the report's \"Background jobs\" section. Reference values — Strict: 120  ·  Recommended: 60  ·  Relaxed: 0.",
+   "default": "300",
+   "description": "How long (seconds, capped at 300) the analyze job watches the background jobs the profiled flow enqueued, waiting for each to reach a terminal state (completed / failed / timeout) before generating the report. Every enqueued job is listed in the report's \"Background jobs\" section with its status; a job still running when this window elapses is shown as \"Running\" (click Retry Analyze once it finishes to capture its data). 0 = don't wait. On a single-worker bench the analyze job yields the worker between checks so those jobs can actually run; if the scheduler is disabled / no worker is available, the wait is skipped. Reference values — Strict: 300  ·  Recommended: 300  ·  Relaxed: 60.",
    "fieldname": "background_job_wait_seconds",
    "fieldtype": "Int",
    "label": "Wait for Background Jobs (seconds)",

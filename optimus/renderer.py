@@ -503,7 +503,10 @@ def render(
 	# recordings, surfaced on their own (they also stay in the per-action
 	# table). Derived from the persisted action rows; uses all findings
 	# (actionable + observational) for the per-job findings tally.
-	background_jobs = build_background_jobs(actions, recordings_by_uuid, all_findings)
+	background_jobs = build_background_jobs(
+		actions, recordings_by_uuid, all_findings,
+		tracked_jobs=getattr(session_doc, "background_jobs", None),
+	)
 
 	try:
 		top_queries = json.loads(session_doc.top_queries_json or "[]")
@@ -2008,20 +2011,39 @@ def _clean_job_method(action_label, path, recording) -> str:
 	return "RQ Job"
 
 
-def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
+def _tracked_row_get(row, key, default=None):
+	"""Read a key from a tracked-job row, tolerating both a plain dict (test
+	fixtures) and a Frappe child Document (``session_doc.background_jobs``)."""
+	if row is None:
+		return default
+	if isinstance(row, dict):
+		return row.get(key, default)
+	return getattr(row, key, default)
+
+
+def build_background_jobs(actions, recordings_by_uuid, findings=None, tracked_jobs=None) -> dict:
 	"""Build the "RQ Jobs" section payload from the (already
-	min-duration-filtered) action dicts.
+	min-duration-filtered) action dicts, merged with the persisted per-job
+	terminal-status rows so failed / timed-out / still-running jobs are
+	reported instead of silently vanishing.
 
 	``actions`` items are ``_action_to_dict`` output plus an ``idx`` key
 	holding the action's original position (so findings — whose ``action_ref``
 	is that index as a string — can be tallied per job). ``recordings_by_uuid``
 	enriches each job with its slowest queries when the recording is still in
 	Redis (TTL ~10 min; a re-render long after analyze has none → the section
-	still renders from the persisted action rows alone). Pure — no I/O (the
+	still renders from the persisted action rows alone). ``tracked_jobs`` are
+	the ``Optimus Background Job`` child rows analyze persisted (one per RQ job
+	the flow enqueued, carrying ``status`` / ``error`` / timing); they link to a
+	captured action by ``recording_uuid``. A job that ran with profiling has
+	both an action (rich query data) and a tracked row (status); a job that
+	failed / timed out / ran past the wait has only a tracked row and still
+	appears, with its status + error but no query data. Pure — no I/O (the
 	``entry_callsite`` on each job is pre-computed by ``render()`` and copied
 	through here).
 
-	Returns ``{jobs, count, total_ms, total_queries, any_findings_counted}``.
+	Returns ``{jobs, count, total_ms, total_queries, any_findings_counted,
+	status_counts}``.
 	"""
 	findings_by_idx: dict[str, int] = {}
 	for f in (findings or []):
@@ -2030,7 +2052,15 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 			findings_by_idx[ref] = findings_by_idx.get(ref, 0) + 1
 	any_findings_counted = bool(findings_by_idx)
 
+	tracked_list = list(tracked_jobs or [])
+	tracked_by_uuid: dict[str, Any] = {}
+	for row in tracked_list:
+		ruuid = (_tracked_row_get(row, "recording_uuid") or "").strip()
+		if ruuid:
+			tracked_by_uuid[ruuid] = row
+
 	jobs: list[dict] = []
+	matched_uuids: set[str] = set()
 	for a in (actions or []):
 		if a.get("event_type") != "RQ Job":
 			continue
@@ -2057,6 +2087,13 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 				for c in ranked[:_BG_JOB_TOP_QUERIES]
 			]
 
+		# A captured RQ-Job action ran and produced a recording → its terminal
+		# status is Completed unless the tracked row says otherwise (older
+		# sessions recorded before job-tracking have no tracked row).
+		trow = tracked_by_uuid.get(uuid) if uuid else None
+		if uuid:
+			matched_uuids.add(uuid)
+
 		jobs.append({
 			"method": _clean_job_method(a.get("action_label"), a.get("path"), rec),
 			"recording_uuid": uuid,
@@ -2072,15 +2109,46 @@ def build_background_jobs(actions, recordings_by_uuid, findings=None) -> dict:
 			# attach ``related_findings`` (the actual list of finding
 			# objects, not just the count) for embedding in the row.
 			"idx": idx,
+			"status": (_tracked_row_get(trow, "status") or "Completed") if trow else "Completed",
+			"error": _tracked_row_get(trow, "error") if trow else None,
+		})
+
+	# Append every tracked job that produced no captured action (failed, timed
+	# out, still running, or below the action threshold): status + error +
+	# timing, but no query data. The user requires that no enqueued job is
+	# missed from the report.
+	for row in tracked_list:
+		ruuid = (_tracked_row_get(row, "recording_uuid") or "").strip()
+		if ruuid and ruuid in matched_uuids:
+			continue
+		jobs.append({
+			"method": _tracked_row_get(row, "method") or "RQ Job",
+			"recording_uuid": ruuid,
+			"duration_ms": _tracked_row_get(row, "duration_ms") or 0,
+			"queries_count": 0,
+			"query_time_ms": 0,
+			"slowest_query_ms": 0,
+			"findings_count": None,
+			"top_queries": None,
+			"recording_available": False,
+			"entry_callsite": None,
+			"idx": None,
+			"status": _tracked_row_get(row, "status") or "Running",
+			"error": _tracked_row_get(row, "error"),
 		})
 
 	jobs.sort(key=lambda j: -(j.get("duration_ms") or 0))
+	status_counts: dict[str, int] = {}
+	for j in jobs:
+		st = j.get("status") or "Running"
+		status_counts[st] = status_counts.get(st, 0) + 1
 	return {
 		"jobs": jobs,
 		"count": len(jobs),
 		"total_ms": sum(j.get("duration_ms") or 0 for j in jobs),
 		"total_queries": sum(j.get("queries_count") or 0 for j in jobs),
 		"any_findings_counted": any_findings_counted,
+		"status_counts": status_counts,
 	}
 
 

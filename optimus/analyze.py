@@ -356,6 +356,68 @@ def _rq_job_active(job_id: str) -> bool:
 		return False
 
 
+def _short_exc(exc_info) -> str | None:
+	"""Last non-empty line of an RQ ``exc_info`` traceback, truncated — the
+	one-liner that names the exception (e.g. ``ValueError: bad doc_name``)."""
+	if not exc_info:
+		return None
+	lines = [ln.strip() for ln in str(exc_info).splitlines() if ln.strip()]
+	return lines[-1][:500] if lines else None
+
+
+def _capture_job_terminal_status(session_uuid: str, job_id: str) -> None:
+	"""Read a now-inactive RQ job's terminal status + timing and record it on
+	the session's job-meta hash, so analyze can persist it (Completed / Failed /
+	Timeout / Stopped). Best-effort — never blocks the wait."""
+	try:
+		from frappe.utils.background_jobs import get_redis_conn
+		from rq.job import Job
+
+		job = Job.fetch(job_id, connection=get_redis_conn())
+		rq_status = job.get_status(refresh=True)
+		exc = job.exc_info or ""
+		if rq_status == "finished":
+			status, error = "Completed", None
+		elif rq_status == "failed":
+			# An RQ JobTimeoutException in the traceback means the worker killed
+			# it for exceeding its timeout — report that distinctly.
+			status = "Timeout" if "JobTimeoutException" in exc else "Failed"
+			error = _short_exc(exc)
+		elif rq_status in ("stopped", "canceled"):
+			status, error = "Stopped", _short_exc(exc)
+		else:
+			return  # still active — leave for the running-mark path
+		started = getattr(job, "started_at", None)
+		ended = getattr(job, "ended_at", None)
+		duration_ms = None
+		if started and ended:
+			try:
+				duration_ms = round((ended - started).total_seconds() * 1000, 2)
+			except Exception:
+				duration_ms = None
+		session.set_job_status(
+			session_uuid, job_id,
+			status=status,
+			error=error,
+			started_at=str(started) if started else None,
+			ended_at=str(ended) if ended else None,
+			duration_ms=duration_ms,
+		)
+	except Exception:
+		pass
+
+
+def _finalize_pending_statuses(session_uuid: str, job_ids) -> None:
+	"""At the wait ceiling: record a terminal status for jobs that finished,
+	and mark any still-active job ``Running`` (so it's reported, not vanished —
+	the user re-runs Analyze once it finishes to capture its data)."""
+	for jid in job_ids:
+		if _rq_job_active(jid):
+			session.set_job_status(session_uuid, jid, status="Running")
+		else:
+			_capture_job_terminal_status(session_uuid, jid)
+
+
 def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 	"""Make sure the background jobs the profiled flow enqueued have finished
 	before we gather recordings.
@@ -401,12 +463,16 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 	if deadline is None:
 		deadline = time.time() + wait_seconds
 
-	# Prune finished / expired ids so the wait can end.
+	# Prune finished / expired ids so the wait can end. As each job goes
+	# inactive, capture its terminal status (Completed / Failed / Timeout /
+	# Stopped) before dropping it, so it's reported even if it failed or timed
+	# out and produced no recording.
 	still_running: list[str] = []
 	for jid in pending:
 		if _rq_job_active(jid):
 			still_running.append(jid)
 		else:
+			_capture_job_terminal_status(session_uuid, jid)
 			try:
 				session.clear_pending_job(session_uuid, jid)
 			except Exception:
@@ -415,6 +481,7 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 	if not still_running:
 		return 0  # everything finished — proceed
 	if time.time() >= deadline:
+		_finalize_pending_statuses(session_uuid, still_running)
 		return len(still_running)  # cap hit — proceed; caller warns
 
 	# Keep the UI honest while we wait.
@@ -431,6 +498,7 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 	# job(s) meanwhile.
 	time.sleep(min(_BG_WAIT_THROTTLE_SECONDS, max(0.0, deadline - time.time())))
 	if time.time() >= deadline:
+		_finalize_pending_statuses(session_uuid, still_running)
 		return sum(1 for jid in still_running if _rq_job_active(jid))
 
 	try:
@@ -1477,6 +1545,33 @@ def _persist(
 	doc.set("findings", [])
 	for finding in context.findings:
 		doc.append("findings", finding)
+
+	# v0.7.x: one Optimus Background Job row per RQ job the flow enqueued, with
+	# its terminal status — so failed / timed-out jobs are reported instead of
+	# vanishing. Belt-and-suspenders: capture a status for any job the wait
+	# didn't (e.g. the wait was skipped/disabled), then read the final hash.
+	try:
+		for _jm in session.get_jobs(context.session_uuid):
+			if not _jm.get("status"):
+				_capture_job_terminal_status(context.session_uuid, _jm["job_id"])
+		doc.set("background_jobs", [])
+		for _jm in session.get_jobs(context.session_uuid):
+			try:
+				doc.append("background_jobs", {
+					"job_id": _jm.get("job_id") or "",
+					"method": _jm.get("method") or "",
+					"status": _jm.get("status") or "Running",
+					"error": (_jm.get("error") or "") or None,
+					"enqueued_at": _jm.get("enqueued_at"),
+					"started_at": _jm.get("started_at"),
+					"ended_at": _jm.get("ended_at"),
+					"duration_ms": _jm.get("duration_ms") or 0,
+					"recording_uuid": _jm.get("recording_uuid") or "",
+				})
+			except Exception:
+				frappe.log_error(title="optimus persist background_job row")
+	except Exception:
+		frappe.log_error(title="optimus persist background_jobs")
 
 	doc.save(ignore_permissions=True)
 	safe_commit()

@@ -80,7 +80,7 @@ _DEFAULTS = {
 	# the analyze job yields the worker between checks (it re-enqueues
 	# itself) so those jobs can actually run; if no worker / scheduler is
 	# disabled, the wait is skipped.
-	"background_job_wait_seconds": 60,
+	"background_job_wait_seconds": 300,
 	"auto_expand_max_depth": 10,
 	"auto_expand_min_ms": 50.0,
 	"skip_request_paths": (),  # tuple of stripped, comment-free lines
@@ -218,7 +218,7 @@ class OptimusConfig:
 	large_duration_threshold_ms: float = 1000.0
 	phase2_max_runs_per_session: int = 10
 	phase2_default_auto_expand: bool = True
-	background_job_wait_seconds: int = 60
+	background_job_wait_seconds: int = 300
 	auto_expand_max_depth: int = 10
 	auto_expand_min_ms: float = 50.0
 	# Tuples (immutable, hashable, safe to cache). Reader parses the
