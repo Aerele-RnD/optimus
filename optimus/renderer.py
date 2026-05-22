@@ -3305,14 +3305,17 @@ def _read_function_body_snippet(
 
 def _expand_self_time_snippets(findings, *, file_cache: dict | None = None) -> None:
 	"""v0.7.x: for self-time hot-path findings with no deeper user-code frame
-	(empty ``drilldown_chain``), replace the ±2-line callsite snippet with the
-	whole function body so the developer can read the hot code directly.
+	(empty ``drilldown_chain``), narrow the smoking-gun snippet to the function's
+	signature line and flag it ``self_time_no_pinpoint``. Phase-1 sampling can't
+	pinpoint a single hot line inside the function, so dumping the whole body
+	(highlighting only the def) was a misleading wall of code — the card now
+	shows just the def + a note pointing the developer at a Line-Level Drilldown
+	on the function (which CAN give per-line timing).
 
 	Runs AFTER ``_attach_drilldown_chains`` (which populates ``drilldown_chain``)
 	and mutates findings in place. Best-effort: only the empty-list case (a
 	deeper chain means the ±2 window + chain is enough; a missing key means the
-	chain was never computed); leaves the existing snippet when the body can't
-	be read."""
+	chain was never computed)."""
 	for finding in findings or []:
 		if (finding.get("finding_type") or "") != "Slow Hot Path":
 			continue
@@ -3325,11 +3328,13 @@ def _expand_self_time_snippets(findings, *, file_cache: dict | None = None) -> N
 		ln = callsite.get("lineno")
 		if not fn or ln is None:
 			continue
+		# Flag drives the "no single hot line — run a Line-Level Drilldown" note.
+		callsite["self_time_no_pinpoint"] = True
 		body = _read_function_body_snippet(fn, ln, cache=file_cache)
 		if body:
-			callsite["source_snippet"] = body
-			detail["callsite"] = callsite
-			finding["technical_detail"] = detail
+			callsite["source_snippet"] = body[:1]  # signature/def line only
+		detail["callsite"] = callsite
+		finding["technical_detail"] = detail
 
 
 def _action_dotted_entry(action) -> str | None:

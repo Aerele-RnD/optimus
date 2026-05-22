@@ -2,10 +2,12 @@
 # For license information, please see license.txt
 
 """Self-time hot-path findings (Phase-1 'Slow Hot Path' with no deeper user
-frame) should show the WHOLE function body, not a ±2-line peek — Phase-1
-sampling can't pinpoint the hot line, but the function is the relevant unit and
-the tool already has the source. _read_function_body_snippet reads def→end;
-_expand_self_time_snippets swaps it in for the no-deeper-frame findings.
+frame): Phase-1 sampling can't pinpoint the hot line inside the function, so
+dumping the whole body (highlighting only the def) was a misleading wall of
+code. _expand_self_time_snippets now narrows the snippet to the def/signature
+line and sets ``self_time_no_pinpoint`` so the card renders a "run a Line-Level
+Drilldown" note instead. _read_function_body_snippet reads def→end (its first
+row is the signature line that's kept).
 """
 
 from optimus import renderer
@@ -75,15 +77,21 @@ class TestReadFunctionBody:
 		assert renderer._read_function_body_snippet(str(src), 99) is None
 
 
+def _callsite(finding):
+	return finding["technical_detail"]["callsite"]
+
+
 class TestExpandSelfTimeSnippets:
-	def test_empty_chain_slow_hot_path_gets_full_body(self, tmp_path):
+	def test_empty_chain_self_time_narrows_to_def_and_flags(self, tmp_path):
 		src = tmp_path / "m.py"
 		src.write_text(_SAMPLE)
 		f = _func_finding(str(src), 3, drilldown_chain=[])
 		renderer._expand_self_time_snippets([f], file_cache=None)
-		linenos = [r["lineno"] for r in _snippet(f)]
-		assert linenos[0] == 3 and 9 in linenos  # full body, not the 1-row stand-in
-		assert len(_snippet(f)) > 1
+		# Narrowed to just the def/signature line (Phase-1 can't pinpoint a line).
+		snippet = _snippet(f)
+		assert len(snippet) == 1 and snippet[0]["lineno"] == 3
+		# Flag set so the card renders the "run a Line-Level Drilldown" note.
+		assert _callsite(f)["self_time_no_pinpoint"] is True
 
 	def test_non_empty_chain_left_unchanged(self, tmp_path):
 		src = tmp_path / "m.py"
@@ -91,6 +99,7 @@ class TestExpandSelfTimeSnippets:
 		f = _func_finding(str(src), 3, drilldown_chain=[{"function": "inner", "lineno": 6}])
 		renderer._expand_self_time_snippets([f], file_cache=None)
 		assert _snippet(f) == [{"lineno": 3, "content": "def x():"}]  # untouched
+		assert "self_time_no_pinpoint" not in _callsite(f)
 
 	def test_other_finding_types_left_unchanged(self, tmp_path):
 		src = tmp_path / "m.py"
@@ -98,8 +107,12 @@ class TestExpandSelfTimeSnippets:
 		f = _func_finding(str(src), 3, drilldown_chain=[], finding_type="N+1 Query")
 		renderer._expand_self_time_snippets([f], file_cache=None)
 		assert _snippet(f) == [{"lineno": 3, "content": "def x():"}]
+		assert "self_time_no_pinpoint" not in _callsite(f)
 
-	def test_unreadable_file_leaves_snippet(self):
+	def test_unreadable_file_still_flags_and_keeps_snippet(self):
+		# Body can't be read → existing snippet stays, but it's still a self-time
+		# finding, so the note flag is set regardless.
 		f = _func_finding("/nonexistent/x.py", 3, drilldown_chain=[])
 		renderer._expand_self_time_snippets([f], file_cache=None)
 		assert _snippet(f) == [{"lineno": 3, "content": "def x():"}]
+		assert _callsite(f)["self_time_no_pinpoint"] is True

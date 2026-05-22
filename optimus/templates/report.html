@@ -1755,6 +1755,10 @@
           hottest line {{ p2_hot.lineno }} - {{ fmt_ms(p2_hot.total_ms) }}{% if p2_hot.hits %} / {{ p2_hot.hits }} hit{{ "s" if p2_hot.hits != 1 else "" }}{% endif %}
           {% if p2_hot.content %}<code>{{ p2_hot.content | trim }}</code>{% endif %}
         </div>
+        {% elif callsite.self_time_no_pinpoint %}
+        <div class="phase2-line">
+          &#9888; <strong>Self-time hot path:</strong> sampling can&rsquo;t pinpoint a single line inside this function. Run a <strong>Line-Level Drilldown</strong> on <code>{{ callsite.function or "this function" }}</code> to see which line(s) are hot.
+        </div>
         {% endif %}
       {% endif %}
 
