@@ -25,7 +25,7 @@ _SNIPPET = [
 ]
 
 
-def _finding(*, llm_fix=None, finding_type="N+1 Query"):
+def _finding(*, llm_fix=None, finding_type="N+1 Query", fix_hint=None):
 	detail = {
 		"callsite": {
 			"filename": "/abs/myapp/foo.py",
@@ -34,6 +34,8 @@ def _finding(*, llm_fix=None, finding_type="N+1 Query"):
 			"source_snippet": _SNIPPET,
 		},
 	}
+	if fix_hint is not None:
+		detail["fix_hint"] = fix_hint
 	return SimpleNamespace(
 		finding_type=finding_type,
 		severity="High",
@@ -249,6 +251,27 @@ class TestAiFixBlockRendering:
 		])
 		html = renderer.render_raw(doc, recordings=[])
 		assert html.count('class="fix-box"') == 1
+
+	_CANNED_HINT = "This is a classic N+1 pattern - batch the query outside the loop."
+
+	def test_canned_fix_hint_hidden_when_ai_fix_present(self):
+		"""When an AI 'Suggested fix' renders, the canned 'How to fix' hint is
+		redundant and suppressed (user request) — the AI box stands alone."""
+		doc = _doc([_finding(
+			fix_hint=self._CANNED_HINT,
+			llm_fix={"suggestion": _GOOD_SUGGESTION, "model": "m",
+			         "provider": "Anthropic", "generated_at": "t"},
+		)])
+		html = renderer.render_raw(doc, recordings=[])
+		assert 'class="fix-box"' in html        # AI suggestion shown…
+		assert self._CANNED_HINT not in html    # …so the canned hint is dropped
+
+	def test_canned_fix_hint_shown_when_no_ai_fix(self):
+		"""No AI suggestion → the canned 'How to fix' hint still renders."""
+		doc = _doc([_finding(fix_hint=self._CANNED_HINT, llm_fix=None)])
+		html = renderer.render_raw(doc, recordings=[])
+		assert 'class="fix-box"' not in html
+		assert self._CANNED_HINT in html
 
 	def test_directional_caution_shown_when_source_unavailable(self):
 		doc = _doc([_finding(llm_fix={

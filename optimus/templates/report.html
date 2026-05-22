@@ -1816,12 +1816,17 @@
        that this block displays (Slow Hot Path / Hook Bottleneck / Hot Line
        / Function Not Invoked - their meaningful content lives in the
        smoking-gun block above, not here). #}
+    {# The canned fix_hint ("How to fix") is redundant when a model-written AI
+       suggestion renders below, so suppress it then (user request). _ai_fix_shown
+       mirrors the AI block's own condition further down. #}
+    {% set _ai_fix_shown = f.llm_fix and f.llm_fix.suggestion_html and not hide_ai_fix %}
+    {% set _show_fix_hint = detail.fix_hint and not _ai_fix_shown %}
     {% set _has_detail_rows = (
          detail.normalized_query
       or detail.suggested_ddl
       or detail.example_queries
       or detail.explain_row
-      or detail.fix_hint
+      or _show_fix_hint
       or detail.validation_note
       or detail.occurrences
       or (detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms)
@@ -1866,7 +1871,7 @@
         <pre>{{ detail.explain_row }}</pre>
       {% endif %}
 
-      {% if detail.fix_hint %}
+      {% if _show_fix_hint %}
         <span class="label">{{ show_fix_hint_label }}</span>
         <p>{{ detail.fix_hint }}</p>
       {% endif %}
