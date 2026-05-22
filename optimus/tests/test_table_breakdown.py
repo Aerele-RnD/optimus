@@ -342,6 +342,17 @@ class TestRenderedFrameworkColsNote:
 		assert "never suggested" in html.lower()
 		assert "framework meta tables" in html.lower()
 
+	def test_per_hit_time_column_shows_avg_per_query(self):
+		# New "Time · per hit" column = consolidated_time_ms / queries.
+		from optimus import renderer
+		breakdown = [{
+			"table": "tabFoo", "consolidated_time_ms": 50.0, "queries": 4,
+			"read_count": 4, "write_count": 0, "read_time_ms": 50.0, "write_time_ms": 0.0,
+		}]
+		html = renderer.render_raw(self._doc(breakdown), recordings=[])
+		assert "per hit" in html          # column header present
+		assert "12.50ms" in html          # 50 / 4 = 12.5ms per query
+
 	def test_metadata_only_table_skipped_from_index_recs(self):
 		# User direction: "Ignore Non-actionable tables on Index
 		# recommendations waste of space". When a table's only filters

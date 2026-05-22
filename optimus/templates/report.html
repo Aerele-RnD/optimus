@@ -105,31 +105,6 @@
     margin-left: 4px;
   }
 
-  /* v0.5.3: projected post-fix timing line. Renders as a subtle green
-     pill directly under the "occurrences / avg / total" line so the
-     reader sees current vs projected at a glance and can prioritize
-     by ceiling-of-value (worth a few hours for a 20× speedup vs a
-     1.5× speedup). Green = "this is the win"; uses the severity-low
-     palette so it doesn't compete with severity badges. */
-  .projected-after-fix {
-    color: #065f46;
-    background: #f0fdf4;
-    border-left: 3px solid #10b981;
-    padding: 4px 10px;
-    margin-top: 6px;
-    border-radius: 3px;
-    display: inline-block;
-  }
-  .projected-after-fix .projected-label {
-    font-weight: 600;
-    margin-right: 4px;
-  }
-  .projected-after-fix .projected-speedup {
-    color: #047857;
-    font-weight: 600;
-    margin-left: 4px;
-  }
-
   /* v0.5.2 round 4: clickable callsite → editor. Subtle style - looks
      like the plain <code> block but with a dotted underline that
      signals interactivity, and a hover color lift. We don't use the
@@ -229,7 +204,10 @@
   table.query-table col.col-index     { width: 44px; }
   table.query-table col.col-copies    { width: 64px; }
   table.query-table col.col-duration  { width: 88px; }
-  table.query-table col.col-callsite  { width: 25%; }
+  /* Wide enough that a typical app callsite path (e.g.
+     app/app/module/file.py:NN) fits on one line instead of wrapping
+     mid-token; the Query column still takes the larger remainder. */
+  table.query-table col.col-callsite  { width: 34%; }
   /* col.col-query uses the remaining width implicitly (auto) */
 
   /* Long callsite paths must wrap rather than overflow. Using
@@ -294,7 +272,7 @@
     font-variant-numeric: tabular-nums;
   }
   table.data tfoot tr.totals-row td.muted {
-    color: var(--ink-mute, #9ca3af);
+    color: var(--ink-mute, #5f6670);
     font-weight: normal;
   }
 
@@ -504,7 +482,9 @@
     --bg-tint: #f5f3ec;
     --ink: #1a1a1a;
     --ink-soft: #4a4a4a;
-    --ink-mute: #8a8580;
+    /* a11y: darkened from #8a8580 (~3:1) to meet WCAG AA 4.5:1 on white,
+       --bg, --bg-tint, and --hot; stays lighter than --ink-soft for hierarchy. */
+    --ink-mute: #5f6670;
     --rule: #e8e3d8;
     --rule-strong: #d8d2c2;
     --accent: #c5392b;
@@ -673,7 +653,7 @@
      limitation of the metric (e.g. sampler interval for Total time). */
   .kpi-caveat {
     font-size: 11px;
-    color: var(--ink-mute, #9ca3af);
+    color: var(--ink-mute, #5f6670);
     margin-top: 4px;
     line-height: 1.4;
     font-style: italic;
@@ -834,6 +814,17 @@
     color: var(--ink-soft); font-variant-numeric: tabular-nums;
   }
   .waterfall-time.hot { color: var(--accent); font-weight: 600; }
+  /* a11y: per-bar text label (redundant with bar colour). Mini severity pill —
+     reuses the --X-soft bg + --X text pairing so it's legible over any bar and
+     passes AA in light + dark. */
+  .bar-label {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    font-family: var(--sans); font-size: 9px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 1px 5px; border-radius: 3px; line-height: 1.4;
+  }
+  .bar-label.hot { background: var(--accent-soft); color: var(--accent); }
+  .bar-label.bg  { background: var(--warn-soft); color: var(--warn); }
 
   /* Responsive - Phase C: stack the waterfall + action plan rows. */
   @media (max-width: 760px) {
@@ -978,18 +969,18 @@
   .line-prof .tok-kd, .line-prof .tok-kr,
   .line-prof .tok-ow                             { color: #0000FF; }
   .line-prof .tok-bp                             { color: #0000FF; font-style: italic; }
-  .line-prof .tok-nb                             { color: #267F99; }
+  .line-prof .tok-nb                             { color: #176783; }
   .line-prof .tok-nf, .line-prof .tok-fm         { color: #795E26; }
   .line-prof .tok-nd                             { color: #AF00DB; }
-  .line-prof .tok-nc                             { color: #267F99; }
+  .line-prof .tok-nc                             { color: #176783; }
   .line-prof .tok-n                              { color: #001080; }
   .line-prof .tok-s, .line-prof .tok-s1, .line-prof .tok-s2,
   .line-prof .tok-sb                             { color: #A31515; }
   .line-prof .tok-sa                             { color: #0000FF; }
-  .line-prof .tok-se                             { color: #EE0000; }
+  .line-prof .tok-se                             { color: #cc0000; }
   .line-prof .tok-si                             { color: #001080; }
   .line-prof .tok-m, .line-prof .tok-mi, .line-prof .tok-mf,
-  .line-prof .tok-mh, .line-prof .tok-mo         { color: #098658; }
+  .line-prof .tok-mh, .line-prof .tok-mo         { color: #0b6e46; }
   .line-prof .tok-c, .line-prof .tok-c1, .line-prof .tok-ch,
   .line-prof .tok-cm                             { color: #008000; font-style: italic; }
   .line-prof .tok-o, .line-prof .tok-p           { color: #000000; }
@@ -1147,6 +1138,17 @@
     padding: 2px 7px; border-radius: 2px;
     font-size: 9px; letter-spacing: 0.08em;
     font-family: var(--mono);
+  }
+  /* a11y: promote the "unverified" caveat from a quiet footnote to a visible
+     amber badge by the heading. --ink text on --warn-soft (not --warn-on-soft,
+     which is ~3.4:1) keeps it >=4.5:1 in light + dark; the --warn border + tint
+     carry the warning semantics. */
+  .fix-head .fix-badge {
+    text-transform: none; letter-spacing: normal;
+    font-family: var(--sans); font-size: 10px; font-weight: 700;
+    background: var(--warn-soft); color: var(--ink);
+    border: 1px solid var(--warn); border-radius: 3px;
+    padding: 1px 6px; margin-left: 8px; white-space: nowrap;
   }
   .fix-body { padding: 14px 16px; font-size: 13.5px; line-height: 1.65; color: var(--ink); }
   .fix-body p { margin: 0 0 10px; }
@@ -1457,7 +1459,9 @@
   table.line-prof tbody tr.hot td.num { color: var(--accent); font-weight: 600; }
   /* v0.7.x: dim lines that never executed (0 hits / 0ms) - def, comments,
      blank, closing parens - so the lines that actually ran stand out. */
-  table.line-prof tbody tr.zero td { color: var(--ink-mute); opacity: 0.7; }
+  /* a11y: dim 0-hit lines via the (now AA-compliant) mute token, not opacity —
+     opacity dropped them back under 4.5:1. Still reads dimmer than the near-black hot lines. */
+  table.line-prof tbody tr.zero td { color: var(--ink-mute); }
   table.line-prof tbody tr.added td { background: rgba(45, 106, 60, 0.12); }
   table.line-prof tbody tr.removed td { background: rgba(197, 57, 43, 0.12); }
 
@@ -1692,13 +1696,14 @@
       <div class="finding-impact">
         <span class="big">{{ fmt_ms(f.estimated_impact_ms) }}</span><small class="scope-tag">consolidated</small>
         {% if f.affected_count and f.affected_count > 1 %}
-        <div class="small">{{ f.affected_count }}× hits</div>
+        {% set _per_hit_ms = f.estimated_impact_ms / f.affected_count %}
+        <div class="small">{{ f.affected_count }}× hits{% if _per_hit_ms >= 0.05 %} &middot; {{ fmt_ms(_per_hit_ms, 1) }}<small class="scope-tag">per hit</small>{% endif %}</div>
         {% endif %}
         {% if f.technical_detail and f.technical_detail.intra_action_repetitions and f.technical_detail.intra_action_repetitions > 1 %}
         <div class="small muted">called from {{ f.technical_detail.intra_action_repetitions }} sites in this action</div>
         {% endif %}
-        {% if f.technical_detail and f.technical_detail.p95_ms %}
-        <div class="small muted">P95 {{ fmt_ms(f.technical_detail.p95_ms) }} per hit</div>
+        {% if f.technical_detail and f.technical_detail.p95_ms and f.technical_detail.p95_ms >= 0.05 %}
+        <div class="small muted">P95 {{ fmt_ms(f.technical_detail.p95_ms, 1) }} per hit</div>
         {% endif %}
       </div>
     </div>
@@ -1816,21 +1821,20 @@
        that this block displays (Slow Hot Path / Hook Bottleneck / Hot Line
        / Function Not Invoked - their meaningful content lives in the
        smoking-gun block above, not here). #}
-    {# v0.7.x: actionable findings with no canonical fix (Slow Hot Path / Hot
-       Line / Hook Bottleneck) get a uniform "Where to start" next-step so every
-       finding tells the reader what to do. #}
-    {% set _show_fix_fallback = (show_fix_hint_label == "How to fix" and not detail.fix_hint and not (f.llm_fix and f.llm_fix.suggestion_html)) %}
+    {# The canned fix_hint ("How to fix") is redundant when a model-written AI
+       suggestion renders below, so suppress it then (user request). _ai_fix_shown
+       mirrors the AI block's own condition further down. #}
+    {% set _ai_fix_shown = f.llm_fix and f.llm_fix.suggestion_html and not hide_ai_fix %}
+    {% set _show_fix_hint = detail.fix_hint and not _ai_fix_shown %}
     {% set _has_detail_rows = (
          detail.normalized_query
       or detail.suggested_ddl
       or detail.example_queries
       or detail.explain_row
-      or detail.fix_hint
+      or _show_fix_hint
       or detail.validation_note
       or detail.occurrences
-      or (detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms)
       or ((not callsite.filename or not callsite.lineno) and (detail.target_doc or detail.hook_events))
-      or _show_fix_fallback
     ) %}
     {% if f.technical_detail and _has_detail_rows %}
     <div class="finding-detail">
@@ -1871,17 +1875,9 @@
         <pre>{{ detail.explain_row }}</pre>
       {% endif %}
 
-      {% if detail.fix_hint %}
+      {% if _show_fix_hint %}
         <span class="label">{{ show_fix_hint_label }}</span>
         <p>{{ detail.fix_hint }}</p>
-      {% elif _show_fix_fallback %}
-        {# v0.7.x: uniform next-step so every actionable finding carries a fix
-           hint - the self-time hot-path / hot-line types have no canonical
-           one-line fix, so point at how to attack them. #}
-        <span class="label">Where to start</span>
-        <p>This is the hottest code on this path. Cut its cost - fewer loop
-        iterations or queries, cache repeated work, or move it off the request
-        path. A Line-Level Drilldown pass pinpoints the exact line.</p>
       {% endif %}
 
       {% if detail.validation_note %}
@@ -1895,19 +1891,6 @@
           {% if detail.total_time_ms %} &middot; {{ fmt_ms(detail.total_time_ms) }} total{% endif %}
         </p>
       {% endif %}
-
-      {# v0.5.3: projected post-fix timing. Analyzers (explain_flags
-         + n_plus_one) set projected_avg_time_ms / projected_total_ms
-         when there's a credible estimate - see base.project_post_fix_ms
-         for the per-finding-type heuristics. #}
-      {% if detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms %}
-        <p class="small projected-after-fix" title="Projection assumes a single batched query at ~2x the per-call cost. Verify with EXPLAIN on the actual batched form (IN-list / JOIN may cost differently in practice).">
-          <span class="projected-label">Projected after fix:</span>
-          ~{{ fmt_ms(detail.projected_avg_time_ms, 1) }} each
-          {% if detail.projected_total_ms %} &middot; ~{{ fmt_ms(detail.projected_total_ms) }} total{% endif %}
-          {% if detail.projected_speedup_label %} <span class="projected-speedup">({{ detail.projected_speedup_label }})</span>{% endif %}
-        </p>
-      {% endif %}
     </div>
     {% endif %}
 
@@ -1919,7 +1902,7 @@
     {% if f.llm_fix and f.llm_fix.suggestion_html and not hide_ai_fix %}
     <div class="fix-box">
       <div class="fix-head">
-        <span>Suggested fix</span>
+        <span>Suggested fix <span class="fix-badge">Unverified &mdash; review before applying</span></span>
         <span class="ai-tag">AI{% if f.llm_fix.model %} &middot; {{ f.llm_fix.model }}{% endif %}</span>
       </div>
       {% if not f.llm_fix.source_available %}
@@ -1945,7 +1928,7 @@
         <summary>
           <span class="severity-pill {{ s.severity | lower }}">{{ s.severity }}</span>
           <span class="sub-title">{{ s.title }}</span>
-          {% if s.estimated_impact_ms %}<span class="sub-impact">{{ fmt_ms(s.estimated_impact_ms) }}<small class="scope-tag">consolidated</small>{% if s.affected_count %} &middot; {{ s.affected_count }}{% endif %}</span>{% endif %}
+          {% if s.estimated_impact_ms %}<span class="sub-impact">{{ fmt_ms(s.estimated_impact_ms) }}<small class="scope-tag">consolidated</small>{% if s.affected_count %} &middot; {{ s.affected_count }}{% if s.affected_count > 1 and (s.estimated_impact_ms / s.affected_count) >= 0.05 %} &middot; {{ fmt_ms(s.estimated_impact_ms / s.affected_count, 1) }}<small class="scope-tag">per hit</small>{% endif %}{% endif %}</span>{% endif %}
         </summary>
         {% if s.customer_description %}
         <div class="sub-desc">{{ s.customer_description }}</div>
@@ -2053,9 +2036,10 @@
   {% if action.related_findings %}
   <tr>
     <td colspan="7" class="row-finding">
-      &#9888; <strong>{{ action.related_findings | length }} finding{{ "s" if action.related_findings | length != 1 else "" }} linked:</strong>
-      {{ action.related_findings[0].title }}{% if action.related_findings[0].estimated_impact_ms %} &middot; {{ fmt_ms(action.related_findings[0].estimated_impact_ms) }}{% endif %}
-      {% if action.related_findings | length > 1 %} &middot; <em>+ {{ action.related_findings | length - 1 }} more</em>{% endif %}
+      {# Count-only header — the finding card(s) render right below and carry the
+         title + impact + detail, so echoing the title here just duplicated it
+         (mirrors the clean bg_job_row header). #}
+      &#9888; <strong>{{ action.related_findings | length }} finding{{ "s" if action.related_findings | length != 1 else "" }} linked to this action</strong>
     </td>
   </tr>
   <tr>
@@ -2560,6 +2544,8 @@
         <div class="waterfall-name" title="{{ row.name }}">{{ row.name }}</div>
         <div class="waterfall-track">
           <div class="waterfall-bar{% if row.kind == 'hot' %} hot{% elif row.kind == 'bg' %} bg{% endif %}" style="width: {{ row.width_pct }}%;"></div>
+          {# a11y: redundant text label so severity survives without colour. #}
+          {% if row.kind == 'hot' %}<span class="bar-label hot">High</span>{% elif row.kind == 'bg' %}<span class="bar-label bg">BG job</span>{% endif %}
         </div>
         <div class="waterfall-time{% if row.is_hot_text %} hot{% endif %}">{{ row.duration_display }}</div>
       </div>
@@ -3297,6 +3283,7 @@
           <tr>
             <th>Table</th>
             <th class="num">Time <small class="scope-tag">consolidated</small></th>
+            <th class="num">Time <small class="scope-tag">per hit</small></th>
             <th class="num">Queries</th>
             <th class="num">Reads <small class="scope-tag">consolidated</small></th>
             <th class="num">Writes <small class="scope-tag">consolidated</small></th>
@@ -3307,6 +3294,7 @@
           <tr>
             <td><code>{{ t.table }}</code></td>
             <td class="num">{{ fmt_ms(t.consolidated_time_ms) }}</td>
+            <td class="num">{% if t.queries %}{{ fmt_ms(t.consolidated_time_ms / t.queries, 2) }}{% else %}-{% endif %}</td>
             <td class="num">{{ t.queries }}</td>
             <td class="num">{{ t.get("read_count", "-") }}{% if t.get("read_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.read_time_ms) }}</span>{% endif %}</td>
             <td class="num">{{ t.get("write_count", "-") }}{% if t.get("write_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.write_time_ms) }}</span>{% endif %}</td>
@@ -3475,6 +3463,7 @@
       <li>Every duration carries a small grey scope tag: <strong>per hit</strong> (one occurrence — a single request, one query execution) or <strong>consolidated</strong> (sum across all hits in this session — total time in a table, full impact of a finding's pattern, etc.).</li>
       <li>Call-tree and Hot-frame timings come from a wall-clock sampler at ≈{{ report_data.sampler_interval_ms }}ms intervals. Functions whose execution is shorter than the interval can be under-sampled or invisible — for exact per-line timings, use the <strong>Line-Level Drilldown</strong>.</li>
       <li><strong>Self-time</strong> is wall-clock self-time (the sampler measures elapsed time, not CPU). A function that blocks on I/O — <code>requests.get</code>, sync DB calls outside the recorder, <code>time.sleep</code> — counts that wait as self-time. Check the call tree for hidden I/O before optimising compute.</li>
+      <li><strong>Searching with browser find (Ctrl/Cmd-F)?</strong> Text inside collapsed drilldowns and call-tree branches may not be matched — expand the sections you want to search first.</li>
     </ul>
   </section>
 
@@ -3486,7 +3475,7 @@
       &middot;
       <span class="warn-line">Admin report - contains sensitive data, internal use only</span>
     </p>
-    <p class="small" style="margin-top: 8px; color: #9ca3af;">
+    <p class="small" style="margin-top: 8px; color: var(--ink-mute);">
       Do NOT email, upload, or share this file externally without redacting
       it yourself. Query literals, request headers, form data, and full
       stack traces are all included verbatim.
@@ -3496,7 +3485,7 @@
        value styling from pre-J.2 is gone; in exchange the contract's
        compact one-line shape lets the footer line wrap predictably. #}
     {% if report_data.footer and report_data.footer.settings %}
-    <p class="small" style="margin-top: 10px; color: #9ca3af;">
+    <p class="small" style="margin-top: 10px; color: var(--ink-mute);">
       <strong>Rendered with:</strong>
       {{ report_data.footer.settings }}.
       Settings affect FUTURE renders only - click <em>Regenerate Reports</em> on the Optimus Session after a settings change.

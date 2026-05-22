@@ -194,9 +194,11 @@ class TestNplusOneProjection:
 
 
 class TestRendering:
-	def test_projection_appears_in_template_when_present(self):
-		"""End-to-end: a finding with projected_avg_time_ms set must
-		render the projected line in the HTML."""
+	def test_projection_not_rendered_even_when_present(self):
+		"""Removed per user request: the projected-after-fix estimate read as
+		misleading (per-call could rise while the total rounded to ~0ms). The
+		analyzer still computes projected_* into technical_detail_json (tested
+		above), but the finding card no longer renders it."""
 		import types
 
 		doc = types.SimpleNamespace()
@@ -249,11 +251,10 @@ class TestRendering:
 		from optimus import renderer
 		html = renderer.render(doc, recordings=[])
 
-		assert 'class="small projected-after-fix"' in html
-		assert "Projected after fix:" in html
-		# Projected numbers present.
-		assert "6.0ms each" in html
-		assert "7× fewer queries" in html
+		# The projected line is no longer rendered, even though the detail
+		# carries projected_avg_time_ms / projected_total_ms / speedup label.
+		assert "Projected after fix" not in html
+		assert "projected-after-fix" not in html
 
 	def test_finding_without_projection_does_not_render_line(self):
 		"""Redundant Call findings don't project — the projected line

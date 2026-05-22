@@ -1902,7 +1902,7 @@ def _render_line_drilldown_panel(session_doc: Any) -> str:
 			f'<strong>Run {run_idx}</strong>'
 			'<span class="meta">'
 			f'<span class="status-badge status-{status}">{status}</span>'
-			f'{total_ms:.2f}ms &middot; {started}'
+			f'{_format_duration_ms(total_ms)} &middot; {started}'
 			'</span>'
 			'</div>'
 		)
@@ -3932,6 +3932,15 @@ def _ct_is_other_frame(fn) -> bool:
 	return bool(_CT_OTHER_RE.match((fn or "").strip()))
 
 
+def _ct_is_sql_leaf(node) -> bool:
+	"""A ``<sql>`` query leaf frame. Dropped from the call-tree display per
+	user request — the tree shows only the Python hierarchy; the queries
+	themselves live, itemised, in the Slowest-queries / per-action sections,
+	so nothing is lost. (The analyzer still keeps these in ``call_tree_json``.)"""
+	cn = node or {}
+	return cn.get("function") == "<sql>" and not cn.get("children")
+
+
 def _ct_is_user_frame(node) -> bool:
 	"""A real user-app python frame (not framework, not a synthetic
 	``<sql>`` / ``[other]`` / ``<root>`` node). Used to auto-open the tree
@@ -3948,32 +3957,6 @@ def _ct_is_user_frame(node) -> bool:
 	except Exception:
 		FRAMEWORK_APPS = frozenset()
 	return app not in FRAMEWORK_APPS
-
-
-def _ct_sql_summary(sql_children) -> str:
-	"""Collapse a node's ``<sql>`` leaf siblings into one expandable
-	'N SQL queries · Xms total' line. The call tree shows the Python call
-	hierarchy; individual query rows are noise here (they live, itemised, in
-	the Slowest-queries / DB-tables sections). Collapsed one-click-away, not
-	dropped — the aggregate time stays visible."""
-	n = len(sql_children)
-	total = sum(float((c or {}).get("cumulative_ms") or 0) for c in sql_children)
-	inner = []
-	for c in sql_children:
-		cn = c or {}
-		loc = (cn.get("filename") or "") + (f":{cn.get('lineno')}" if cn.get("lineno") else "")
-		inner.append(
-			'<div class="call-tree-node">'
-			'<span class="frame-name">&lt;sql&gt;</span> '
-			f'<span class="frame-meta">{_e(loc)} &middot; '
-			f'{float(cn.get("cumulative_ms") or 0):.1f}ms</span></div>'
-		)
-	plural = "y" if n == 1 else "ies"
-	return (
-		'<details class="call-tree-deeper-toggle">'
-		f'<summary><em>{n} SQL quer{plural} &middot; {total:.0f}ms total (click to expand)</em></summary>'
-		'<div class="call-tree-children">' + "".join(inner) + '</div></details>'
-	)
 
 
 def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False, breadcrumb=True):
@@ -4025,26 +4008,18 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False, breadcrumb
 		'</summary>',
 	]
 	if children:
-		# Drop [other: N frames] synthetic nodes, then order hottest-first.
-		real_children = [
-			c for c in children
-			if not _ct_is_other_frame((c or {}).get("function"))
-		]
-		children_sorted = sorted(
-			real_children,
+		# Drop [other: N frames] synthetic nodes AND <sql> query leaves (the
+		# call tree is the Python hierarchy; per-query rows belong in the
+		# Slowest-queries / DB-tables sections), then order hottest-first.
+		main = sorted(
+			[
+				c for c in children
+				if not _ct_is_other_frame((c or {}).get("function"))
+				and not _ct_is_sql_leaf(c)
+			],
 			key=lambda c: float((c or {}).get("cumulative_ms") or 0),
 			reverse=True,
 		)
-		# Collapse ALL <sql> leaf siblings into one expandable summary — the
-		# call tree is the Python hierarchy; per-query rows belong in the
-		# Slowest-queries / DB-tables sections.
-		main, sql_leaves = [], []
-		for c in children_sorted:
-			cn = c or {}
-			if cn.get("function") == "<sql>" and not cn.get("children"):
-				sql_leaves.append(c)
-			else:
-				main.append(c)
 
 		within_default = unlimited or depth < _CALL_TREE_MAX_DEPTH
 		within_hard = depth < _CALL_TREE_HARD_CAP
@@ -4061,8 +4036,6 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False, breadcrumb
 				out.append(_render_call_tree_node(
 					c, cum_ms, depth + 1, unlimited, breadcrumb=child_bc,
 				))
-			if sql_leaves:
-				out.append(_ct_sql_summary(sql_leaves))
 			out.append('</div>')
 		elif within_hard:
 			# Past default cap — click-to-expand the rest of the
@@ -4081,8 +4054,6 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False, breadcrumb
 				out.append(_render_call_tree_node(
 					c, cum_ms, depth + 1, unlimited=True, breadcrumb=False,
 				))
-			if sql_leaves:
-				out.append(_ct_sql_summary(sql_leaves))
 			out.append('</div></details></div>')
 		else:
 			# depth >= HARD_CAP; absolute truncation as safety net.
@@ -4182,20 +4153,12 @@ def _render_call_tree_panel(actions):
 	)
 	# The profiler attributes SQL queries as root-level siblings of the entry
 	# frame, so the panel renders them directly (bypassing the per-node child
-	# loop). Drop [other] nodes and collapse the root <sql> leaves here too.
-	root_main, root_sql = [], []
+	# loop). Drop [other] nodes and <sql> query leaves here too.
 	for c in root_children_sorted:
 		cn = c or {}
-		if _ct_is_other_frame(cn.get("function")):
+		if _ct_is_other_frame(cn.get("function")) or _ct_is_sql_leaf(cn):
 			continue
-		if cn.get("function") == "<sql>" and not cn.get("children"):
-			root_sql.append(c)
-		else:
-			root_main.append(c)
-	for c in root_main:
 		parts.append(_render_call_tree_node(c, total_ms, depth=0))
-	if root_sql:
-		parts.append(_ct_sql_summary(root_sql))
 	parts.append('</div>')
 	parts.append('</section>')
 	return "".join(parts)

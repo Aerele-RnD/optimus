@@ -975,10 +975,9 @@ class TestDocEventHookInsideSmokingGun:
 			"Doc-event hook breadcrumb must render INSIDE the smoking-gun "
 			f"block (after sg_open={sg_open}), got {hook_pos}"
 		)
-		# v0.7.x: actionable findings with no canonical fix now carry a uniform
-		# "Where to start" next-step, so the finding-detail container renders
-		# (with that one row) rather than being suppressed as an empty box.
-		assert "Where to start" in html
+		# A fix-less finding carries no generic "Where to start" box (removed per
+		# user request) — its meaningful content is the smoking-gun block above.
+		assert "Where to start" not in html
 
 	def test_target_doc_appears_with_hook(self):
 		"""When both target_doc + hook_events are set, both render on the
@@ -1253,14 +1252,15 @@ def test_phase2_callout_renders_for_empty_drilldown_self_time_finding():
 
 
 class TestFindingsRefinements:
-	"""v0.7.x Findings refinements: uniform fix fallback + single-app intro."""
+	"""v0.7.x Findings refinements: no generic fix fallback + single-app intro."""
 
-	def test_actionable_finding_without_fix_hint_shows_where_to_start(self):
-		# A Slow Hot Path with no fix_hint and no AI fix gets a uniform
-		# next-step instead of a blank "what to do".
+	def test_actionable_finding_without_fix_hint_has_no_fallback(self):
+		# Removed per user request: a Slow Hot Path with no fix_hint shows no
+		# generic "Where to start" box — the smoking-gun block already says
+		# where the time went, and a boilerplate next-step only added noise.
 		doc = _fake_doc([_finding_child(finding_type="Slow Hot Path")])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "Where to start" in html
+		assert "Where to start" not in html
 
 	def test_finding_with_fix_hint_keeps_it(self):
 		doc = _fake_doc([_finding_child(

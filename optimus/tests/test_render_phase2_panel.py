@@ -95,6 +95,17 @@ class TestRenderPhase2PanelSingleRun:
 		assert "not exercised" in html.lower()
 		assert "my_app.never_runs" in html
 
+	def test_run_duration_over_one_second_renders_in_seconds(self):
+		# Per the timing rule, a run total >= 1000ms renders as "N.NNs", not raw ms.
+		session = SimpleNamespace(phase_2_runs=[
+			_run("r1", "Ready",
+			     [_function("my_app.x", [_line(1, "x = 1", 5, 10.0)])],
+			     total_ms=27978.07),
+		])
+		html = renderer._render_phase2_panel(session)
+		assert "27.98s" in html
+		assert "27978.07ms" not in html
+
 
 class TestRenderPhase2PanelDiff:
 	def test_function_in_two_runs_shows_diff_section(self):
