@@ -501,6 +501,31 @@ def _check_eligibility(obj) -> tuple[bool, str | None]:
 
 
 def resolve_freeform(dotted_path: str) -> dict:
+	"""Resolve a free-form dotted path, with a fallback for apps whose
+	importable module path doubles the app name.
+
+	The picker derives the *collapsed* single-prefix form
+	(``apps/<app>/<app>/x.py`` → ``<app>.x``), which is correct for
+	editable-installed apps (``import erpnext`` is the inner package). But
+	some apps are importable only with the doubled prefix — ``<app>.<app>.x``
+	— e.g. where ``import <app>`` yields the OUTER ``apps/<app>/`` dir. Try
+	the path as given, then retry once with the app name doubled, and only
+	then surface the original (single-prefix) error.
+	"""
+	try:
+		return _resolve_freeform_exact(dotted_path)
+	except PickerError:
+		parts = (dotted_path or "").split(".")
+		# Only attempt the doubled form when it isn't already doubled.
+		if len(parts) >= 2 and parts[0] and parts[0] != parts[1]:
+			try:
+				return _resolve_freeform_exact(f"{parts[0]}.{dotted_path}")
+			except PickerError:
+				pass
+		raise
+
+
+def _resolve_freeform_exact(dotted_path: str) -> dict:
 	"""Resolve a free-form dotted path to a function metadata dict.
 
 	Returns a dict with the same shape as ``_build_candidates_from_trees``

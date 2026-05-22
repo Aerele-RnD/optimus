@@ -313,6 +313,39 @@ class TestResolveFreeform:
 		with pytest.raises(picker.PickerError):
 			picker.resolve_freeform("json")
 
+	def test_doubled_app_prefix_fallback(self, monkeypatch):
+		# Apps importable only via the doubled app name (e.g.
+		# ajanta_bottles.ajanta_bottles.custom...): the picker derives the
+		# collapsed single-prefix form, so resolve_freeform must retry with the
+		# app name doubled before giving up.
+		seen = []
+		good = {"dotted_path": "ajanta_bottles.ajanta_bottles.custom.x.validate",
+		        "eligible": True}
+
+		def fake_exact(path):
+			seen.append(path)
+			if path == "ajanta_bottles.ajanta_bottles.custom.x.validate":
+				return good
+			raise picker.PickerError(f"attribute 'custom' not found while resolving '{path}'")
+
+		monkeypatch.setattr(picker, "_resolve_freeform_exact", fake_exact)
+		result = picker.resolve_freeform("ajanta_bottles.custom.x.validate")
+		assert result is good
+		assert seen == [
+			"ajanta_bottles.custom.x.validate",                  # tried as-is
+			"ajanta_bottles.ajanta_bottles.custom.x.validate",   # then doubled
+		]
+
+	def test_reraises_single_prefix_error_when_doubled_also_fails(self, monkeypatch):
+		def fake_exact(path):
+			raise picker.PickerError(f"attribute 'custom' not found while resolving '{path}'")
+
+		monkeypatch.setattr(picker, "_resolve_freeform_exact", fake_exact)
+		with pytest.raises(picker.PickerError) as exc:
+			picker.resolve_freeform("ajanta_bottles.custom.x.validate")
+		# The user sees the error for the path THEY gave, not the doubled retry.
+		assert "resolving 'ajanta_bottles.custom.x.validate'" in str(exc.value)
+
 
 class TestExpandHotChain:
 	"""Walks down phase-1's call tree from the picked function, following

@@ -61,32 +61,29 @@ class TestTemplateStructure:
 				f"Top Queries colgroup missing {col_class!r}"
 			)
 
-	def test_queries_per_action_table_has_query_table_class(self):
+	def test_queries_per_action_is_flat_table_without_sql(self):
+		"""v0.7.x: Queries-per-action is now one flat data table (Server-Resource
+		style), not per-action expanders, and the normalized-query column is gone."""
 		tpl = _read_template()
-		m = re.search(
-			r"Queries per action.*?</details>\s*\{%\s*endif\s*%\}",
-			tpl,
-			re.DOTALL,
-		)
+		m = re.search(r"Queries per action.*?</section>", tpl, re.DOTALL)
 		assert m is not None, "Queries per action section not found"
 		section = m.group(0)
-		assert 'class="query-table' in section
+		assert 'class="data"' in section          # flat data table
+		assert 'class="query-table' not in section  # not the per-action query-table
+		assert "<details" not in section            # no per-action expanders
+		# The normalized-query column / SQL block is dropped.
+		assert "Query (normalized)" not in section
+		assert "sql-inline" not in section
 
-	def test_queries_per_action_colgroup_uses_copies_column(self):
-		"""Per-action drill-down has Copies where Top Queries has #."""
+	def test_queries_per_action_flat_table_has_action_and_callsite(self):
+		"""The flat table carries an Action column + Duration / Copies / Callsite."""
 		tpl = _read_template()
-		m = re.search(
-			r"Queries per action.*?</details>\s*\{%\s*endif\s*%\}",
-			tpl,
-			re.DOTALL,
-		)
+		m = re.search(r"Queries per action.*?</section>", tpl, re.DOTALL)
 		section = m.group(0)
-		for col_class in (
-			"col-duration", "col-copies", "col-callsite", "col-query",
-		):
-			assert f'class="{col_class}"' in section, (
-				f"Per-action colgroup missing {col_class!r}"
-			)
+		assert "<th>Action</th>" in section
+		assert "Callsite" in section
+		assert "Copies" in section
+		assert "col-query" not in section
 
 
 class TestTemplateCSS:
@@ -185,3 +182,47 @@ class TestEndToEndRender:
 		assert 'class="col-query"' in html
 		# Callsite itself is visible.
 		assert "aged_payable_summary.py:255" in html
+
+	def test_queries_per_action_flat_table_renders_sorted(self):
+		"""End-to-end: the flat Queries-per-action table renders queries from all
+		actions, sorted by duration, with Action + Callsite and no SQL text."""
+		from optimus import renderer
+
+		action = types.SimpleNamespace(
+			action_label="savedocs:Save", event_type="HTTP Request",
+			http_method="POST", path="/api/method/x", recording_uuid="r0",
+			duration_ms=500.0, queries_count=2, query_time_ms=100.0,
+			slowest_query_ms=354.0,
+		)
+		doc = types.SimpleNamespace(
+			name="PS", title="T", session_uuid="t", user="a", status="Ready",
+			started_at="2026-04-17", stopped_at="2026-04-17", notes=None,
+			top_severity="Low", total_duration_ms=1000, total_query_time_ms=100,
+			total_queries=2, total_requests=1, summary_html=None,
+			top_queries_json="[]", table_breakdown_json="[]", hot_frames_json="[]",
+			session_time_breakdown_json="{}", total_python_ms=0, total_sql_ms=0,
+			analyzer_warnings=None, v5_aggregate_json="{}",
+			actions=[action], findings=[], phase_2_runs=[],
+		)
+		recordings = [{
+			"uuid": "r0",
+			"calls": [
+				{"duration": 68.7, "normalized_query": "SELECT two", "normalized_copies": 5,
+				 "exact_copies": 1,
+				 "stack": [{"filename": "myapp/doc.py", "lineno": 340, "function": "g"}]},
+				{"duration": 354.3, "normalized_query": "SELECT one", "normalized_copies": 1,
+				 "exact_copies": 1,
+				 "stack": [{"filename": "myapp/sales.py", "lineno": 570, "function": "f"}]},
+			],
+		}]
+		html = renderer.render(doc, recordings=recordings)
+
+		assert "savedocs:Save" in html
+		assert "myapp/sales.py:570" in html and "myapp/doc.py:340" in html
+		assert "354.3ms" in html
+		# Sorted by duration desc: the 354ms query renders before the 68ms one.
+		assert html.index("354.3ms") < html.index("68.7ms")
+		# The normalized-query text is not shown in the Queries-per-action table.
+		# (`.sql-inline` is a CSS class in <style>, so absence is asserted on the
+		# section markup in TestTemplateStructure, not on the whole document.)
+		assert "SELECT one" not in html

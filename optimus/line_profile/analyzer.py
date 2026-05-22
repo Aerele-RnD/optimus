@@ -219,8 +219,11 @@ def _hot_line_finding(fn: dict, line: dict, severity: str) -> dict:
 	return {
 		"finding_type": "Hot Line",
 		"severity": severity,
+		# Title uses the short qualname, not the full dotted_path: deeply-nested
+		# module paths overflow Optimus Finding.title's Data(140) field. The full
+		# dotted_path stays in the description + technical_detail below.
 		"title": (
-			f"{dotted_path}:{lineno} consumed {total_ms:.0f}ms "
+			f"{_qualname_of(fn)}:{lineno} consumed {total_ms:.0f}ms "
 			f"({hits} hits) — single hottest line"
 		),
 		"customer_description": (
@@ -677,6 +680,14 @@ def _persist_run(
 	# existing finding rendering / filtering picks them up alongside
 	# phase-1 findings.
 	for finding in result.findings:
+		# Optimus Finding.title is a Data(140) field. Phase-2 findings are
+		# appended directly here (bypassing analyze._truncate_finding_titles),
+		# so clamp defensively — a long title must not trip Frappe's truncation
+		# warning while stopping phase 2. Full context lives in the description /
+		# technical_detail_json.
+		_title = finding.get("title") or ""
+		if len(_title) > 140:
+			finding["title"] = _title[:137].rstrip() + "..."
 		parent.append("findings", finding)
 
 	parent.flags.ignore_validate_update_after_submit = True
