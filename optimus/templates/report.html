@@ -1549,14 +1549,6 @@
     background: var(--bg-paper); padding: 1px 5px; border-radius: 2px;
   }
   .how-to ul li em { font-style: italic; color: var(--ink-soft); }
-  /* a11y/UX: in-flow "back to top" link placed at each major section boundary
-     (pure anchor, no JS). */
-  .to-top {
-    text-align: right; margin: 2px 0 14px; font-size: 11px;
-    font-family: var(--sans);
-  }
-  .to-top a { color: var(--ink-mute); text-decoration: none; }
-  .to-top a:hover { color: var(--ink); }
 
   /* RESOURCE CARDS - Phase G. Four KPIs at the top of the Server
      Resource panel; replaces the old .stats/.stat blocks reused
@@ -1704,13 +1696,14 @@
       <div class="finding-impact">
         <span class="big">{{ fmt_ms(f.estimated_impact_ms) }}</span><small class="scope-tag">consolidated</small>
         {% if f.affected_count and f.affected_count > 1 %}
-        <div class="small">{{ f.affected_count }}× hits &middot; {{ fmt_ms(f.estimated_impact_ms / f.affected_count) }}<small class="scope-tag">per hit</small></div>
+        {% set _per_hit_ms = f.estimated_impact_ms / f.affected_count %}
+        <div class="small">{{ f.affected_count }}× hits{% if _per_hit_ms >= 0.05 %} &middot; {{ fmt_ms(_per_hit_ms, 1) }}<small class="scope-tag">per hit</small>{% endif %}</div>
         {% endif %}
         {% if f.technical_detail and f.technical_detail.intra_action_repetitions and f.technical_detail.intra_action_repetitions > 1 %}
         <div class="small muted">called from {{ f.technical_detail.intra_action_repetitions }} sites in this action</div>
         {% endif %}
-        {% if f.technical_detail and f.technical_detail.p95_ms %}
-        <div class="small muted">P95 {{ fmt_ms(f.technical_detail.p95_ms) }} per hit</div>
+        {% if f.technical_detail and f.technical_detail.p95_ms and f.technical_detail.p95_ms >= 0.05 %}
+        <div class="small muted">P95 {{ fmt_ms(f.technical_detail.p95_ms, 1) }} per hit</div>
         {% endif %}
       </div>
     </div>
@@ -1935,7 +1928,7 @@
         <summary>
           <span class="severity-pill {{ s.severity | lower }}">{{ s.severity }}</span>
           <span class="sub-title">{{ s.title }}</span>
-          {% if s.estimated_impact_ms %}<span class="sub-impact">{{ fmt_ms(s.estimated_impact_ms) }}<small class="scope-tag">consolidated</small>{% if s.affected_count %} &middot; {{ s.affected_count }}{% if s.affected_count > 1 %} &middot; {{ fmt_ms(s.estimated_impact_ms / s.affected_count) }}<small class="scope-tag">per hit</small>{% endif %}{% endif %}</span>{% endif %}
+          {% if s.estimated_impact_ms %}<span class="sub-impact">{{ fmt_ms(s.estimated_impact_ms) }}<small class="scope-tag">consolidated</small>{% if s.affected_count %} &middot; {{ s.affected_count }}{% if s.affected_count > 1 and (s.estimated_impact_ms / s.affected_count) >= 0.05 %} &middot; {{ fmt_ms(s.estimated_impact_ms / s.affected_count, 1) }}<small class="scope-tag">per hit</small>{% endif %}{% endif %}</span>{% endif %}
         </summary>
         {% if s.customer_description %}
         <div class="sub-desc">{{ s.customer_description }}</div>
@@ -2170,7 +2163,6 @@
 {% endmacro %}
 
 <div class="container">
-<a id="top"></a>
 
   {# --------------- MASTHEAD ---------------
      v0.7.x redesign Phase A: editorial-style header. Eyebrow + serif
@@ -2423,8 +2415,6 @@
   {% endif %}
 
   {# --------------- FINDINGS (v0.5.2: per-app sub-grouping) --------------- #}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="findings">
     <h2>Findings - what to fix</h2>
     {# v0.7.x Phase J.2.7: Findings reads from report_data.findings_by_app
@@ -2507,8 +2497,6 @@
      savings_display already includes the `−` prefix; the template just
      renders it verbatim. #}
   {% if report_data.action_plan %}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section id="plan">
     <div class="section-head">
       <h2>Recommended action plan</h2>
@@ -2544,8 +2532,6 @@
      row.kind ∈ {"hot", "bg", "normal"}; row.is_hot_text colours the time
      text red; row.duration_display already fmt_ms-formatted in Python. #}
   {% if report_data.waterfall %}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section id="waterfall">
     <div class="section-head">
       <h2>Where the time went</h2>
@@ -2569,8 +2555,6 @@
   {% endif %}
 
   {# --------------- PER-ACTION BREAKDOWN --------------- #}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="per-action">
     <a id="actions"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Per-action breakdown</h2>
@@ -2679,8 +2663,6 @@
      ``framework_count`` alongside the jobs lists; those move to a dedicated
      namespace so the legacy dict can be dropped). #}
   {% if report_data.background_jobs_summary.count %}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="background-jobs">
     <a id="jobs"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>RQ Jobs</h2>
@@ -2802,8 +2784,6 @@
      entry carries is_save_target/touched_during/method_count alongside
      the summary string. #}
   {% if report_data.doc_events %}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="doc-event-lifecycle">
     <a id="doc-events"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Doc-event lifecycle</h2>
@@ -2853,8 +2833,6 @@
      infra_timeline travel under .summary and .timeline (non-contract
      extensions). #}
   {% if report_data.resource %}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="server-resource">
     <a id="resource"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Server Resource</h2>
@@ -2934,8 +2912,6 @@
      ``*_class`` fields encode the web.dev thresholds in Python - the
      legacy _vital macro is no longer needed. #}
   {% if report_data.frontend %}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="frontend">
     <h2>Frontend</h2>
     <p class="small muted">
@@ -3138,8 +3114,6 @@
   {# v0.7.x Phase J.2.5: Slow queries reads from
      report_data.slow_queries / .slow_queries_framework. The framework
      split mirrors the legacy two-table layout pending J.3 collapse. #}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="top-queries">
     <a id="queries"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>{% if report_data.slow_queries %}Top {{ report_data.slow_queries|length }} slowest queries{% else %}Slowest queries{% endif %} - your app</h2>
@@ -3283,8 +3257,6 @@
   {% endif %}
 
   {# --------------- PER-TABLE BREAKDOWN --------------- #}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="section" id="db-tables">
     <a id="db"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Time spent per database table</h2>
@@ -3477,8 +3449,6 @@
      the Jump-to nav and the executive summary). Repeat readers don't need
      it surfaced above the technical content; first-time readers reach it
      via the "How to read" link in the Jump-to nav. #}
-  <p class="to-top"><a href="#top">&uarr; top</a></p>
-
   <section class="how-to" id="how-to-read">
     <h2>How to read this report</h2>
     <ul class="small" style="margin:6px 0 0 18px;padding:0;line-height:1.7;">

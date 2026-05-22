@@ -92,11 +92,21 @@ def test_waterfall_has_text_severity_labels():
 # --------------------------------------------------------------------------
 
 def test_finding_impact_shows_per_hit_with_consolidated():
-	# 420ms consolidated across 50 hits -> ~8.4ms per hit.
+	# 420ms consolidated across 50 hits -> 8.4ms per hit (well above the 0.05 floor).
 	html = _render(findings=[_finding(estimated_impact_ms=420.0, affected_count=50)])
 	assert "consolidated" in html
-	assert "50× hits" in html        # "50× hits"
-	assert ">per hit<" in html            # per-hit value carries a "per hit" scope tag
+	# The "× hits &middot;" middot only renders when the per-hit suffix is shown.
+	assert "50× hits &middot;" in html
+	assert "8.4ms" in html  # the per-hit value (420 / 50)
+
+
+def test_finding_impact_suppresses_per_hit_when_it_would_round_to_zero():
+	# Huge hit count (a line-hit / sample count, not action runs): 4.5s / 33M ≈ 0ms.
+	# The hit count still shows, but the per-hit suffix is suppressed (never "0ms").
+	html = _render(findings=[_finding(estimated_impact_ms=4500.0, affected_count=33_000_000)])
+	# No per-hit suffix → the hits line ends right after the count.
+	assert "33000000× hits</div>" in html
+	assert "0ms<small class=\"scope-tag\">per hit" not in html
 
 
 # --------------------------------------------------------------------------
@@ -113,15 +123,17 @@ def test_ai_fix_unverified_badge_present():
 
 
 # --------------------------------------------------------------------------
-# FIX 7 — back-to-top anchors
+# Back-to-top links removed (per user request); find-in-page note kept
 # --------------------------------------------------------------------------
 
-def test_back_to_top_anchor_and_links():
+def test_back_to_top_links_removed_find_in_page_note_kept():
 	html = _render(findings=[_finding()])
-	assert 'id="top"' in html
-	assert html.count('href="#top"') >= 3
-	# find-in-page guidance in the How-to section
-	assert "find (Ctrl/Cmd-F)" in html or "find-in-page" in html.lower()
+	# The "↑ top" links + their anchor/CSS are gone.
+	assert 'href="#top"' not in html
+	assert 'id="top"' not in html
+	assert 'class="to-top"' not in html
+	# …but the find-in-page guidance in "How to read" stays.
+	assert "find (Ctrl/Cmd-F)" in html
 
 
 # --------------------------------------------------------------------------
