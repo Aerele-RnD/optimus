@@ -204,7 +204,10 @@
   table.query-table col.col-index     { width: 44px; }
   table.query-table col.col-copies    { width: 64px; }
   table.query-table col.col-duration  { width: 88px; }
-  table.query-table col.col-callsite  { width: 25%; }
+  /* Wide enough that a typical app callsite path (e.g.
+     app/app/module/file.py:NN) fits on one line instead of wrapping
+     mid-token; the Query column still takes the larger remainder. */
+  table.query-table col.col-callsite  { width: 34%; }
   /* col.col-query uses the remaining width implicitly (auto) */
 
   /* Long callsite paths must wrap rather than overflow. Using
