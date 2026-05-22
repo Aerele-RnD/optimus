@@ -294,7 +294,7 @@
     font-variant-numeric: tabular-nums;
   }
   table.data tfoot tr.totals-row td.muted {
-    color: var(--ink-mute, #9ca3af);
+    color: var(--ink-mute, #5f6670);
     font-weight: normal;
   }
 
@@ -504,7 +504,9 @@
     --bg-tint: #f5f3ec;
     --ink: #1a1a1a;
     --ink-soft: #4a4a4a;
-    --ink-mute: #8a8580;
+    /* a11y: darkened from #8a8580 (~3:1) to meet WCAG AA 4.5:1 on white,
+       --bg, --bg-tint, and --hot; stays lighter than --ink-soft for hierarchy. */
+    --ink-mute: #5f6670;
     --rule: #e8e3d8;
     --rule-strong: #d8d2c2;
     --accent: #c5392b;
@@ -673,7 +675,7 @@
      limitation of the metric (e.g. sampler interval for Total time). */
   .kpi-caveat {
     font-size: 11px;
-    color: var(--ink-mute, #9ca3af);
+    color: var(--ink-mute, #5f6670);
     margin-top: 4px;
     line-height: 1.4;
     font-style: italic;
@@ -834,6 +836,17 @@
     color: var(--ink-soft); font-variant-numeric: tabular-nums;
   }
   .waterfall-time.hot { color: var(--accent); font-weight: 600; }
+  /* a11y: per-bar text label (redundant with bar colour). Mini severity pill —
+     reuses the --X-soft bg + --X text pairing so it's legible over any bar and
+     passes AA in light + dark. */
+  .bar-label {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    font-family: var(--sans); font-size: 9px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 1px 5px; border-radius: 3px; line-height: 1.4;
+  }
+  .bar-label.hot { background: var(--accent-soft); color: var(--accent); }
+  .bar-label.bg  { background: var(--warn-soft); color: var(--warn); }
 
   /* Responsive - Phase C: stack the waterfall + action plan rows. */
   @media (max-width: 760px) {
@@ -978,18 +991,18 @@
   .line-prof .tok-kd, .line-prof .tok-kr,
   .line-prof .tok-ow                             { color: #0000FF; }
   .line-prof .tok-bp                             { color: #0000FF; font-style: italic; }
-  .line-prof .tok-nb                             { color: #267F99; }
+  .line-prof .tok-nb                             { color: #176783; }
   .line-prof .tok-nf, .line-prof .tok-fm         { color: #795E26; }
   .line-prof .tok-nd                             { color: #AF00DB; }
-  .line-prof .tok-nc                             { color: #267F99; }
+  .line-prof .tok-nc                             { color: #176783; }
   .line-prof .tok-n                              { color: #001080; }
   .line-prof .tok-s, .line-prof .tok-s1, .line-prof .tok-s2,
   .line-prof .tok-sb                             { color: #A31515; }
   .line-prof .tok-sa                             { color: #0000FF; }
-  .line-prof .tok-se                             { color: #EE0000; }
+  .line-prof .tok-se                             { color: #cc0000; }
   .line-prof .tok-si                             { color: #001080; }
   .line-prof .tok-m, .line-prof .tok-mi, .line-prof .tok-mf,
-  .line-prof .tok-mh, .line-prof .tok-mo         { color: #098658; }
+  .line-prof .tok-mh, .line-prof .tok-mo         { color: #0b6e46; }
   .line-prof .tok-c, .line-prof .tok-c1, .line-prof .tok-ch,
   .line-prof .tok-cm                             { color: #008000; font-style: italic; }
   .line-prof .tok-o, .line-prof .tok-p           { color: #000000; }
@@ -1147,6 +1160,17 @@
     padding: 2px 7px; border-radius: 2px;
     font-size: 9px; letter-spacing: 0.08em;
     font-family: var(--mono);
+  }
+  /* a11y: promote the "unverified" caveat from a quiet footnote to a visible
+     amber badge by the heading. --ink text on --warn-soft (not --warn-on-soft,
+     which is ~3.4:1) keeps it >=4.5:1 in light + dark; the --warn border + tint
+     carry the warning semantics. */
+  .fix-head .fix-badge {
+    text-transform: none; letter-spacing: normal;
+    font-family: var(--sans); font-size: 10px; font-weight: 700;
+    background: var(--warn-soft); color: var(--ink);
+    border: 1px solid var(--warn); border-radius: 3px;
+    padding: 1px 6px; margin-left: 8px; white-space: nowrap;
   }
   .fix-body { padding: 14px 16px; font-size: 13.5px; line-height: 1.65; color: var(--ink); }
   .fix-body p { margin: 0 0 10px; }
@@ -1457,7 +1481,9 @@
   table.line-prof tbody tr.hot td.num { color: var(--accent); font-weight: 600; }
   /* v0.7.x: dim lines that never executed (0 hits / 0ms) - def, comments,
      blank, closing parens - so the lines that actually ran stand out. */
-  table.line-prof tbody tr.zero td { color: var(--ink-mute); opacity: 0.7; }
+  /* a11y: dim 0-hit lines via the (now AA-compliant) mute token, not opacity —
+     opacity dropped them back under 4.5:1. Still reads dimmer than the near-black hot lines. */
+  table.line-prof tbody tr.zero td { color: var(--ink-mute); }
   table.line-prof tbody tr.added td { background: rgba(45, 106, 60, 0.12); }
   table.line-prof tbody tr.removed td { background: rgba(197, 57, 43, 0.12); }
 
@@ -1545,6 +1571,14 @@
     background: var(--bg-paper); padding: 1px 5px; border-radius: 2px;
   }
   .how-to ul li em { font-style: italic; color: var(--ink-soft); }
+  /* a11y/UX: in-flow "back to top" link placed at each major section boundary
+     (pure anchor, no JS). */
+  .to-top {
+    text-align: right; margin: 2px 0 14px; font-size: 11px;
+    font-family: var(--sans);
+  }
+  .to-top a { color: var(--ink-mute); text-decoration: none; }
+  .to-top a:hover { color: var(--ink); }
 
   /* RESOURCE CARDS - Phase G. Four KPIs at the top of the Server
      Resource panel; replaces the old .stats/.stat blocks reused
@@ -1911,7 +1945,7 @@
     {% if f.llm_fix and f.llm_fix.suggestion_html and not hide_ai_fix %}
     <div class="fix-box">
       <div class="fix-head">
-        <span>Suggested fix</span>
+        <span>Suggested fix <span class="fix-badge">Unverified &mdash; review before applying</span></span>
         <span class="ai-tag">AI{% if f.llm_fix.model %} &middot; {{ f.llm_fix.model }}{% endif %}</span>
       </div>
       {% if not f.llm_fix.source_available %}
@@ -2172,6 +2206,7 @@
 {% endmacro %}
 
 <div class="container">
+<a id="top"></a>
 
   {# --------------- MASTHEAD ---------------
      v0.7.x redesign Phase A: editorial-style header. Eyebrow + serif
@@ -2424,6 +2459,8 @@
   {% endif %}
 
   {# --------------- FINDINGS (v0.5.2: per-app sub-grouping) --------------- #}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="findings">
     <h2>Findings - what to fix</h2>
     {# v0.7.x Phase J.2.7: Findings reads from report_data.findings_by_app
@@ -2506,6 +2543,8 @@
      savings_display already includes the `−` prefix; the template just
      renders it verbatim. #}
   {% if report_data.action_plan %}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section id="plan">
     <div class="section-head">
       <h2>Recommended action plan</h2>
@@ -2541,6 +2580,8 @@
      row.kind ∈ {"hot", "bg", "normal"}; row.is_hot_text colours the time
      text red; row.duration_display already fmt_ms-formatted in Python. #}
   {% if report_data.waterfall %}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section id="waterfall">
     <div class="section-head">
       <h2>Where the time went</h2>
@@ -2553,6 +2594,8 @@
         <div class="waterfall-name" title="{{ row.name }}">{{ row.name }}</div>
         <div class="waterfall-track">
           <div class="waterfall-bar{% if row.kind == 'hot' %} hot{% elif row.kind == 'bg' %} bg{% endif %}" style="width: {{ row.width_pct }}%;"></div>
+          {# a11y: redundant text label so severity survives without colour. #}
+          {% if row.kind == 'hot' %}<span class="bar-label hot">High</span>{% elif row.kind == 'bg' %}<span class="bar-label bg">BG job</span>{% endif %}
         </div>
         <div class="waterfall-time{% if row.is_hot_text %} hot{% endif %}">{{ row.duration_display }}</div>
       </div>
@@ -2562,6 +2605,8 @@
   {% endif %}
 
   {# --------------- PER-ACTION BREAKDOWN --------------- #}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="per-action">
     <a id="actions"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Per-action breakdown</h2>
@@ -2670,6 +2715,8 @@
      ``framework_count`` alongside the jobs lists; those move to a dedicated
      namespace so the legacy dict can be dropped). #}
   {% if report_data.background_jobs_summary.count %}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="background-jobs">
     <a id="jobs"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>RQ Jobs</h2>
@@ -2791,6 +2838,8 @@
      entry carries is_save_target/touched_during/method_count alongside
      the summary string. #}
   {% if report_data.doc_events %}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="doc-event-lifecycle">
     <a id="doc-events"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Doc-event lifecycle</h2>
@@ -2840,6 +2889,8 @@
      infra_timeline travel under .summary and .timeline (non-contract
      extensions). #}
   {% if report_data.resource %}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="server-resource">
     <a id="resource"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Server Resource</h2>
@@ -2919,6 +2970,8 @@
      ``*_class`` fields encode the web.dev thresholds in Python - the
      legacy _vital macro is no longer needed. #}
   {% if report_data.frontend %}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="frontend">
     <h2>Frontend</h2>
     <p class="small muted">
@@ -3121,6 +3174,8 @@
   {# v0.7.x Phase J.2.5: Slow queries reads from
      report_data.slow_queries / .slow_queries_framework. The framework
      split mirrors the legacy two-table layout pending J.3 collapse. #}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="top-queries">
     <a id="queries"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>{% if report_data.slow_queries %}Top {{ report_data.slow_queries|length }} slowest queries{% else %}Slowest queries{% endif %} - your app</h2>
@@ -3264,6 +3319,8 @@
   {% endif %}
 
   {# --------------- PER-TABLE BREAKDOWN --------------- #}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="section" id="db-tables">
     <a id="db"></a>{# v0.7.x Phase G: mock-spec ID alias #}
     <h2>Time spent per database table</h2>
@@ -3456,6 +3513,8 @@
      the Jump-to nav and the executive summary). Repeat readers don't need
      it surfaced above the technical content; first-time readers reach it
      via the "How to read" link in the Jump-to nav. #}
+  <p class="to-top"><a href="#top">&uarr; top</a></p>
+
   <section class="how-to" id="how-to-read">
     <h2>How to read this report</h2>
     <ul class="small" style="margin:6px 0 0 18px;padding:0;line-height:1.7;">
@@ -3468,6 +3527,7 @@
       <li>Every duration carries a small grey scope tag: <strong>per hit</strong> (one occurrence — a single request, one query execution) or <strong>consolidated</strong> (sum across all hits in this session — total time in a table, full impact of a finding's pattern, etc.).</li>
       <li>Call-tree and Hot-frame timings come from a wall-clock sampler at ≈{{ report_data.sampler_interval_ms }}ms intervals. Functions whose execution is shorter than the interval can be under-sampled or invisible — for exact per-line timings, use the <strong>Line-Level Drilldown</strong>.</li>
       <li><strong>Self-time</strong> is wall-clock self-time (the sampler measures elapsed time, not CPU). A function that blocks on I/O — <code>requests.get</code>, sync DB calls outside the recorder, <code>time.sleep</code> — counts that wait as self-time. Check the call tree for hidden I/O before optimising compute.</li>
+      <li><strong>Searching with browser find (Ctrl/Cmd-F)?</strong> Text inside collapsed drilldowns and call-tree branches may not be matched — expand the sections you want to search first.</li>
     </ul>
   </section>
 
@@ -3479,7 +3539,7 @@
       &middot;
       <span class="warn-line">Admin report - contains sensitive data, internal use only</span>
     </p>
-    <p class="small" style="margin-top: 8px; color: #9ca3af;">
+    <p class="small" style="margin-top: 8px; color: var(--ink-mute);">
       Do NOT email, upload, or share this file externally without redacting
       it yourself. Query literals, request headers, form data, and full
       stack traces are all included verbatim.
@@ -3489,7 +3549,7 @@
        value styling from pre-J.2 is gone; in exchange the contract's
        compact one-line shape lets the footer line wrap predictably. #}
     {% if report_data.footer and report_data.footer.settings %}
-    <p class="small" style="margin-top: 10px; color: #9ca3af;">
+    <p class="small" style="margin-top: 10px; color: var(--ink-mute);">
       <strong>Rendered with:</strong>
       {{ report_data.footer.settings }}.
       Settings affect FUTURE renders only - click <em>Regenerate Reports</em> on the Optimus Session after a settings change.
