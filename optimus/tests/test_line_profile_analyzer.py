@@ -40,6 +40,30 @@ class TestAnalyzeEmpty:
 
 
 class TestHotLineFinding:
+	def test_hot_line_title_uses_short_qualname_and_fits_140_chars(self):
+		# Regression: a deeply-nested dotted_path must not overflow the
+		# Optimus Finding.title Data(140) field while stopping phase 2.
+		long_path = (
+			"ajanta_bottles.ajanta_bottles.custom.sales_order.sales_order."
+			"ABSalesOrder.send_sr_sales_manager_alerts"
+		)
+		fn = _function(long_path, [
+			_line(1, "x = setup()", 5, 20.0),
+			_line(170, "send_alert()", 13, 251.0),  # dominant hot line
+			_line(3, "return", 1, 0.0),
+		])
+		result = analyzer.analyze([fn])
+		hot = [f for f in result.findings if f["finding_type"] == "Hot Line"]
+		assert len(hot) == 1
+		title = hot[0]["title"]
+		assert len(title) <= 140
+		assert long_path not in title                       # full path dropped
+		assert "send_sr_sales_manager_alerts" in title      # short qualname kept
+		assert "consumed 251ms (13 hits)" in title
+		# the full path still travels in technical_detail for navigation
+		import json
+		assert json.loads(hot[0]["technical_detail_json"])["dotted_path"] == long_path
+
 	def test_one_line_dominates_high_severity(self):
 		# 80% of total time on one line, total > 100ms → High
 		fn = _function("my_app.x", [
