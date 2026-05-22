@@ -3189,70 +3189,56 @@
   <section class="section">
     <h2>Queries per action</h2>
     <p class="small muted">
-      The top queries for each action in this session, with callsites so your
-      developer knows where to look. Actions are ordered by total duration.
+      The slowest queries across the session, each with the action it ran in and
+      the callsite so your developer knows where to look. Sorted by duration.
     </p>
 
-    {% for action in (report_data.actions + (report_data.actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
+    {# Flatten each action's queries into one list, then show the global slowest
+       in a single flat table (like Server Resource). Collecting each action's
+       top-20 bounds the work and still captures the overall top-N — a query
+       outside its own action's top-20 can't be in the global top-N. #}
+    {% set ns = namespace(rows=[]) %}
+    {% for action in (report_data.actions + (report_data.actions_framework or [])) %}
       {% set recording = recordings_by_uuid.get(action.recording_uuid) %}
       {% if recording and recording.calls %}
-      <details{% if loop.index <= 3 %} open{% endif %} style="margin: 12px 0;">
-        <summary style="cursor: pointer; padding: 8px 12px; background: #f3f4f6; border-radius: 4px; user-select: none;">
-          <strong>{{ loop.index }}. {{ action.action_label }}</strong>
-          <span class="small muted">
-            &middot; {{ fmt_ms(action.duration_ms) }}
-            &middot; {{ action.queries_count }} queries
-            &middot; {{ fmt_ms(action.query_time_ms) }} in DB
-          </span>
-        </summary>
-        <div style="padding: 10px 4px;">
-          {# Sort this action's queries by duration desc, take top 10 #}
-          {% set top_in_action = recording.calls | sort(attribute='duration', reverse=True) %}
-          <table class="query-table">
-            <colgroup>
-              <col class="col-duration">
-              <col class="col-copies">
-              <col class="col-callsite">
-              <col class="col-query">
-            </colgroup>
-            <thead>
-              <tr>
-                <th class="num">Duration <small class="scope-tag">per hit</small></th>
-                <th class="num">Copies</th>
-                <th>Callsite</th>
-                <th>Query (normalized)</th>
-              </tr>
-            </thead>
-            <tbody>
-            {% for call in top_in_action[:10] %}
-              <tr>
-                <td class="num">{{ fmt_ms(call.duration or 0, 1) }}</td>
-                <td class="num">
-                  {% if call.normalized_copies and call.normalized_copies > 1 %}{{ call.normalized_copies }}×{% endif %}
-                </td>
-                <td>
-                  {% if call.stack %}
-                    {# Use the last frame's filename:lineno as a short callsite hint #}
-                    {% set last_frame = call.stack[-1] if call.stack[-1] is mapping else none %}
-                    {% if last_frame %}
-                      <code class="small">{{ last_frame.filename }}:{{ last_frame.lineno }}</code>
-                    {% endif %}
-                  {% endif %}
-                </td>
-                <td>
-                  <pre class="sql-inline">{{ call.normalized_query or call.query or "" }}</pre>
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-          {% if recording.calls | length > 10 %}
-            <p class="small muted"><em>Showing top 10 of {{ recording.calls | length }} queries for this action.</em></p>
-          {% endif %}
-        </div>
-      </details>
+        {% for call in (recording.calls | sort(attribute='duration', reverse=True))[:20] %}
+          {% set _frame = call.stack[-1] if call.stack and call.stack[-1] is mapping else none %}
+          {% set ns.rows = ns.rows + [{
+              "action": action.action_label,
+              "duration": call.duration or 0,
+              "copies": call.normalized_copies or 0,
+              "callsite": ((_frame.filename ~ ":" ~ _frame.lineno) if _frame else ""),
+          }] %}
+        {% endfor %}
       {% endif %}
     {% endfor %}
+    {% if ns.rows %}
+    <table class="data">
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th>Action</th>
+          <th class="num">Duration <small class="scope-tag">per hit</small></th>
+          <th class="num">Copies</th>
+          <th>Callsite</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in (ns.rows | sort(attribute='duration', reverse=True))[:40] %}
+        <tr>
+          <td class="num">{{ loop.index }}</td>
+          <td>{{ r.action }}</td>
+          <td class="num">{{ fmt_ms(r.duration, 1) }}</td>
+          <td class="num">{% if r.copies and r.copies > 1 %}{{ r.copies }}×{% endif %}</td>
+          <td>{% if r.callsite %}<code class="small">{{ r.callsite }}</code>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if ns.rows | length > 40 %}
+      <p class="small muted"><em>Showing the 40 slowest queries of {{ ns.rows | length }} collected across actions.</em></p>
+    {% endif %}
+    {% endif %}
   </section>
   {% endif %}
 
