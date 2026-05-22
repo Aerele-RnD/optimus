@@ -111,13 +111,15 @@ def test_primary_actionable_sections_render():
 		"Top",               # "Top {{ top_queries|length }} slowest queries"
 		"Queries per action",
 		"Time spent per database table",
-		"Full recordings",
 		"Doc-event lifecycle",
 		"RQ Jobs",
 	):
 		assert section_heading in template, (
 			f"section heading {section_heading!r} missing from template"
 		)
+	# "Full recordings" was permanently removed (raw SQL literals / headers /
+	# form data / stack traces — sensitive, per user request).
+	assert "Full recordings" not in template
 
 
 def test_report_has_navigation_aids():

@@ -2130,7 +2130,7 @@
         {% elif job.status and job.status != "Completed" %}
           <p class="small muted">This job {{ job.status | lower }}{% if job.status == "Running" %} - it hadn't finished when analysis ran; click <em>Retry Analyze</em> once it's done to capture its queries{% else %} and produced no recording{% endif %}.</p>
         {% elif not job.recording_available %}
-          <p class="small muted">The recording for this job has expired from Redis (kept ~10&nbsp;min after analyze) - expand the matching action in <strong>Full recordings</strong> below if it's still listed.</p>
+          <p class="small muted">The recording for this job has expired from Redis (kept ~10&nbsp;min after analyze).</p>
         {% else %}
           <p class="empty">No queries were recorded for this job.</p>
         {% endif %}
@@ -3372,64 +3372,6 @@
       <p class="empty">No table breakdown available.</p>
     {% endif %}
   </section>
-
-  {# --------------- Full recordings drill-down --------------- #}
-  {% if recordings_by_uuid %}
-  <section class="section">
-    <h2>Full recordings</h2>
-    <p class="small muted">Every action's complete data - raw SQL with literal values, request headers, form data, and full Python stack traces. <strong>This contains potentially sensitive customer data - do not share externally.</strong></p>
-    <p class="small muted">Each action is collapsed by default. Click to expand.</p>
-
-    {% for action in (report_data.actions + (report_data.actions_framework or [])) | sort(attribute='duration_ms', reverse=True) %}
-      {% set recording = recordings_by_uuid.get(action.recording_uuid) %}
-      {% if recording %}
-      <details style="margin: 12px 0; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
-        <summary style="cursor: pointer; font-weight: 600; color: #111827;">
-          {{ loop.index }}. {{ action.action_label }}
-          <span class="small muted" style="font-weight: 400;">({{ fmt_ms(action.duration_ms) }}<small class="scope-tag">per hit</small>, {{ action.queries_count }} queries)</span>
-        </summary>
-        <div style="padding-top: 12px;">
-
-          {% if recording.headers %}
-            <p class="small"><strong>Request headers:</strong></p>
-            <pre>{{ recording.headers }}</pre>
-          {% endif %}
-
-          {% if recording.form_dict %}
-            <p class="small"><strong>Form data:</strong></p>
-            <pre>{{ recording.form_dict }}</pre>
-          {% endif %}
-
-          {% if recording.calls %}
-            <p class="small"><strong>SQL queries (in execution order):</strong></p>
-            {% for call in recording.calls[:200] %}
-              <div style="margin: 8px 0; padding: 8px; background: white; border: 1px solid #e5e7eb; border-radius: 4px;">
-                <div class="small muted">
-                  #{{ call.index if call.index is defined else loop.index0 }}
-                  &middot; {{ fmt_ms(call.duration or 0, 2) }}
-                  {% if call.exact_copies and call.exact_copies > 1 %}&middot; {{ call.exact_copies }} exact copies{% endif %}
-                  {% if call.normalized_copies and call.normalized_copies > call.exact_copies %}&middot; {{ call.normalized_copies }} normalized copies{% endif %}
-                </div>
-                <pre style="margin: 4px 0;">{{ call.query }}</pre>
-                {% if call.stack %}
-                  <details>
-                    <summary class="small muted">Stack ({{ call.stack | length }} frames) - click to expand</summary>
-                    <pre class="small">{% for frame in call.stack %}{{ frame.filename }}:{{ frame.lineno }} ({{ frame.function }})
-{% endfor %}</pre>
-                  </details>
-                {% endif %}
-              </div>
-            {% endfor %}
-            {% if recording.calls | length > 200 %}
-              <p class="small muted"><em>(+ {{ recording.calls|length - 200 }} more queries truncated for readability)</em></p>
-            {% endif %}
-          {% endif %}
-        </div>
-      </details>
-      {% endif %}
-    {% endfor %}
-  </section>
-  {% endif %}
 
   {# v0.6.0: orientation for someone seeing this report for the first time.
      Collapsed by default - the summary line alone tells repeat readers it's
