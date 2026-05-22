@@ -494,6 +494,42 @@ class TestEntryCallsiteInReport:
 		# card, so it should appear at least twice (Findings + per-action).
 		assert html.count("duplicated-anchor probe") >= 2
 
+	def test_per_action_banner_does_not_duplicate_finding_title(self):
+		"""The per-action 'finding linked' banner is a count-only header — it
+		must NOT inline the finding title, because the finding card renders
+		immediately below it inside the same row. Previously the banner echoed
+		the title verbatim, so it appeared twice within one per-action row."""
+		import json
+		import re
+		title = "recompute_aggregates is a self-time hot path probe"
+		doc = _doc(
+			actions=[_action(action_label=self._DOTTED, event_type="HTTP Request",
+			                 http_method="POST", path="/api/method/" + self._DOTTED,
+			                 recording_uuid="r0", duration_ms=2700)],
+			findings=[
+				types.SimpleNamespace(
+					finding_type="Slow Hot Path", severity="High", title=title,
+					customer_description="", estimated_impact_ms=2570, affected_count=0,
+					action_ref="0",
+					technical_detail_json=json.dumps({
+						"callsite": {"filename": "apps/myapp/x.py", "lineno": 1, "function": "f"},
+					}),
+					llm_fix_json=None,
+				)
+			],
+		)
+		html = renderer.render_raw(doc, recordings=[])
+		# Isolate the per-action banner cell (the red "finding linked" row).
+		m = re.search(r'class="row-finding"[^>]*>(.*?)</td>', html, re.S)
+		assert m, "per-action 'finding linked' banner did not render"
+		banner = m.group(1)
+		# The labelled count header stays…
+		assert "finding linked" in banner
+		# …but the banner must NOT echo the finding title — the card below it does.
+		assert title not in banner
+		# Sanity: the embed still happened (title travels with the card).
+		assert html.count(title) >= 2
+
 	def test_action_row_shows_inline_entry_path(self):
 		"""Positive: the inline ``file:line (function)`` line is present
 		in the action label cell with a vscode deep-link when the entry

@@ -2040,9 +2040,10 @@
   {% if action.related_findings %}
   <tr>
     <td colspan="7" class="row-finding">
-      &#9888; <strong>{{ action.related_findings | length }} finding{{ "s" if action.related_findings | length != 1 else "" }} linked:</strong>
-      {{ action.related_findings[0].title }}{% if action.related_findings[0].estimated_impact_ms %} &middot; {{ fmt_ms(action.related_findings[0].estimated_impact_ms) }}{% endif %}
-      {% if action.related_findings | length > 1 %} &middot; <em>+ {{ action.related_findings | length - 1 }} more</em>{% endif %}
+      {# Count-only header — the finding card(s) render right below and carry the
+         title + impact + detail, so echoing the title here just duplicated it
+         (mirrors the clean bg_job_row header). #}
+      &#9888; <strong>{{ action.related_findings | length }} finding{{ "s" if action.related_findings | length != 1 else "" }} linked to this action</strong>
     </td>
   </tr>
   <tr>
