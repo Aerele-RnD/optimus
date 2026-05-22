@@ -3283,6 +3283,7 @@
           <tr>
             <th>Table</th>
             <th class="num">Time <small class="scope-tag">consolidated</small></th>
+            <th class="num">Time <small class="scope-tag">per hit</small></th>
             <th class="num">Queries</th>
             <th class="num">Reads <small class="scope-tag">consolidated</small></th>
             <th class="num">Writes <small class="scope-tag">consolidated</small></th>
@@ -3293,6 +3294,7 @@
           <tr>
             <td><code>{{ t.table }}</code></td>
             <td class="num">{{ fmt_ms(t.consolidated_time_ms) }}</td>
+            <td class="num">{% if t.queries %}{{ fmt_ms(t.consolidated_time_ms / t.queries, 2) }}{% else %}-{% endif %}</td>
             <td class="num">{{ t.queries }}</td>
             <td class="num">{{ t.get("read_count", "-") }}{% if t.get("read_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.read_time_ms) }}</span>{% endif %}</td>
             <td class="num">{{ t.get("write_count", "-") }}{% if t.get("write_time_ms") %} <span class="small muted">/ {{ fmt_ms(t.write_time_ms) }}</span>{% endif %}</td>
