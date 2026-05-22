@@ -88,6 +88,18 @@ def test_waterfall_has_text_severity_labels():
 
 
 # --------------------------------------------------------------------------
+# Finding impact — show per-hit alongside the consolidated total
+# --------------------------------------------------------------------------
+
+def test_finding_impact_shows_per_hit_with_consolidated():
+	# 420ms consolidated across 50 hits -> ~8.4ms per hit.
+	html = _render(findings=[_finding(estimated_impact_ms=420.0, affected_count=50)])
+	assert "consolidated" in html
+	assert "50× hits" in html        # "50× hits"
+	assert ">per hit<" in html            # per-hit value carries a "per hit" scope tag
+
+
+# --------------------------------------------------------------------------
 # FIX 5 — AI-fix unverified badge
 # --------------------------------------------------------------------------
 

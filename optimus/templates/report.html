@@ -1701,7 +1701,7 @@
       <div class="finding-impact">
         <span class="big">{{ fmt_ms(f.estimated_impact_ms) }}</span><small class="scope-tag">consolidated</small>
         {% if f.affected_count and f.affected_count > 1 %}
-        <div class="small">{{ f.affected_count }}× hits</div>
+        <div class="small">{{ f.affected_count }}× hits &middot; {{ fmt_ms(f.estimated_impact_ms / f.affected_count) }}<small class="scope-tag">per hit</small></div>
         {% endif %}
         {% if f.technical_detail and f.technical_detail.intra_action_repetitions and f.technical_detail.intra_action_repetitions > 1 %}
         <div class="small muted">called from {{ f.technical_detail.intra_action_repetitions }} sites in this action</div>
@@ -1932,7 +1932,7 @@
         <summary>
           <span class="severity-pill {{ s.severity | lower }}">{{ s.severity }}</span>
           <span class="sub-title">{{ s.title }}</span>
-          {% if s.estimated_impact_ms %}<span class="sub-impact">{{ fmt_ms(s.estimated_impact_ms) }}<small class="scope-tag">consolidated</small>{% if s.affected_count %} &middot; {{ s.affected_count }}{% endif %}</span>{% endif %}
+          {% if s.estimated_impact_ms %}<span class="sub-impact">{{ fmt_ms(s.estimated_impact_ms) }}<small class="scope-tag">consolidated</small>{% if s.affected_count %} &middot; {{ s.affected_count }}{% if s.affected_count > 1 %} &middot; {{ fmt_ms(s.estimated_impact_ms / s.affected_count) }}<small class="scope-tag">per hit</small>{% endif %}{% endif %}</span>{% endif %}
         </summary>
         {% if s.customer_description %}
         <div class="sub-desc">{{ s.customer_description }}</div>
