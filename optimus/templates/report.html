@@ -105,31 +105,6 @@
     margin-left: 4px;
   }
 
-  /* v0.5.3: projected post-fix timing line. Renders as a subtle green
-     pill directly under the "occurrences / avg / total" line so the
-     reader sees current vs projected at a glance and can prioritize
-     by ceiling-of-value (worth a few hours for a 20× speedup vs a
-     1.5× speedup). Green = "this is the win"; uses the severity-low
-     palette so it doesn't compete with severity badges. */
-  .projected-after-fix {
-    color: #065f46;
-    background: #f0fdf4;
-    border-left: 3px solid #10b981;
-    padding: 4px 10px;
-    margin-top: 6px;
-    border-radius: 3px;
-    display: inline-block;
-  }
-  .projected-after-fix .projected-label {
-    font-weight: 600;
-    margin-right: 4px;
-  }
-  .projected-after-fix .projected-speedup {
-    color: #047857;
-    font-weight: 600;
-    margin-left: 4px;
-  }
-
   /* v0.5.2 round 4: clickable callsite → editor. Subtle style - looks
      like the plain <code> block but with a dotted underline that
      signals interactivity, and a hover color lift. We don't use the
@@ -1863,7 +1838,6 @@
       or _show_fix_hint
       or detail.validation_note
       or detail.occurrences
-      or (detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms)
       or ((not callsite.filename or not callsite.lineno) and (detail.target_doc or detail.hook_events))
     ) %}
     {% if f.technical_detail and _has_detail_rows %}
@@ -1919,19 +1893,6 @@
           {{ detail.occurrences }} occurrences
           {% if detail.average_time_ms %} &middot; ~{{ fmt_ms(detail.average_time_ms, 1) }} each{% endif %}
           {% if detail.total_time_ms %} &middot; {{ fmt_ms(detail.total_time_ms) }} total{% endif %}
-        </p>
-      {% endif %}
-
-      {# v0.5.3: projected post-fix timing. Analyzers (explain_flags
-         + n_plus_one) set projected_avg_time_ms / projected_total_ms
-         when there's a credible estimate - see base.project_post_fix_ms
-         for the per-finding-type heuristics. #}
-      {% if detail.projected_avg_time_ms is defined and detail.projected_avg_time_ms %}
-        <p class="small projected-after-fix" title="Projection assumes a single batched query at ~2x the per-call cost. Verify with EXPLAIN on the actual batched form (IN-list / JOIN may cost differently in practice).">
-          <span class="projected-label">Projected after fix:</span>
-          ~{{ fmt_ms(detail.projected_avg_time_ms, 1) }} each
-          {% if detail.projected_total_ms %} &middot; ~{{ fmt_ms(detail.projected_total_ms) }} total{% endif %}
-          {% if detail.projected_speedup_label %} <span class="projected-speedup">({{ detail.projected_speedup_label }})</span>{% endif %}
         </p>
       {% endif %}
     </div>
