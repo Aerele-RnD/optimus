@@ -1902,7 +1902,7 @@ def _render_line_drilldown_panel(session_doc: Any) -> str:
 			f'<strong>Run {run_idx}</strong>'
 			'<span class="meta">'
 			f'<span class="status-badge status-{status}">{status}</span>'
-			f'{total_ms:.2f}ms &middot; {started}'
+			f'{_format_duration_ms(total_ms)} &middot; {started}'
 			'</span>'
 			'</div>'
 		)
