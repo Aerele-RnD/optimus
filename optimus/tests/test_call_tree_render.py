@@ -53,6 +53,29 @@ def test_other_frames_node_is_dropped():
 	assert "50 frames" not in html
 
 
+def test_more_frames_omitted_node_is_dropped():
+	# The analyzer's deep-tree pruning placeholder "[N more frames omitted]" is a
+	# synthetic collapse node with no callsite — drop it like [other: N frames].
+	tree = _node("handle", "frappe/handler.py", 100, [
+		_node("looped_validate", "ugly_code/python/common.py", 95),
+		{"function": "[208 more frames omitted]", "filename": "", "lineno": 0,
+		 "cumulative_ms": 14, "self_ms": 0, "children": []},
+	])
+	html = renderer._render_call_tree_node(tree, parent_ms=100, depth=0)
+	assert "more frames omitted" not in html
+	assert "208" not in html
+	assert "looped_validate" in html
+
+
+def test_ct_is_other_frame_matches_both_synthetic_formats():
+	assert renderer._ct_is_other_frame("[other: 50 frames]")
+	assert renderer._ct_is_other_frame("[1 more frames omitted]")
+	assert renderer._ct_is_other_frame("[208 more frames omitted]")
+	# real frames / other synthetic leaves are not matched
+	assert not renderer._ct_is_other_frame("looped_validate")
+	assert not renderer._ct_is_other_frame("<sql>")
+
+
 def test_sql_leaves_dropped_from_tree():
 	# ALL <sql> leaf siblings are dropped from the call-tree display — no
 	# summary line, no rows. The call tree shows only the Python hierarchy;

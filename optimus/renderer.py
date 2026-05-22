@@ -3923,12 +3923,16 @@ _CALL_TREE_MAX_DEPTH = 12  # default cap shown without a click
 _CALL_TREE_HARD_CAP = 64   # absolute ceiling — runaway protection
 
 
-_CT_OTHER_RE = re.compile(r"^\[other: \d+ frames?\]$")
+_CT_OTHER_RE = re.compile(
+	r"^\[(?:other: \d+ frames?|\d+ more frames? omitted)\]$"
+)
 
 
 def _ct_is_other_frame(fn) -> bool:
-	"""A synthetic ``[other: N frames]`` collapse node — dropped from the
-	call tree per user request (v0.7.x)."""
+	"""A synthetic call-tree collapse node — either ``[other: N frames]`` or the
+	analyzer's deep-tree pruning placeholder ``[N more frames omitted]``
+	(call_tree.py). Both are dropped from the call tree per user request: they
+	carry no callsite to act on, so they're just noise."""
 	return bool(_CT_OTHER_RE.match((fn or "").strip()))
 
 
