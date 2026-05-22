@@ -53,21 +53,21 @@ def test_other_frames_node_is_dropped():
 	assert "50 frames" not in html
 
 
-def test_all_sql_leaves_collapsed_into_summary():
-	# ALL <sql> leaf siblings collapse into one expandable line — including
-	# ones above 1ms (the call tree is the Python hierarchy, not a query list).
+def test_sql_leaves_dropped_from_tree():
+	# ALL <sql> leaf siblings are dropped from the call-tree display — no
+	# summary line, no rows. The call tree shows only the Python hierarchy;
+	# the queries themselves live in the Slowest-queries / per-action sections.
 	tree = _node("handle", "frappe/handler.py", 100, [
 		_node("looped_validate", "ugly_code/common.py", 50),
-		_node("<sql>", "ugly_code/common.py", 40),   # 40ms — collapsed too
+		_node("<sql>", "ugly_code/common.py", 40),   # 40ms — still dropped
 		_node("<sql>", "frappe/db.py", 0.3),
 		_node("<sql>", "frappe/db.py", 0.2),
 	])
 	html = renderer._render_call_tree_node(tree, parent_ms=100, depth=0)
-	assert "3 SQL queries" in html
-	assert "click to expand" in html
-	assert "looped_validate" in html  # the real frame is NOT collapsed
-	# all three still present (one click away), not deleted
-	assert html.count("&lt;sql&gt;") >= 3
+	assert "looped_validate" in html         # the real frame still renders
+	assert "SQL quer" not in html            # no collapsed summary line
+	assert "click to expand" not in html
+	assert "&lt;sql&gt;" not in html         # no <sql> rows at all
 
 
 def test_auto_opens_down_to_first_user_frame():
