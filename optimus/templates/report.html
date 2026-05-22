@@ -292,6 +292,15 @@
   table.resource-table col.col-num-wide { width: 110px; }
   /* col.col-action gets the remaining width implicitly (auto). */
 
+  /* Queries-per-action flat table — same fixed-column scheme as the resource
+     table so long action labels / callsite paths wrap inside their columns
+     and the numeric columns stay aligned (instead of the auto-layout ragged
+     widths). col.col-action takes the remaining width. */
+  table.queries-flat-table col.col-idx      { width: 36px; }
+  table.queries-flat-table col.col-num      { width: 92px; }
+  table.queries-flat-table col.col-copies   { width: 60px; }
+  table.queries-flat-table col.col-callsite { width: 34%; }
+
   /* Tight horizontal padding for the # column so 1-3 digit row
      indexes fit inside the narrow col-idx without wrapping. The
      default table.data td padding (14px each side) eats 28px of
@@ -3217,7 +3226,14 @@
       {% endif %}
     {% endfor %}
     {% if ns.rows %}
-    <table class="data">
+    <table class="data tbl-clip queries-flat-table">
+      <colgroup>
+        <col class="col-idx">
+        <col class="col-action">
+        <col class="col-num">
+        <col class="col-copies">
+        <col class="col-callsite">
+      </colgroup>
       <thead>
         <tr>
           <th class="num">#</th>

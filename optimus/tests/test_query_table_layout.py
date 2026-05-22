@@ -68,7 +68,8 @@ class TestTemplateStructure:
 		m = re.search(r"Queries per action.*?</section>", tpl, re.DOTALL)
 		assert m is not None, "Queries per action section not found"
 		section = m.group(0)
-		assert 'class="data"' in section          # flat data table
+		assert 'class="data' in section            # flat data table…
+		assert "queries-flat-table" in section      # …with fixed-column alignment
 		assert 'class="query-table' not in section  # not the per-action query-table
 		assert "<details" not in section            # no per-action expanders
 		# The normalized-query column / SQL block is dropped.
