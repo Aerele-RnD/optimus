@@ -230,6 +230,117 @@ class TestTemplateCSS:
 			"rule subsumes it."
 		)
 
+	# ----------------------------------------------------------------
+	# Audit follow-up: kill inline cell-styling on XHR + Orphaned XHRs
+	# tables so they pick up the global `table.data thead th` rules
+	# (uppercase smallcaps, padding, block-stacked scope-tags). DB-tables
+	# breakdown also gets a defensive colgroup so a long table name can't
+	# squeeze the metric columns.
+	# ----------------------------------------------------------------
+
+	def _xhr_timing_block(self, tpl):
+		"""Return the XHR timing table block (from its <h3> heading through
+		its closing </table>) so tests can scope assertions. Anchored on the
+		closing </h3> tag to avoid false matches in CSS comments that
+		contain the literal phrase."""
+		m = re.search(
+			r"Per-action XHR timing</h3>.*?</table>",
+			tpl,
+			re.DOTALL,
+		)
+		return m.group(0) if m else None
+
+	def _orphaned_xhrs_block(self, tpl):
+		# Anchored on the <details><summary> that introduces the table.
+		m = re.search(
+			r"<summary[^>]*>\s*Orphaned XHRs.*?</table>",
+			tpl,
+			re.DOTALL,
+		)
+		return m.group(0) if m else None
+
+	def _db_tables_block(self, tpl):
+		# Anchored on the <h2> heading.
+		m = re.search(
+			r"<h2[^>]*>Time spent per database table</h2>.*?</section>",
+			tpl,
+			re.DOTALL,
+		)
+		return m.group(0) if m else None
+
+	def test_xhr_timing_table_uses_data_class(self):
+		"""The XHR timing table must carry the `.data` class so it picks
+		up the global header styling (uppercase smallcaps, padding,
+		block-stacked scope-tag)."""
+		block = self._xhr_timing_block(_read_template())
+		assert block, "Per-action XHR timing section not found"
+		# Match the <table ... class=...> opener.
+		m = re.search(r"<table[^>]*\bclass=\"[^\"]*\"", block)
+		assert m, "no <table class=...> in XHR timing section"
+		cls = m.group(0)
+		assert "data" in cls and "xhr-timing-table" in cls, (
+			f"XHR timing table must have `data` + `xhr-timing-table` in its "
+			f"class list; found: {cls!r}"
+		)
+
+	def test_xhr_timing_table_has_no_inline_cell_styles(self):
+		"""Once the table uses the `.data` class, the per-cell inline
+		`style=\"padding: 6px 8px; ...\"` attributes must be stripped —
+		they bypass the global header/body padding and prevent the
+		scope-tag from block-stacking."""
+		block = self._xhr_timing_block(_read_template())
+		assert block, "Per-action XHR timing section not found"
+		offenders = re.findall(r"<(?:th|td)\s+style=", block)
+		assert not offenders, (
+			f"XHR timing table still has {len(offenders)} `<th style=` / "
+			"`<td style=` inline attributes; strip them so the table inherits "
+			"the global `.data` styling."
+		)
+
+	def test_orphaned_xhrs_table_uses_data_class_and_no_inline_styles(self):
+		"""Same migration as the XHR timing table: add `data` to the
+		class list AND remove all inline cell styles."""
+		block = self._orphaned_xhrs_block(_read_template())
+		assert block, "Orphaned XHRs section not found"
+		m = re.search(r"<table[^>]*\bclass=\"[^\"]*\"", block)
+		assert m, "Orphaned XHRs table has no class attribute"
+		cls = m.group(0)
+		assert "data" in cls and "orphaned-xhrs-table" in cls, (
+			f"Orphaned XHRs table must carry `data` + `orphaned-xhrs-table`; "
+			f"found: {cls!r}"
+		)
+		offenders = re.findall(r"<(?:th|td)\s+style=", block)
+		assert not offenders, (
+			f"Orphaned XHRs table still has {len(offenders)} inline cell styles; "
+			"strip them so the table inherits the global `.data` styling."
+		)
+
+	def test_db_tables_breakdown_has_colgroup_and_fixed_layout(self):
+		"""'Time spent per database table' currently uses auto-layout with
+		no colgroup. A pathologically long table name could push the metric
+		columns into a single character. Add a fixed-layout + colgroup so
+		long names wrap inside the first column instead."""
+		tpl = _read_template()
+		block = self._db_tables_block(tpl)
+		assert block, "DB-tables section not found"
+		# Class on the <table> opener.
+		m = re.search(r"<table[^>]*\bclass=\"[^\"]*\"", block)
+		assert m and "db-tables-table" in m.group(0), (
+			"DB-tables `<table>` must carry the `db-tables-table` class so "
+			"the layout rules below can target it."
+		)
+		# Colgroup present inside the section.
+		assert "<colgroup>" in block, "DB-tables section is missing a <colgroup>"
+		# CSS rule defining the fixed layout.
+		assert re.search(
+			r"table\.db-tables-table\s*\{[^}]*table-layout:\s*fixed",
+			tpl,
+			re.DOTALL,
+		), (
+			"`table.db-tables-table { table-layout: fixed }` rule must be "
+			"defined in <style> so the colgroup widths are enforced."
+		)
+
 
 class TestEndToEndRender:
 	"""End-to-end: render a report with a long callsite path and

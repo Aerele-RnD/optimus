@@ -279,8 +279,26 @@
   /* Per-action XHR timing: numeric columns capped, Action and URL
      share the remaining width; .tbl-clip wraps long /api/method/...
      strings inside the URL cell instead of pushing past the page. */
+  table.xhr-timing-table { table-layout: fixed; }
   table.xhr-timing-table col.col-action { width: 28%; }
   table.xhr-timing-table col.col-num    { width: 70px; }
+
+  /* Frontend disclosure table — URL takes the bulk, Duration stays
+     narrow, Reason wraps in whatever's left. */
+  table.orphaned-xhrs-table { table-layout: fixed; }
+  table.orphaned-xhrs-table col.col-url { width: 60%; }
+  table.orphaned-xhrs-table col.col-num { width: 100px; }
+
+  /* DB-tables breakdown (Time spent per database table): fixed layout
+     so a pathologically long table name (``tabSome Very Long DocType
+     Name``) wraps inside the first column instead of squeezing every
+     metric column to a single character. ``overflow-wrap: anywhere``
+     on the first td lets the name break at any character if needed. */
+  table.db-tables-table { table-layout: fixed; }
+  table.db-tables-table col.col-tname    { width: 30%; }
+  table.db-tables-table col.col-num      { width: 90px; }
+  table.db-tables-table col.col-num-wide { width: 110px; }
+  table.db-tables-table tbody td:first-child { overflow-wrap: anywhere; }
   /* col.col-url uses the remaining width implicitly (auto) */
 
   /* resource-table column widths — pairs with the tbl-clip class
@@ -2979,7 +2997,7 @@
 
     {% if report_data.frontend.xhr_matched %}
     <h3 style="margin-bottom: 8px;">Per-action XHR timing</h3>
-    <table class="tbl-clip xhr-timing-table data" style="width: 100%; font-size: 0.85rem;">
+    <table class="data tbl-clip xhr-timing-table">
       <colgroup>
         <col class="col-action">
         <col class="col-num">
@@ -2990,28 +3008,26 @@
         <col class="col-url">
       </colgroup>
       <thead>
-        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
-          <th style="padding: 6px 8px; text-align: left;">Action</th>
-          <th style="padding: 6px 8px; text-align: right;">Backend <small class="scope-tag">per hit</small></th>
-          <th style="padding: 6px 8px; text-align: right;">Browser <small class="scope-tag">per hit</small></th>
-          <th style="padding: 6px 8px; text-align: right;">Network Δ <small class="scope-tag">per hit</small></th>
-          <th style="padding: 6px 8px; text-align: right;">Status</th>
-          <th style="padding: 6px 8px; text-align: right;">Size</th>
-          <th style="padding: 6px 8px; text-align: left;">URL</th>
+        <tr>
+          <th>Action</th>
+          <th class="num">Backend <small class="scope-tag">per hit</small></th>
+          <th class="num">Browser <small class="scope-tag">per hit</small></th>
+          <th class="num">Network Δ <small class="scope-tag">per hit</small></th>
+          <th class="num">Status</th>
+          <th class="num">Size</th>
+          <th>URL</th>
         </tr>
       </thead>
       <tbody>
         {% for m in report_data.frontend.xhr_matched %}
-        <tr style="border-bottom: 1px solid #f3f4f6;">
-          <td style="padding: 4px 8px;">{{ m.action_label }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.backend_ms) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.xhr_ms) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.network_delta_ms) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ m.status }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ ((m.response_size_bytes or 0) / 1024) | round(1) }}KB</td>
-          <td style="padding: 4px 8px;">
-            <code style="font-size: 0.75rem;">{{ m.url }}</code>
-          </td>
+        <tr>
+          <td>{{ m.action_label }}</td>
+          <td class="num">{{ fmt_ms(m.backend_ms) }}</td>
+          <td class="num">{{ fmt_ms(m.xhr_ms) }}</td>
+          <td class="num">{{ fmt_ms(m.network_delta_ms) }}</td>
+          <td class="num">{{ m.status }}</td>
+          <td class="num">{{ ((m.response_size_bytes or 0) / 1024) | round(1) }}KB</td>
+          <td><code class="small">{{ m.url }}</code></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -3056,20 +3072,25 @@
       <summary class="small muted" style="cursor: pointer;">
         Orphaned XHRs ({{ report_data.frontend.orphans | length }}) - no matching server recording
       </summary>
-      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px;">
+      <table class="data tbl-clip orphaned-xhrs-table">
+        <colgroup>
+          <col class="col-url">
+          <col class="col-num">
+          <col class="col-reason">
+        </colgroup>
         <thead>
-          <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
-            <th style="padding: 6px 8px; text-align: left;">URL</th>
-            <th style="padding: 6px 8px; text-align: right;">Duration <small class="scope-tag">per hit</small></th>
-            <th style="padding: 6px 8px; text-align: left;">Reason</th>
+          <tr>
+            <th>URL</th>
+            <th class="num">Duration <small class="scope-tag">per hit</small></th>
+            <th>Reason</th>
           </tr>
         </thead>
         <tbody>
           {% for o in report_data.frontend.orphans %}
-          <tr style="border-bottom: 1px solid #f3f4f6;">
-            <td style="padding: 4px 8px;"><code style="font-size: 0.75rem;">{{ o.url }}</code></td>
-            <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(o.duration_ms or 0) }}</td>
-            <td style="padding: 4px 8px;">{{ o.reason }}</td>
+          <tr>
+            <td><code class="small">{{ o.url }}</code></td>
+            <td class="num">{{ fmt_ms(o.duration_ms or 0) }}</td>
+            <td>{{ o.reason }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -3309,7 +3330,15 @@
       </p>
       {% endif %}
       <p class="small muted">Where the time goes, and how each table was used. A query touching multiple tables is counted against each, so the rows sum to more than the session total. <strong>Reads</strong> = <code>SELECT</code>; <strong>Writes</strong> = <code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code>. Sorted by time desc.</p>
-      <table class="data">
+      <table class="data db-tables-table">
+        <colgroup>
+          <col class="col-tname">
+          <col class="col-num">
+          <col class="col-num">
+          <col class="col-num">
+          <col class="col-num-wide">
+          <col class="col-num-wide">
+        </colgroup>
         <thead>
           <tr>
             <th>Table</th>
