@@ -120,6 +120,75 @@ class TestTemplateCSS:
 				f"{col_class} must have an explicit width CSS rule"
 			)
 
+	def test_queries_flat_table_idx_column_has_tight_padding(self):
+		"""Without the 6px L/R override the default 14px×2 table.data padding
+		eats 28px from a ~36-44px col-idx, leaving room for only a single
+		digit. ``per-action-table`` and ``resource-table`` already have this
+		override; ``queries-flat-table`` must too or its 2-digit indexes
+		(10, 11, …) wrap onto a second line."""
+		tpl = _read_template()
+		# Match the tight-padding rule's selector list and confirm it includes
+		# queries-flat-table's first-child cells.
+		assert re.search(
+			r"table\.queries-flat-table\s+tbody\s+td:first-child[^{]*\{[^}]*padding-left:\s*6px",
+			tpl,
+			re.DOTALL,
+		), "queries-flat-table tbody td:first-child must have padding-left: 6px"
+		assert re.search(
+			r"table\.queries-flat-table\s+thead\s+th:first-child[^{]*\{[^}]*padding-left:\s*6px",
+			tpl,
+			re.DOTALL,
+		), "queries-flat-table thead th:first-child must have padding-left: 6px"
+
+	def test_queries_flat_table_col_idx_fits_two_digit_indexes(self):
+		"""Forward-compatible lower bound: col-idx must be ≥ 40px so that
+		even with tight 12px padding it has ≥ 28px content room — enough
+		for ``10``, ``11``, ``999`` to fit on one line."""
+		tpl = _read_template()
+		m = re.search(
+			r"table\.queries-flat-table\s+col\.col-idx\s+\{[^}]*width:\s*(\d+)px",
+			tpl,
+		)
+		assert m, "queries-flat-table col-idx width rule missing"
+		width = int(m.group(1))
+		assert width >= 40, (
+			f"queries-flat-table col-idx is {width}px; must be ≥ 40px so "
+			"2-digit row indexes don't wrap (current default padding eats 12px)."
+		)
+
+	def test_queries_flat_table_col_num_fits_per_hit_label(self):
+		"""The Duration header carries a ``<small class=\"scope-tag\">per
+		hit</small>`` sub-label. At 92px the column couldn't fit
+		``Duration per hit`` inline and the sub-label collapsed to a barely-
+		visible ``P``. ≥ 100px gives room for the inline label."""
+		tpl = _read_template()
+		m = re.search(
+			r"table\.queries-flat-table\s+col\.col-num\s+\{[^}]*width:\s*(\d+)px",
+			tpl,
+		)
+		assert m, "queries-flat-table col-num width rule missing"
+		width = int(m.group(1))
+		assert width >= 100, (
+			f"queries-flat-table col-num is {width}px; must be ≥ 100px so "
+			"the 'Duration per hit' header doesn't truncate to 'Duration P'."
+		)
+
+	def test_scope_tag_has_nowrap_guard(self):
+		"""Defensive: the ``.scope-tag`` sub-label inside a Duration ``<th>``
+		must not wrap mid-word. Without this, any future column shrink can
+		clip the label to a single-character artefact (e.g. ``per hit`` →
+		``P``)."""
+		tpl = _read_template()
+		# The scope-tag rule lives in the <style> block. Find its body and
+		# assert white-space: nowrap is set.
+		m = re.search(r"\.scope-tag\s+\{([^}]*)\}", tpl, re.DOTALL)
+		assert m, ".scope-tag CSS rule not found"
+		body = m.group(1)
+		assert "white-space" in body and "nowrap" in body, (
+			"`.scope-tag` must declare `white-space: nowrap` to prevent "
+			"mid-word truncation in tight Duration headers"
+		)
+
 
 class TestEndToEndRender:
 	"""End-to-end: render a report with a long callsite path and

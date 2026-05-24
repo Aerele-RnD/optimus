@@ -296,8 +296,11 @@
      table so long action labels / callsite paths wrap inside their columns
      and the numeric columns stay aligned (instead of the auto-layout ragged
      widths). col.col-action takes the remaining width. */
-  table.queries-flat-table col.col-idx      { width: 36px; }
-  table.queries-flat-table col.col-num      { width: 92px; }
+  /* 44px col-idx (matches query-table) so 2-digit row indexes fit on one
+     line; 110px col-num for Duration so its "per hit" scope-tag sub-label
+     doesn't truncate to a single visible "P" character. */
+  table.queries-flat-table col.col-idx      { width: 44px; }
+  table.queries-flat-table col.col-num      { width: 110px; }
   table.queries-flat-table col.col-copies   { width: 60px; }
   table.queries-flat-table col.col-callsite { width: 34%; }
 
@@ -311,7 +314,9 @@
   table.per-action-table tbody td:first-child,
   table.per-action-table thead th:first-child,
   table.resource-table tbody td:first-child,
-  table.resource-table thead th:first-child {
+  table.resource-table thead th:first-child,
+  table.queries-flat-table tbody td:first-child,
+  table.queries-flat-table thead th:first-child {
     padding-left: 6px;
     padding-right: 6px;
   }
@@ -685,6 +690,12 @@
     font-size: 0.8em; color: var(--ink-mute);
     font-weight: 400; letter-spacing: 0.02em;
     margin-left: 4px;
+    /* Defensive: tight Duration headers (e.g. queries-flat-table's col-num)
+       used to clip "per hit" to a single "P" character when the column
+       width left no room. Nowrap forces the whole label onto one line so
+       any future column-shrink fails loudly (overflow) rather than
+       quietly clipping mid-word. */
+    white-space: nowrap;
   }
   th .scope-tag, td.num .scope-tag { display: inline-block; }
 
