@@ -22,6 +22,11 @@
   "skip_request_paths",
   "column_break_skip",
   "skip_users",
+  "redaction_section",
+  "redaction_description",
+  "sensitive_sql_columns",
+  "column_break_redaction",
+  "sensitive_form_keys",
   "capacity_section",
   "capacity_description",
   "max_queries_per_recording",
@@ -165,6 +170,32 @@
    "fieldname": "skip_users",
    "fieldtype": "Small Text",
    "label": "Skip Users"
+  },
+  {
+   "fieldname": "redaction_section",
+   "fieldtype": "Section Break",
+   "label": "Redaction"
+  },
+  {
+   "fieldname": "redaction_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Optimus redacts <b>sensitive values at capture time</b> — passwords, API keys, tokens, CSRF, cookies, and authorization headers never reach Redis or the persisted report. Defaults cover 12 canonical patterns. Add domain-specific names below (one per line) to extend redaction; defaults are <b>never removed</b>. Substring match, case-insensitive. Lines starting with <code>#</code> are comments.</p>"
+  },
+  {
+   "fieldname": "sensitive_sql_columns",
+   "fieldtype": "Small Text",
+   "label": "Sensitive SQL Columns",
+   "description": "Extra column names whose literal values in WHERE / LIKE / IN clauses are redacted to '<REDACTED>'. One per line. Example: recovery_code, bank_account, otp_seed."
+  },
+  {
+   "fieldname": "column_break_redaction",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sensitive_form_keys",
+   "fieldtype": "Small Text",
+   "label": "Sensitive Form / Header Keys",
+   "description": "Extra key names (form_dict / headers) whose values are replaced with '<REDACTED:keyname>'. One per line. Example: x-customer-id, recovery_code."
   },
   {
    "fieldname": "capacity_section",
@@ -542,7 +573,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-04-16 18:30:00.000000",
+ "modified": "2026-05-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Optimus",
  "name": "Optimus Settings",

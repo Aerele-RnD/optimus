@@ -85,6 +85,14 @@ _DEFAULTS = {
 	"auto_expand_min_ms": 50.0,
 	"skip_request_paths": (),  # tuple of stripped, comment-free lines
 	"skip_users": (),
+	# v0.7.x+: additive lists for capture-time redaction (see
+	# optimus/redaction.py). The defaults already cover the 12
+	# canonical patterns (password, api_key, token, …); these extend
+	# them with customer-specific names (recovery_code, bank_account,
+	# otp_seed, …). Parsed the same way as skip_request_paths: one
+	# entry per line, # comments, blank lines dropped.
+	"sensitive_sql_columns": (),
+	"sensitive_form_keys": (),
 	# v0.6.0: opt-in LLM "suggest a fix" feature. The API key is NOT here —
 	# it's secret, stored in a Password field, and read on demand by
 	# ai_fix.py via frappe.utils.password.get_decrypted_password.
@@ -225,6 +233,12 @@ class OptimusConfig:
 	# Small Text fields by splitting on newlines and dropping comments.
 	skip_request_paths: tuple[str, ...] = field(default_factory=tuple)
 	skip_users: tuple[str, ...] = field(default_factory=tuple)
+	# v0.7.x+ — additive lists for capture-time redaction. Defaults
+	# carry the 12 canonical patterns inside optimus.redaction; these
+	# extend them. Never replace — a config typo can't disable
+	# redaction of a known-sensitive key.
+	sensitive_sql_columns: tuple[str, ...] = field(default_factory=tuple)
+	sensitive_form_keys: tuple[str, ...] = field(default_factory=tuple)
 	# v0.6.0: AI "suggest a fix" config. Non-secret only — the API key is
 	# never cached here (see _DEFAULTS note + ai_fix._resolve_provider).
 	ai_enabled: bool = False
@@ -323,6 +337,8 @@ def _read_doctype_row() -> dict | None:
 		"auto_expand_min_ms": float(doc.get("auto_expand_min_ms") or 0) or None,
 		"skip_request_paths": _parse_skip_list(doc.get("skip_request_paths")),
 		"skip_users": _parse_skip_list(doc.get("skip_users")),
+		"sensitive_sql_columns": _parse_skip_list(doc.get("sensitive_sql_columns")),
+		"sensitive_form_keys": _parse_skip_list(doc.get("sensitive_form_keys")),
 		# v0.6.0 AI fix config (non-secret). ``ai_enabled`` /
 		# ``ai_auto_suggest`` are Checks — can't use ``or None`` because
 		# False is legitimate. ``ai_auto_suggest_max`` allows 0 (= all).
@@ -473,6 +489,8 @@ def _resolve() -> OptimusConfig:
 		auto_expand_min_ms=_float("auto_expand_min_ms"),
 		skip_request_paths=tuple(row.get("skip_request_paths") or ()),
 		skip_users=tuple(row.get("skip_users") or ()),
+		sensitive_sql_columns=tuple(row.get("sensitive_sql_columns") or ()),
+		sensitive_form_keys=tuple(row.get("sensitive_form_keys") or ()),
 		ai_enabled=bool(
 			row.get("ai_enabled")
 			if "ai_enabled" in row

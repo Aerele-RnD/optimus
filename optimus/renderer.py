@@ -33,110 +33,56 @@ _PY_HTML_FMT = None
 _pyg_highlight = None
 
 
-# Phase K hardening: render-time redaction of sensitive form_dict /
-# headers values. Profiler recordings persist raw HTTP request data
-# (which can include passwords, API keys, session tokens, CSRF
-# tokens) - even though the report is admin-only, exporting one to a
-# non-admin teammate must NOT leak credentials. The renderer (and
-# ``export_session`` API) call ``_redact_sensitive`` over recording
-# form_dict + headers before they reach the rendered HTML / JSON
-# payload.
-_SENSITIVE_KEY_PATTERNS = (
-	"password", "pwd", "api_key", "apikey", "token", "secret",
-	"csrf", "authorization", "cookie", "encryption_key",
-	"private_key", "session_id",
-)
+# Sensitive-data redaction lives in ``optimus/redaction.py`` (pure
+# functions, no Frappe imports) so the recorder-patch path in
+# ``optimus/__init__.py`` can run them at CAPTURE time — before raw
+# values reach Redis or the persisted DocType JSON. The renderer calls
+# them as defense-in-depth (catches older sessions written under the
+# pre-patch contract, plus any code path where the patch didn't fire).
+# Settings-driven extras: ``OptimusConfig.sensitive_sql_columns`` /
+# ``sensitive_form_keys`` (additive — never replaces the defaults).
+from optimus.redaction import redact_call_queries as _redact_call_queries_base
+from optimus.redaction import redact_sensitive as _redact_sensitive_base
+from optimus.redaction import redact_sql_literals as _redact_sql_literals_base
 
 
-def _is_sensitive_key(key) -> bool:
-	if not isinstance(key, str) or not key:
-		return False
-	lower = key.lower()
-	return any(p in lower for p in _SENSITIVE_KEY_PATTERNS)
-
-
-# Phase K hardening: best-effort SQL parameter redaction. The recorder
-# captures raw SQL with parameter values baked in (``WHERE password =
-# 'admin123'``); even though Optimus is admin-only, an export shared
-# with a teammate must not surface credentials. ``_redact_sql_literals``
-# walks SQL via sqlparse and replaces the right-hand-side literal in
-# any ``<sensitive_column> = '...'`` comparison. Falls back to a regex
-# pass for malformed SQL so a parser hiccup never blocks rendering.
-_SQL_SENSITIVE_COLUMNS = (
-	"password", "pwd", "api_key", "apikey", "token", "secret",
-	"csrf", "authorization", "cookie", "encryption_key",
-	"private_key", "session_id",
-)
-_SQL_LITERAL_REGEX = re.compile(
-	r"""(\b(?:""" + "|".join(_SQL_SENSITIVE_COLUMNS) + r""")\b\s*(?:=|LIKE|IN)\s*)("[^"]*"|'[^']*'|\([^)]*\))""",
-	re.IGNORECASE,
-)
-
-
-def _redact_sql_literals(sql_str: str) -> str:
-	"""Return ``sql_str`` with literal values in
-	``<sensitive_column> = '...'`` comparisons replaced by
-	``'<REDACTED>'``. Best-effort - imperfect on UPDATE SET clauses
-	and obscure column names, but raises the bar significantly.
-
-	Two-pass strategy:
-	  1. ``sqlparse``-based walk for well-formed SELECT / WHERE
-	     (preserves token spacing).
-	  2. Regex fallback for malformed SQL or anything sqlparse
-	     refuses (``_SQL_LITERAL_REGEX`` matches a known sensitive
-	     column followed by ``= / LIKE / IN`` then a quoted /
-	     parenthesised literal).
-	"""
-	if not sql_str or not isinstance(sql_str, str):
-		return sql_str or ""
-	# Quick exit: if no sensitive substring appears, skip both passes
-	# entirely (saves the parse cost on the 95% of queries that have
-	# nothing sensitive).
-	lower = sql_str.lower()
-	if not any(p in lower for p in _SQL_SENSITIVE_COLUMNS):
-		return sql_str
+def _settings_extras() -> tuple[tuple[str, ...], tuple[str, ...]]:
+	"""Read the live ``sensitive_form_keys`` / ``sensitive_sql_columns``
+	extras from Optimus Settings. Best-effort — falls back to empty
+	tuples on any error so a settings hiccup never breaks rendering
+	(the defaults inside ``optimus.redaction`` still apply)."""
 	try:
-		return _SQL_LITERAL_REGEX.sub(r"\1'<REDACTED>'", sql_str)
+		from optimus.settings import get_config
+
+		cfg = get_config()
+		return (
+			tuple(getattr(cfg, "sensitive_form_keys", ()) or ()),
+			tuple(getattr(cfg, "sensitive_sql_columns", ()) or ()),
+		)
 	except Exception:
-		return sql_str
-
-
-def _redact_call_queries(calls):
-	"""Apply ``_redact_sql_literals`` over a recording's ``calls`` list
-	in place. Touches ``query`` + ``normalized_query`` fields.
-	"""
-	if not isinstance(calls, list):
-		return
-	for call in calls:
-		if not isinstance(call, dict):
-			continue
-		if call.get("query"):
-			call["query"] = _redact_sql_literals(call["query"])
-		if call.get("normalized_query"):
-			call["normalized_query"] = _redact_sql_literals(call["normalized_query"])
+		return ((), ())
 
 
 def _redact_sensitive(payload):
-	"""Walk a dict / list and return a copy with values under
-	sensitive keys replaced by ``"<REDACTED:keyname>"``. Pure
-	function - non-dict scalars pass through unchanged. Used by the
-	renderer to scrub ``recording.form_dict`` / ``recording.headers``
-	before they reach the rendered HTML, and by ``export_session``
-	before serialising to JSON.
-	"""
-	if isinstance(payload, dict):
-		out = {}
-		for k, v in payload.items():
-			if _is_sensitive_key(k):
-				out[k] = f"<REDACTED:{k}>"
-			else:
-				out[k] = _redact_sensitive(v)
-		return out
-	if isinstance(payload, list):
-		return [_redact_sensitive(item) for item in payload]
-	if isinstance(payload, tuple):
-		return tuple(_redact_sensitive(item) for item in payload)
-	return payload
+	"""Backward-compatible wrapper kept for any internal callers that
+	don't have direct settings access. Reads the live extras list and
+	delegates to ``optimus.redaction.redact_sensitive``."""
+	extra_keys, _ = _settings_extras()
+	return _redact_sensitive_base(payload, extra_keys=extra_keys)
+
+
+def _redact_sql_literals(sql_str: str) -> str:
+	"""Backward-compatible wrapper. Same as ``_redact_sensitive`` —
+	reads settings + delegates."""
+	_, extra_cols = _settings_extras()
+	return _redact_sql_literals_base(sql_str, extra_columns=extra_cols)
+
+
+def _redact_call_queries(calls) -> None:
+	"""Backward-compatible wrapper. Mutates ``calls`` in place via
+	``optimus.redaction.redact_call_queries`` with the live extras."""
+	_, extra_cols = _settings_extras()
+	_redact_call_queries_base(calls, extra_columns=extra_cols)
 
 
 _FILE_CACHE_MAX_ENTRIES = 50
