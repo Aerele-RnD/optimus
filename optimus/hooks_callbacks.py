@@ -36,6 +36,8 @@ ours (loaded first). That ordering is essential — we need the recording
 to be dumped to Redis before we ask the analyze pipeline to fetch it later.
 """
 
+import time
+
 import frappe
 import frappe.recorder  # imported at module top so function-local `import frappe.recorder` doesn't rebind `frappe` as a local variable (Python scope rule: any `import frappe.X` inside a function makes `frappe` a function-local for the entire scope, breaking earlier `frappe.local` reads — caused by Python 3.14 stricter scope detection on a pre-existing pattern)
 
@@ -509,6 +511,21 @@ def before_job(method=None, kwargs=None, **rest):
 		if not session_uuid:
 			return
 
+		# v0.7.x+: record this job's method + Running/started_at in the
+		# session's jobs hash BEFORE the user/active-session gates — so the
+		# bg-jobs report shows it even when we don't activate the recorder
+		# for it (orphan case: ``active != session_uuid`` because the user
+		# started a new session after Stop, but the old session's job is
+		# still in flight). Also fixes the ``enqueue_after_commit=True``
+		# blank-method bug: the enqueue patch can't record the method when
+		# ``frappe.enqueue`` returns None for deferred dispatch, so before_job
+		# is the first reliable site that has BOTH the method arg and the
+		# real RQ job id (via ``rq.get_current_job()``). Stash the session
+		# on frappe.local so after_job can find it even if the active-session
+		# gate below short-circuits.
+		_track_bg_job_started(session_uuid, method)
+		frappe.local.optimus_bg_session_uuid = session_uuid
+
 		# frappe.set_user(user) was already called by execute_job before
 		# this hook fires, so frappe.session.user is the originating user.
 		user = getattr(frappe.session, "user", None)
@@ -617,23 +634,44 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 
 		# v0.6.0: this job ran — drop its RQ id from the session's
 		# pending-jobs set so analyze.run's wait can end early. Best-effort.
+		# v0.7.x+: also write terminal status + ended_at + duration_ms from
+		# here, while the RQ record is still alive. Falls back to the
+		# bg-session stash set in before_job so orphan jobs (whose recorder
+		# we never activated, leaving ``optimus_session_id`` unset) still
+		# get their terminal status recorded on the originating session.
 		try:
 			from rq import get_current_job
 
 			_rq_job = get_current_job()
 			_rq_jid = getattr(_rq_job, "id", None) if _rq_job is not None else None
-			_su = getattr(frappe.local, "optimus_session_id", None)
+			_su = getattr(frappe.local, "optimus_session_id", None) or getattr(
+				frappe.local, "optimus_bg_session_uuid", None
+			)
 			if _rq_jid and _su:
 				session.clear_pending_job(_su, _rq_jid)
 				# v0.7.x: link this job to the recording it produced so the
 				# report can join the captured query data to the job's row.
 				if recording_uuid_for_dump:
 					session.set_job_recording(_su, _rq_jid, recording_uuid_for_dump)
+				# v0.7.x+: authoritative terminal-status write — see the
+				# helper's docstring for why this beats the analyze-time
+				# RQ re-fetch (which silently drops GC'd job records).
+				_track_bg_job_finished(_su, _rq_jid)
 		except Exception:
 			pass
 
 		if hasattr(frappe.local, "optimus_session_id"):
 			del frappe.local.optimus_session_id
+		if hasattr(frappe.local, "optimus_bg_session_uuid"):
+			try:
+				delattr(frappe.local, "optimus_bg_session_uuid")
+			except AttributeError:
+				pass
+		if hasattr(frappe.local, "optimus_bg_job_start_mono"):
+			try:
+				delattr(frappe.local, "optimus_bg_job_start_mono")
+			except AttributeError:
+				pass
 		if hasattr(frappe.local, "optimus_infra_start"):
 			try:
 				delattr(frappe.local, "optimus_infra_start")
@@ -732,6 +770,135 @@ def _clear_capture_locals() -> None:
 				delattr(frappe.local, attr)
 			except AttributeError:
 				pass
+
+
+# ---------------------------------------------------------------------------
+# Background-job status tracking — authoritative writes from the worker
+# ---------------------------------------------------------------------------
+# Pre-fix, the bg-job tracking pipeline relied on analyze re-reading each
+# enqueued job's terminal status from RQ at persist time
+# (``analyze._capture_job_terminal_status`` → ``rq.Job.fetch``). Two failure
+# modes left rows wrong on the report:
+#
+#   1. ``enqueue_after_commit=True`` jobs: ``frappe.enqueue`` returns None
+#      for deferred dispatch (see ``frappe/utils/background_jobs.py`` 's
+#      ``if enqueue_after_commit: ... return``), so the enqueue patch's
+#      ``record_job`` call in ``optimus/__init__.py`` is skipped (its
+#      ``if job is not None`` guard fails). The method name was never
+#      written to the jobs hash → blank ``method`` column on the row.
+#
+#   2. Short jobs whose RQ record was GC'd before analyze persisted:
+#      ``Job.fetch`` raises ``NoSuchJobError``, which the ``except
+#      Exception: pass`` in ``_capture_job_terminal_status`` swallows.
+#      No status/times were written → row defaulted to status=Running
+#      with NULL started_at/ended_at.
+#
+# These two helpers move the authoritative writes into the hooks, where:
+#   * before_job calls ``_track_bg_job_started`` right after popping the
+#     marker — has access to the method arg (fixes #1) and the worker's
+#     wall-clock time (fixes the "no started_at" half of #2).
+#   * after_job calls ``_track_bg_job_finished`` in its finally block —
+#     RQ record is still alive, so we capture status + ended_at +
+#     duration_ms ourselves (fixes the other half of #2).
+#
+# analyze's existing ``_capture_job_terminal_status`` stays as the fallback
+# for jobs the hooks couldn't cover (worker SIGKILL on timeout, crash before
+# after_job fires — frappe runs after_job in a try/finally so this is rare
+# but possible). Its persist-time loop only fires for jobs whose status the
+# hooks did NOT already write (``if not _jm.get("status"):``), so no
+# double-work and no overwrite churn.
+#
+# Both helpers are best-effort: any failure is swallowed so a tracking bug
+# can never break the user's actual job.
+
+
+def _track_bg_job_started(session_uuid: str, method) -> None:
+	"""Record this RQ job's method and mark it Running with started_at = now.
+	Stashes a monotonic baseline on ``frappe.local`` for the duration calc
+	in ``_track_bg_job_finished``.
+
+	Called from ``before_job`` once the marker is validated, BEFORE the
+	user/active-session gates — so even orphan jobs (whose recorder we
+	won't activate) get their status reported in the session's bg-jobs
+	list. The ``record_job`` call is idempotent (uses ``setdefault`` for
+	method on the Redis hash) so it's safe even when the fast-path in the
+	enqueue patch already recorded the method.
+	"""
+	try:
+		from rq import get_current_job
+
+		rq_job = get_current_job()
+		job_id = getattr(rq_job, "id", None) if rq_job is not None else None
+		if not job_id:
+			return
+		# frappe.enqueue accepts a callable too — extract its name so the
+		# row's Method column doesn't render "<function foo at 0x…>".
+		method_str = (
+			method if isinstance(method, str) else getattr(method, "__name__", str(method))
+		)
+		session.record_job(session_uuid, job_id, method_str)
+		from frappe.utils import now_datetime
+
+		session.set_job_status(
+			session_uuid,
+			job_id,
+			status="Running",
+			started_at=str(now_datetime()),
+		)
+		# Worker processes are single-job-at-a-time so this can't leak across
+		# jobs; the after_job clear is belt-and-braces.
+		frappe.local.optimus_bg_job_start_mono = time.monotonic()
+	except Exception:
+		# Tracking failure must never break the user's job.
+		pass
+
+
+def _track_bg_job_finished(session_uuid: str, job_id: str) -> None:
+	"""Write the terminal status + ended_at + duration_ms while the RQ job
+	record is still alive in the worker. Lets analyze rely on the jobs hash
+	instead of re-fetching from RQ at persist time (which may have GC'd the
+	record by then, silently leaving the row stuck at status=Running).
+
+	Failure detection: Frappe runs after_job hooks inside a ``try/finally``
+	wrapping the user's method, so an in-flight exception is visible via
+	``sys.exc_info()``. RQ's timeout-killer raises ``JobTimeoutException``
+	(its class name, regardless of import path) — we map that distinctly so
+	the report can flag timeouts separately from generic user-code failures.
+	"""
+	try:
+		import sys
+
+		exc_type, exc_value, _ = sys.exc_info()
+		if exc_type is None:
+			status, error = "Completed", None
+		else:
+			# Match on the class name (not isinstance) so we don't have to
+			# import rq.timeouts at the worker hot path — and so vendored
+			# / re-exported variants still match.
+			name = exc_type.__name__
+			status = "Timeout" if name == "JobTimeoutException" else "Failed"
+			error = f"{name}: {exc_value}"
+		from frappe.utils import now_datetime
+
+		ended_at = str(now_datetime())
+		start_mono = getattr(frappe.local, "optimus_bg_job_start_mono", None)
+		duration_ms = None
+		if start_mono is not None:
+			try:
+				duration_ms = round((time.monotonic() - start_mono) * 1000, 2)
+			except Exception:
+				duration_ms = None
+		session.set_job_status(
+			session_uuid,
+			job_id,
+			status=status,
+			error=error,
+			ended_at=ended_at,
+			duration_ms=duration_ms,
+		)
+	except Exception:
+		# Tracking failure must never break the user's job.
+		pass
 
 
 # ---------------------------------------------------------------------------
