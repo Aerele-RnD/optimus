@@ -8,6 +8,78 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.1] — 2026-05-25
+
+**Integration test — atomic Lua merge under multi-worker contention.
+First row of the v0.11.0 deferred-tests table is now ticked.**
+
+The v0.11.0 release shipped the real-bench integration harness with two
+pilot tests; `optimus/tests_integration/README.md` enumerated seven
+deferred follow-ups. This is the first of those: a real-Redis + real-Lua
++ real-threading test that proves the v0.7.x bg-tracking trilogy
+(`a356f64` → `0e4a270` → `f30f44e`) is lossless under genuine
+multi-worker contention. The unit-suite version
+(`test_session_jobs.py::TestAtomicMergeJobMetaConcurrent`) silently
+`pytest.skip`s when Redis/Lua aren't available — under pure pytest,
+that's every run. The integration version is the first-class CI gate.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_atomic_lua_merge_concurrent.py`**
+  — 5 tests covering the v0.7.x trilogy's invariants under real Redis
+  + Lua:
+  - `test_recording_uuid_and_status_race_is_lossless` — the canonical
+    regression test. 50 distinct job_ids × 2 racing threads per job
+    (one writes `recording_uuid`, one writes `status`), released
+    simultaneously via `threading.Barrier`. Asserts every job has
+    BOTH fields after the dust settles.
+  - `test_concurrent_distinct_job_ids_dont_clobber` — 20 threads
+    write to 20 distinct hash fields simultaneously; validates the
+    per-field cjson isolation inside the Lua script.
+  - `test_setdefault_first_writer_wins` — 20 threads race
+    `_SETDEFAULT_JOB_META_LUA` after a known first-writer's seed; the
+    first value must survive.
+  - `test_fallback_path_writes_when_lua_unavailable` — single-thread
+    test (`frappe.local` is main-thread only). Monkey-patches
+    `frappe.cache.eval` to raise; asserts `_atomic_merge_job_meta`
+    still writes via the Python read-modify-write fallback.
+  - `test_atomic_merge_does_not_raise_when_lua_unavailable` —
+    defensive lock-in: the wrapper catches eval failures silently and
+    the host code never sees the underlying error.
+- Workflow line in `.github/workflows/integration.yml` to run the new
+  module against the bench-bootstrapped `test_site`.
+- README row in `optimus/tests_integration/README.md` ticked with a
+  pointer to the new file.
+
+### Engineering
+
+- 5 new integration tests; integration suite total 8 → 13. Unit suite
+  unchanged at 1818 passing (the unit-suite backstop at
+  `test_session_jobs.py::TestAtomicMergeJobMetaConcurrent` continues
+  to skip under pure pytest).
+- Each test owns a per-test fixture session_uuid + purges the jobs
+  hash in setUp/tearDown — independent of the autouse
+  `cleanup_session` fixture (which handles Optimus Session DocType
+  rows but not arbitrary Redis hashes the test creates directly).
+- The 4 race-test methods pre-compute the prefixed Redis key in the
+  main thread (the same technique the unit-suite version uses;
+  `frappe.local.conf` isn't initialised in non-main threads).
+
+### Deferred
+
+The remaining 6 rows of the integration-test extraction roadmap stay
+deferred — `test_telemetry_flush_doctype_sink`,
+`test_ai_privacy_exclusion_on_api`,
+`test_regenerate_reports_idempotent`,
+`test_phase2_tool_orphan_recovery`,
+`test_safe_report_self_contained_on_real_bench`,
+`test_janitor_sweeps_actually_delete`. Each is a similar-sized
+follow-up PR using the same harness pattern.
+
+Version: 0.12.0 → 0.12.1.
+
+---
+
 ## [0.12.0] — 2026-05-24
 
 **Redis schema versioning foundation — closes the architecture review's
