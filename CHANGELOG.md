@@ -8,6 +8,105 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.2] — 2026-05-25
+
+**Integration test — telemetry flush → Optimus Telemetry Event DocType
+end-to-end. Second row of the v0.11.0 deferred-tests table is now
+ticked.**
+
+The v0.8.0 release (`5529cde`) shipped opt-in failure telemetry: a
+bounded in-process deque, a scheduled `flush()`, the `Optimus Telemetry
+Event` DocType, a JSONL sink, and signature-based dedup. The
+unit-suite tests (`optimus/tests/test_telemetry.py`) cover the emit
+hot path, the bounded deque, signature dedup, path/context scrub,
+settings clamps, and `flush()` against a **mocked** `frappe.db.sql`.
+What they can't prove: that `flush()` actually writes a row that lands
+in `tabOptimus Telemetry Event` with the right shape, that the
+DocType's deterministic `name` (sha1 of `event_name|signature`) enforces
+the upsert correctly, that toggling `telemetry_enabled` via the live
+Settings doc invalidates the cached config, and that the PII-scrubbed
+traceback round-trips through MariaDB unchanged. That gap is what this
+integration test fills.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_telemetry_flush_doctype_sink.py`**
+  — 5 tests covering the v0.8.0 telemetry pipeline against real
+  MariaDB + the live Optimus Settings cache invalidation:
+  - `test_emit_then_flush_persists_doctype_row` — canonical
+    round-trip. Emit once, flush, assert one row exists with the right
+    `event_name`, `severity`, `count=1`, populated `first_seen` /
+    `last_seen` / `optimus_version` / `python_version` /
+    `frappe_version`.
+  - `test_repeated_emits_dedup_to_single_row_with_count` — 5 emits
+    with the same `event_name` + `exc=None` (deterministic signature)
+    → one DocType row with `count=5`. Validates the signature-dedup
+    grouping at flush time.
+  - `test_flush_no_op_when_master_disabled` — toggle
+    `telemetry_enabled` OFF via `frappe.get_single('Optimus Settings')
+    → save`, emit, flush. Returns 0; no DocType row created. Confirms
+    the master gate is honoured at flush time AND that the
+    `on_update` cache-invalidation hook fires so `flush()` sees the
+    new value.
+  - `test_persisted_row_has_scrubbed_traceback` — raise a real
+    `ValueError`, emit with that exception, flush. The persisted
+    `last_traceback` must contain `<bench>/apps/optimus/` (the
+    scrubbed marker for the optimus frame) AND must NOT contain
+    `/Users/` / `/home/` / `/private/` raw absolute prefixes.
+    Locks in the PII-scrub round-trip through MariaDB.
+  - `test_second_flush_increments_count_via_upsert` — emit 3 + flush,
+    emit 4 + flush; assert one row with `count=7`. Confirms the
+    v0.8.0 `INSERT … ON DUPLICATE KEY UPDATE count = count +
+    VALUES(count)` SQL path executes (not a duplicate-key error or a
+    second-row insert).
+- Workflow line in `.github/workflows/integration.yml` to run the new
+  module against the bench-bootstrapped `test_site`.
+
+### Per-test isolation
+
+- **Unique `event_name` prefix per test** (`test.{frappe.generate_hash
+  (length=10)}`) so concurrent runs / sibling tests can't collide on
+  the shared `Optimus Telemetry Event` table.
+- **`setUp` snapshots `telemetry_enabled` + `telemetry_sink_doctype`**
+  from the live Settings doc, then forces both ON. `tearDown`
+  restores whatever the original values were — the bench is left in
+  the same state it was found in.
+- **`tearDown` does `frappe.db.delete('Optimus Telemetry Event',
+  {event_name: like prefix%})`** because `_write_doctype` uses direct
+  SQL that auto-commits past the `FrappeTestCase` per-test
+  transaction.
+- **`setUp` + `tearDown` both call `telemetry.drain_for_test()`** so
+  emit-deque state can't bleed across tests in the same Python
+  process.
+
+### Docs
+
+- `optimus/tests_integration/README.md` — row 2 of the extraction
+  roadmap ticked. 5 rows remain
+  (`test_ai_privacy_exclusion_on_api.py`,
+  `test_regenerate_reports_idempotent.py`,
+  `test_phase2_tool_orphan_recovery.py`,
+  `test_safe_report_self_contained_on_real_bench.py`,
+  `test_janitor_sweeps_actually_delete.py`).
+
+### Unchanged
+
+- `optimus/telemetry.py` — the function under test. The integration
+  test is exactly that — testing, not editing.
+- `Optimus Telemetry Event` DocType JSON — schema is the same v0.8.0
+  shape; the test asserts the columns that release defined.
+- All v0.8.0 unit-suite telemetry tests
+  (`optimus/tests/test_telemetry.py`) — they stay as the pure-pytest
+  backstop that runs on every PR.
+
+### Compatibility
+
+No behaviour change. Pure test addition. Integration-suite total: 13 →
+18 tests. Unit suite stays at 1818 (the new file in
+`tests_integration/` is invisible to the pytest collector).
+
+---
+
 ## [0.12.1] — 2026-05-25
 
 **Integration test — atomic Lua merge under multi-worker contention.

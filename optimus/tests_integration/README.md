@@ -116,7 +116,7 @@ using the harness above:
 | Test | What it adds | Catches |
 |---|---|---|
 | ✓ `test_atomic_lua_merge_concurrent.py` (done in v0.12.1) | real-Redis + real-Lua concurrent test exercising the v0.7.x trilogy's invariants (recording+status race, distinct job_ids, setdefault first-writer-wins, fallback path) | Field loss under worker contention |
-| `test_telemetry_flush_doctype_sink.py` | enables telemetry, triggers a failure, flushes, asserts a row | Settings → DocType wiring + flush logic |
+| ✓ `test_telemetry_flush_doctype_sink.py` (done in v0.12.2) | enables telemetry, emits failures, flushes, asserts DocType row shape + signature dedup + master-gate + scrub-through-persistence + UPSERT count accumulation | Settings → DocType wiring + flush logic + scrub round-trip |
 | `test_ai_privacy_exclusion_on_api.py` | hits the live `api.suggest_fix` endpoint with an excluded type | API surface respects the exclusion + telemetry logs the refusal |
 | `test_regenerate_reports_idempotent.py` | renders, regenerates, diffs the two HTML outputs | Re-render path is byte-stable when recordings cached |
 | `test_phase2_tool_orphan_recovery.py` | leaks `sys.monitoring` tool 2, simulates worker respawn, verifies the startup probe reclaims it | The v0.7.x `fbf3179` fix holds across real worker bounces |

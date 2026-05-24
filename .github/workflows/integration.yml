@@ -131,6 +131,10 @@ jobs:
             --app optimus \
             --module optimus.tests_integration.test_atomic_lua_merge_concurrent \
             2>&1 | tee "${RUNNER_TEMP}/integration-lua-merge.log"
+          bench --site test_site run-tests \
+            --app optimus \
+            --module optimus.tests_integration.test_telemetry_flush_doctype_sink \
+            2>&1 | tee "${RUNNER_TEMP}/integration-telemetry.log"
 
       - name: Publish integration summary
         if: always()
