@@ -37,6 +37,7 @@ import sys
 import time
 import types
 
+import frappe
 import pytest
 
 pytest.importorskip("rq")
@@ -120,6 +121,62 @@ def fake_rq_job(monkeypatch):
 	# fresh ``from rq import get_current_job`` per call — monkeypatching the
 	# rq module covers it because the lazy import reads ``rq.__dict__``.
 	return holder
+
+
+@pytest.fixture
+def fake_db(monkeypatch):
+	"""Stub ``frappe.db`` wholesale so the late-finish DocType-update fallback
+	in ``_track_bg_job_finished`` can be exercised without a real DB.
+
+	frappe.db is a Werkzeug Local proxy in production (per
+	[[feedback_frappe_db_local_proxy]]) — patching its attributes is wrong;
+	always replace the whole proxy with a stand-in object.
+
+	The SUT calls ``frappe.db.get_value`` in a fixed sequence:
+	  1. ("Optimus Session", {"session_uuid": ...}, "name")     → session_name
+	  2. ("Optimus Session", session_name, "status")            → session_status
+	  3. ("Optimus Background Job", {"parent": ..., "job_id": ...}, "name")
+	                                                            → child_name
+	  4. ("Optimus Background Job", child_name, "status")       → child_status
+
+	Tests tweak the four canned values via the returned ``state`` dict; the
+	fixture also captures ``set_value`` + ``commit`` calls for assertion.
+	"""
+	import frappe
+
+	state = {
+		"session_name": "PS-001",
+		"session_status": "Ready",
+		"child_name": "child-abc",
+		"child_status": "Running",
+		"set_value_calls": [],
+		"commit_calls": 0,
+	}
+
+	def fake_get_value(doctype, filters, field):
+		if doctype == "Optimus Session":
+			if isinstance(filters, dict) and "session_uuid" in filters:
+				return state["session_name"]
+			return state["session_status"]
+		if doctype == "Optimus Background Job":
+			if isinstance(filters, dict) and "parent" in filters:
+				return state["child_name"]
+			return state["child_status"]
+		return None
+
+	def fake_set_value(doctype, name, fields):
+		state["set_value_calls"].append((doctype, name, fields))
+
+	def fake_commit():
+		state["commit_calls"] += 1
+
+	class FakeDb:
+		get_value = staticmethod(fake_get_value)
+		set_value = staticmethod(fake_set_value)
+		commit = staticmethod(fake_commit)
+
+	monkeypatch.setattr(frappe, "db", FakeDb(), raising=False)
+	return state
 
 
 # ---------------------------------------------------------------------------
@@ -434,3 +491,151 @@ class TestEndToEndPersist:
 		# filters None values out (see session.set_job_status implementation).
 		# Here error never got set to a string, so it's just absent.
 		assert "error" not in j or j["error"] is None
+
+
+# ---------------------------------------------------------------------------
+# Late-finish DocType fallback — for jobs that exceed background_job_wait_seconds
+# ---------------------------------------------------------------------------
+# When a bg job runs longer than ``_MAX_BG_JOB_WAIT_SECONDS`` (300s hardcap in
+# ``analyze.py``), analyze persists the row with status=Running and then
+# ``_cleanup_redis`` deletes the jobs hash. The late-finishing worker's
+# ``_track_bg_job_finished`` writes to a now-deleted Redis key (HSET silently
+# recreates an orphan). Without the DocType fallback, the persisted row stays
+# stuck at Running forever.
+#
+# The fallback: if the session has already finalized (status in {"Ready",
+# "Failed"}) and the child row exists with status=Running, write directly to
+# the DocType row via ``frappe.db.set_value`` + ``frappe.db.commit``.
+
+
+class TestLateFinishDocTypeFallback:
+	def test_late_finish_updates_persisted_docrow_when_session_ready(
+		self, captures, fake_local, fake_rq_job, fake_db
+	):
+		"""Happy path: long job finishes after analyze finalized. The hook
+		writes to Redis (no-op for a deleted hash) AND updates the persisted
+		DocType row via set_value + commit."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.5  # ~500ms
+		fake_db["session_status"] = "Ready"
+		fake_db["child_status"] = "Running"
+
+		hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		assert len(fake_db["set_value_calls"]) == 1, "DocType set_value must fire exactly once"
+		doctype, name, fields = fake_db["set_value_calls"][0]
+		assert doctype == "Optimus Background Job"
+		assert name == "child-abc"
+		assert fields["status"] == "Completed"
+		assert fields["ended_at"]
+		assert 400 <= fields["duration_ms"] <= 1500
+		assert fields.get("error") is None
+		assert fake_db["commit_calls"] == 1
+
+	def test_late_finish_noop_when_session_still_analyzing(self, captures, fake_local, fake_rq_job, fake_db):
+		"""Analyze is still mid-wait → session row not yet Ready → fallback
+		bails out so analyze's persist remains the source of truth. The Redis
+		write (covered by test_after_job_writes_completed_with_ended_at_and_duration)
+		still fires; the DocType update doesn't."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.1
+		fake_db["session_status"] = "Analyzing"  # not terminal
+
+		hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		assert fake_db["set_value_calls"] == []
+		assert fake_db["commit_calls"] == 0
+		# But the existing Redis path still fired — sanity check.
+		assert len(captures["set_job_status"]) == 1
+		assert captures["set_job_status"][0][2]["status"] == "Completed"
+
+	def test_late_finish_does_not_clobber_already_completed_row(
+		self, captures, fake_local, fake_rq_job, fake_db
+	):
+		"""Idempotency guard: if some earlier path (analyze re-run, a retry's
+		earlier attempt) already filled the row with Completed, don't overwrite
+		— only the Running placeholder is a candidate for backfill."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.1
+		fake_db["session_status"] = "Ready"
+		fake_db["child_status"] = "Completed"  # already filled
+
+		hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		assert fake_db["set_value_calls"] == []
+		assert fake_db["commit_calls"] == 0
+
+	def test_late_finish_noop_when_session_doc_missing(self, captures, fake_local, fake_rq_job, fake_db):
+		"""Session UUID has no persisted Optimus Session doc yet (analyze still
+		bootstrapping, or the session was admin-deleted). Bail silently."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.1
+		fake_db["session_name"] = None  # session lookup returns None
+
+		hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		assert fake_db["set_value_calls"] == []
+		assert fake_db["commit_calls"] == 0
+
+	def test_late_finish_noop_when_child_row_missing(self, captures, fake_local, fake_rq_job, fake_db):
+		"""Session is finalized but no child row for this job_id — analyze
+		never tracked it (extremely rare: an enqueue patch failed silently, or
+		the job was enqueued from a context that the marker injection didn't
+		cover). Bail rather than INSERT a phantom row."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.1
+		fake_db["session_status"] = "Ready"
+		fake_db["child_name"] = None  # child lookup returns None
+
+		hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		assert fake_db["set_value_calls"] == []
+		assert fake_db["commit_calls"] == 0
+
+	def test_late_finish_writes_failed_status_with_error(self, captures, fake_local, fake_rq_job, fake_db):
+		"""Failed late-finish: if the long job raised before returning, the
+		fallback must persist status=Failed + the exception string into the
+		DocType row (not just Completed)."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.1
+		fake_db["session_status"] = "Ready"
+		fake_db["child_status"] = "Running"
+
+		try:
+			raise ValueError("late-finish failure")
+		except ValueError:
+			hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		assert len(fake_db["set_value_calls"]) == 1
+		_, _, fields = fake_db["set_value_calls"][0]
+		assert fields["status"] == "Failed"
+		assert "ValueError" in fields["error"]
+		assert "late-finish failure" in fields["error"]
+
+	def test_late_finish_swallows_db_errors(self, captures, fake_local, fake_rq_job, fake_db, monkeypatch):
+		"""Best-effort guarantee: a DB error during the fallback must NOT raise
+		out of the hook (which would break the worker's after_job dispatcher).
+		The earlier Redis set_job_status write must NOT be suppressed either —
+		the fallback's try/except is separate from the helper's outer try."""
+		from optimus import hooks_callbacks
+
+		fake_local.optimus_bg_job_start_mono = time.monotonic() - 0.1
+		fake_db["session_status"] = "Ready"
+
+		def boom(*a, **kw):
+			raise RuntimeError("db is on fire")
+
+		monkeypatch.setattr(frappe.db, "set_value", boom, raising=False)
+
+		# Must not raise.
+		hooks_callbacks._track_bg_job_finished("S1", "J1")
+
+		# Redis write still landed (the fallback's failure didn't suppress it).
+		assert len(captures["set_job_status"]) == 1
+		assert captures["set_job_status"][0][2]["status"] == "Completed"

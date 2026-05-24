@@ -808,6 +808,28 @@ def _clear_capture_locals() -> None:
 # hooks did NOT already write (``if not _jm.get("status"):``), so no
 # double-work and no overwrite churn.
 #
+# Late-finish DocType fallback (v0.7.x+):
+# ``analyze._bg_wait_for_pending_jobs`` is hard-capped at
+# ``_MAX_BG_JOB_WAIT_SECONDS = 300`` (analyze.py:215). A job that runs longer
+# than 5 min ALWAYS exceeds the cap; at the cap, ``_finalize_pending_statuses``
+# marks the still-active job as ``status="Running"`` (no end times — analyze
+# can't predict when it'll finish), ``_persist`` writes the Optimus
+# Background Job child row from that snapshot, and ``_cleanup_redis`` then
+# DELETES the jobs hash. When the long job actually finishes minutes later,
+# the worker's ``_track_bg_job_finished`` writes to a deleted Redis key
+# (orphan) and the persisted row stays ``Running`` forever — there's no
+# in-band path to update it because re-analyze isn't viable (recordings /
+# meta / jobs hash are all gone).
+#
+# Closing the gap: after ``set_job_status`` writes to the Redis hash,
+# ``_track_bg_job_finished`` ALSO checks the Optimus Session DocType row;
+# if the session has finalized (status in {"Ready", "Failed"}) and a child
+# row exists at ``status="Running"``, it writes the terminal status +
+# ended_at + duration_ms + error directly via ``frappe.db.set_value`` +
+# commit. Guarded by an idempotency check (only updates Running placeholders
+# — never clobbers a fresher Completed) and a SEPARATE try/except from the
+# Redis path so neither failure suppresses the other.
+#
 # Both helpers are best-effort: any failure is swallowed so a tracking bug
 # can never break the user's actual job.
 
@@ -833,9 +855,7 @@ def _track_bg_job_started(session_uuid: str, method) -> None:
 			return
 		# frappe.enqueue accepts a callable too — extract its name so the
 		# row's Method column doesn't render "<function foo at 0x…>".
-		method_str = (
-			method if isinstance(method, str) else getattr(method, "__name__", str(method))
-		)
+		method_str = method if isinstance(method, str) else getattr(method, "__name__", str(method))
 		session.record_job(session_uuid, job_id, method_str)
 		from frappe.utils import now_datetime
 
@@ -855,16 +875,31 @@ def _track_bg_job_started(session_uuid: str, method) -> None:
 
 def _track_bg_job_finished(session_uuid: str, job_id: str) -> None:
 	"""Write the terminal status + ended_at + duration_ms while the RQ job
-	record is still alive in the worker. Lets analyze rely on the jobs hash
-	instead of re-fetching from RQ at persist time (which may have GC'd the
-	record by then, silently leaving the row stuck at status=Running).
+	record is still alive in the worker. Two write paths, in order:
+
+	1. **Redis jobs hash** — primary. analyze's ``session.get_jobs(...)``
+	   reads from here at persist time. The in-flight case where analyze is
+	   still mid-wait gets the authoritative final state via this write.
+
+	2. **Optimus Background Job DocType row** — late-finish fallback. If
+	   analyze has already finalized this session (status in {"Ready",
+	   "Failed"}) and ``_cleanup_redis`` has deleted the jobs hash, the
+	   Redis write above is an orphan; this path updates the persisted row
+	   directly so the report eventually reflects the late completion
+	   without needing a re-analyze (which isn't viable post-cleanup).
 
 	Failure detection: Frappe runs after_job hooks inside a ``try/finally``
 	wrapping the user's method, so an in-flight exception is visible via
 	``sys.exc_info()``. RQ's timeout-killer raises ``JobTimeoutException``
 	(its class name, regardless of import path) — we map that distinctly so
 	the report can flag timeouts separately from generic user-code failures.
+
+	Each write path has its own ``try/except: pass`` so a Redis hiccup
+	doesn't suppress the DocType write and vice versa. The status / timing
+	computation has its own outer guard so an unexpected failure there exits
+	cleanly without raising back into Frappe's hook dispatcher.
 	"""
+	# Compute terminal status + timing once; both write paths reuse them.
 	try:
 		import sys
 
@@ -888,6 +923,13 @@ def _track_bg_job_finished(session_uuid: str, job_id: str) -> None:
 				duration_ms = round((time.monotonic() - start_mono) * 1000, 2)
 			except Exception:
 				duration_ms = None
+	except Exception:
+		# Couldn't even compute the terminal state — bail rather than write
+		# half-baked data anywhere.
+		return
+
+	# Primary path: Redis jobs hash. Picked up by analyze if still mid-wait.
+	try:
 		session.set_job_status(
 			session_uuid,
 			job_id,
@@ -897,7 +939,46 @@ def _track_bg_job_finished(session_uuid: str, job_id: str) -> None:
 			duration_ms=duration_ms,
 		)
 	except Exception:
-		# Tracking failure must never break the user's job.
+		pass
+
+	# Late-finish fallback: update the persisted DocType row if analyze has
+	# already finalized this session and its jobs hash is gone. See the
+	# comment block above for the wait-cap rationale.
+	try:
+		docname = frappe.db.get_value(
+			"Optimus Session",
+			{"session_uuid": session_uuid},
+			"name",
+		)
+		if not docname:
+			return  # session not yet persisted — Redis path is the only path
+		session_status = frappe.db.get_value("Optimus Session", docname, "status")
+		if session_status not in ("Ready", "Failed"):
+			return  # analyze still mid-wait; let it pick up the Redis write
+		child_name = frappe.db.get_value(
+			"Optimus Background Job",
+			{"parent": docname, "job_id": job_id},
+			"name",
+		)
+		if not child_name:
+			return  # no row was persisted for this job — don't INSERT a phantom
+		cur_status = frappe.db.get_value("Optimus Background Job", child_name, "status")
+		if cur_status not in (None, "Running"):
+			return  # idempotency: don't clobber a fresher Completed / Failed
+		frappe.db.set_value(
+			"Optimus Background Job",
+			child_name,
+			{
+				"status": status,
+				"ended_at": ended_at,
+				"duration_ms": duration_ms,
+				"error": error,
+			},
+		)
+		frappe.db.commit()
+	except Exception:
+		# DocType update failure must NOT break the worker, and must NOT
+		# suppress the Redis write (which is in a separate try above).
 		pass
 
 
