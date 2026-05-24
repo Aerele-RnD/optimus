@@ -1715,7 +1715,11 @@
         {% set _link = callsite._abs or (callsite.filename if callsite.filename and callsite.filename.startswith("/") else None) %}
         <div class="finding-meta">
           {% if callsite.is_representative %}<span class="muted">most-called from</span> {% endif %}
-          {% if _link %}
+          {% if callsite._link_kind == "desk" %}
+            {# Server Script: callsite._abs already holds the full Desk URL
+               (/app/server-script/<name>). No vscode://file prefix, no :lineno suffix. #}
+            <a class="callsite-link" href="{{ callsite._abs }}" title="Open in Frappe Desk">{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}</a>
+          {% elif _link %}
             <a class="callsite-link" href="vscode://file{{ _link }}:{{ callsite.lineno }}" title="Open in VS Code / Cursor">{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}</a>
           {% else %}
             {{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}

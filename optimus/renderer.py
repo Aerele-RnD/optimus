@@ -2335,6 +2335,23 @@ def _finding_to_dict(child: Any, file_cache: dict | None = None) -> dict:
 			callsite["source_snippet"] = snippet
 			detail["callsite"] = callsite
 
+	# v0.7.x+: Server Script findings carry the synthetic ``<serverscript>:
+	# <name>`` filename. Set ``_abs`` to the Desk URL (``/app/server-script/
+	# <actual-name>``) and tag ``_link_kind = "desk"`` so the template renders
+	# a click-to-Desk link instead of building a broken vscode://file URL
+	# over the synthetic path. Bare ``<serverscript>`` (no name) falls
+	# through with no link — same fallback as any other unresolvable callsite.
+	if callsite and callsite.get("filename"):
+		_fn = str(callsite["filename"])
+		if _fn.startswith("<serverscript") or _fn.startswith("<server-script"):
+			from optimus.server_script_source import desk_url, extract_script_name
+
+			_scrubbed = extract_script_name(_fn)
+			if _scrubbed:
+				callsite["_abs"] = desk_url(_scrubbed, cache=file_cache)
+				callsite["_link_kind"] = "desk"
+				detail["callsite"] = callsite
+
 	# v0.6.0: AI-suggested fix (on-demand; empty until generated). Stored as
 	# JSON on the child row by api.suggest_fix. Convert the Markdown body to
 	# sanitized HTML here so the template can `| safe` it (mirrors the
@@ -3122,8 +3139,20 @@ def _path_within_bench(path: str) -> bool:
 	return path_abs == bench_abs or path_abs.startswith(bench_abs + os.sep)
 
 
-def _resolve_source_path(filename) -> str | None:
-	"""Map a finding's callsite ``filename`` to a real file on disk.
+def _resolve_source_path(filename):
+	"""Map a finding's callsite ``filename`` to a real file on disk — OR to a
+	Server Script sentinel for synthetic ``<serverscript>`` filenames.
+
+	Return shapes:
+	  - ``str`` — a real on-disk path (for app code / framework code).
+	  - ``("server_script", scrubbed_name)`` — Server Script tuple sentinel.
+	    Snippet readers branch on ``isinstance(resolved, tuple)`` and load
+	    the script body from the ``tabServer Script`` DocType via
+	    ``optimus.server_script_source.get_server_script_lines``. The
+	    template/callsite-builder side branches similarly to render a Desk
+	    link instead of a ``vscode://file`` editor link.
+	  - ``None`` — unresolvable (truly synthetic frames like ``<string>`` /
+	    ``<frozen …>``, missing files, or paths that escape the bench).
 
 	Call-tree / pyinstrument callsites are stored in app-relative form
 	(``<app>/<module-path-within-the-app-dir>`` — e.g. ``ugly_code/python/
@@ -3132,9 +3161,7 @@ def _resolve_source_path(filename) -> str | None:
 	process cwd is ``<bench>/sites``. Resolve via ``frappe.get_app_path``
 	(``frappe.get_app_path("ugly_code", "python", "common.py")`` →
 	``<bench>/apps/ugly_code/ugly_code/python/common.py``), with fallbacks
-	for absolute / cwd-relative / ``apps/…``-prefixed forms. Returns ``None``
-	for synthetic names (``<string>``, ``<frozen …>``), unresolvable paths,
-	or when ``frappe`` isn't importable (unit tests).
+	for absolute / cwd-relative / ``apps/…``-prefixed forms.
 
 	Phase K hardening: every resolved path is finally checked against
 	the bench-directory boundary (``_path_within_bench``). A filename
@@ -3144,7 +3171,21 @@ def _resolve_source_path(filename) -> str | None:
 	if not filename:
 		return None
 	name = str(filename).strip()
-	if not name or name.startswith("<"):
+	if not name:
+		return None
+	# Server Script special case: bridge to DB-stored script body via the
+	# tuple sentinel; downstream branches load + link to the Desk form.
+	if name.startswith("<serverscript") or name.startswith("<server-script"):
+		from optimus.server_script_source import extract_script_name
+
+		_scrubbed = extract_script_name(name)
+		if _scrubbed:
+			return ("server_script", _scrubbed)
+		# Bare ``<serverscript>`` — no script to look up; treat as
+		# unresolvable so the renderer falls back to plain-text display
+		# without a broken link.
+		return None
+	if name.startswith("<"):
 		return None
 	resolved: str | None = None
 	try:
@@ -3200,7 +3241,9 @@ def _read_source_snippet(
 	"""Return a ±1-line source snippet for ``(filename, lineno)``, or
 	``None`` when the file isn't readable / lineno is out of range. The
 	(possibly app-relative) ``filename`` is resolved via
-	``_resolve_source_path`` before opening."""
+	``_resolve_source_path`` before opening. Server Script filenames
+	(``<serverscript>: name``) resolve to a tuple sentinel and are read
+	from the ``tabServer Script`` DocType instead of disk."""
 	try:
 		ln = int(lineno)
 	except (TypeError, ValueError):
@@ -3212,11 +3255,16 @@ def _read_source_snippet(
 		lines = cache[filename]
 	else:
 		resolved = _resolve_source_path(filename)
-		try:
-			with open(resolved, encoding="utf-8") as fh:
-				lines = fh.read().splitlines()
-		except Exception:
-			lines = None
+		if isinstance(resolved, tuple) and resolved[0] == "server_script":
+			from optimus.server_script_source import get_server_script_lines
+
+			lines = get_server_script_lines(resolved[1], cache=cache)
+		else:
+			try:
+				with open(resolved, encoding="utf-8") as fh:
+					lines = fh.read().splitlines()
+			except Exception:
+				lines = None
 		if cache is not None:
 			cache[filename] = lines
 
@@ -3268,11 +3316,16 @@ def _read_function_body_snippet(
 		lines = cache[filename]
 	else:
 		resolved = _resolve_source_path(filename)
-		try:
-			with open(resolved, encoding="utf-8") as fh:
-				lines = fh.read().splitlines()
-		except Exception:
-			lines = None
+		if isinstance(resolved, tuple) and resolved[0] == "server_script":
+			from optimus.server_script_source import get_server_script_lines
+
+			lines = get_server_script_lines(resolved[1], cache=cache)
+		else:
+			try:
+				with open(resolved, encoding="utf-8") as fh:
+					lines = fh.read().splitlines()
+			except Exception:
+				lines = None
 		if cache is not None:
 			cache[filename] = lines
 

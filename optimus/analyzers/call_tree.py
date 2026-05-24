@@ -801,9 +801,17 @@ def _display_name_for_node(node: dict) -> str:
 	filename = (node.get("filename") or "").strip()
 	lineno = node.get("lineno")
 
-	# Detect Server Scripts (ERPNext): filename looks like
-	# "<serverscript-XYZ>" or contains "server_script".
+	# Detect Server Scripts: Frappe's safe_exec compiles with filename
+	# "<serverscript>" (bare) or "<serverscript>: <scrubbed-name>". Surface
+	# the script name + lineno so the user can locate the issue — the
+	# v0.7.x+ renderer also links these callsites to the Desk Server Script
+	# form (see optimus/server_script_source.py).
 	if filename.startswith("<serverscript") or filename.startswith("<server-script"):
+		from optimus.server_script_source import extract_script_name
+
+		_name = extract_script_name(filename)
+		if _name:
+			return f"<server-script: {_name}>:{lineno}" if lineno else f"<server-script: {_name}>"
 		return "<server-script body>"
 	if filename == "<string>":
 		return "<exec'd code>"
@@ -1420,6 +1428,17 @@ def _top_level_app(function: str, filename: str) -> str:
 	  - ``inspect.py``                               → "[other]"
 	  - ``<built-in>``                               → "[other]"
 	"""
+	# Server Scripts: filename identifies the bucket even when the
+	# function name is empty (``safe_exec`` compiles with function="").
+	# Check before the function-name fallthroughs so Server Script
+	# callsites roll up under a meaningful bucket instead of the
+	# anonymous ``[other]``. Frappe writes the filename as
+	# ``<serverscript>`` (bare) or ``<serverscript>: <scrubbed-name>``;
+	# either form belongs here.
+	_fn_norm = (filename or "").replace("\\", "/")
+	if _fn_norm.startswith("<serverscript") or _fn_norm.startswith("<server-script"):
+		return "Server Scripts"
+
 	# Synthetic markers from the tree normalizer
 	if not function or function in ("<root>", "<sql>") or function.startswith("["):
 		return "[other]"
