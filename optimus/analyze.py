@@ -137,11 +137,27 @@ def _get_analyzers() -> list:
 					title="optimus analyzer hook",
 					message=f"Custom analyzer {dotted} is not callable",
 				)
-		except Exception:
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"analyze.custom_hook.not_callable",
+						context={"hook": dotted or ""},
+					)
+				except Exception:
+					pass
+		except Exception as exc:
 			frappe.log_error(
 				title="optimus analyzer hook",
 				message=f"Failed to load custom analyzer {dotted}",
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.custom_hook.load_failed", exc,
+					context={"hook": dotted or ""},
+				)
+			except Exception:
+				pass
 
 	return analyzers
 
@@ -336,8 +352,16 @@ def _acquire_singleflight(session_uuid: str, docname: str, deadline) -> bool:
 			session_uuid=session_uuid,
 			_singleflight_deadline=deadline,
 		)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus single-flight re-enqueue")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.singleflight_reenqueue", exc,
+				context={"session_uuid": session_uuid or "", "docname": docname or ""},
+			)
+		except Exception:
+			pass
 		return True  # couldn't re-enqueue — just proceed
 	return False
 
@@ -549,8 +573,16 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 			session_uuid=session_uuid,
 			_bg_wait_until=deadline,
 		)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus bg-job wait re-enqueue")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.bg_job_wait_reenqueue", exc,
+				context={"session_uuid": session_uuid or ""},
+			)
+		except Exception:
+			pass
 		return 0  # couldn't re-enqueue — just proceed
 	return None
 
@@ -666,9 +698,17 @@ def _auto_arm_phase2(docname: str, context) -> None:
 			f"optimus: auto-armed phase-2 pass {run_uuid} for {docname} "
 			f"({len(eligible)} function(s)) — re-run the flow + Stop to capture line data."
 		)
-	except Exception:
+	except Exception as exc:
 		# Never let auto-arm break a finished analyze.
 		frappe.log_error(title="optimus auto-arm phase 2")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.auto_arm_phase2", exc,
+				context={"docname": docname or ""},
+			)
+		except Exception:
+			pass
 
 
 def run(session_uuid: str, _bg_wait_until: float | None = None,
@@ -701,6 +741,14 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 			title="optimus analyze",
 			message=f"No Optimus Session found for uuid {session_uuid}",
 		)
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.missing_session",
+				context={"session_uuid": session_uuid or ""},
+			)
+		except Exception:
+			pass
 		return
 
 	analyze_start = time.monotonic()
@@ -824,9 +872,17 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 			try:
 				result = analyzer(recordings, context)
 				context.merge(result)
-			except Exception:
+			except Exception as exc:
 				context.warnings.append(f"Analyzer {analyzer_name} failed (see error log)")
 				frappe.log_error(title=f"optimus analyzer {analyzer_name}")
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"analyze.analyzer_failed", exc,
+						context={"analyzer": analyzer_name, "session_uuid": session_uuid or ""},
+					)
+				except Exception:
+					pass
 
 			# v0.3.0: per-analyzer soft cap warning (logged, not fatal)
 			analyzer_elapsed = time.monotonic() - analyzer_start
@@ -866,7 +922,7 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 		# button on the form (api.backfill_ai_fixes).
 		try:
 			_enrich_findings_with_ai_suggestions(context, recordings=recordings)
-		except Exception:
+		except Exception as exc:
 			try:
 				context.warnings.append(
 					"AI auto-suggest was skipped after an unexpected error — "
@@ -876,14 +932,30 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 				frappe.log_error(title="optimus ai auto-suggest (outer)")
 			except Exception:
 				pass
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.ai_auto_suggest_outer", exc,
+					context={"session_uuid": session_uuid or ""},
+				)
+			except Exception:
+				pass
 
 		# v0.6.0: same toggle also bakes an LLM-vetted index recommendation
 		# onto the top few tables in the breakdown. Best-effort + double-wrapped.
 		try:
 			_enrich_table_breakdown_with_ai_suggestions(context, recordings)
-		except Exception:
+		except Exception as exc:
 			try:
 				frappe.log_error(title="optimus ai index-suggest (outer)")
+			except Exception:
+				pass
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.ai_index_suggest_outer", exc,
+					context={"session_uuid": session_uuid or ""},
+				)
 			except Exception:
 				pass
 
@@ -1046,6 +1118,14 @@ def _fetch_recordings(recording_uuids: list[str]):
 									f"and stripped-sig paths for {uuid}"
 								),
 							)
+							try:
+								from optimus import telemetry
+								telemetry.emit_failure(
+									"analyze.pyi_tree.load_failed_both_paths",
+									context={"recording_uuid": uuid or ""},
+								)
+							except Exception:
+								pass
 						else:
 							try:
 								frappe.logger().warning(
@@ -1065,11 +1145,27 @@ def _fetch_recordings(recording_uuids: list[str]):
 								f"unsigned fallback disabled by site_config."
 							),
 						)
-		except Exception:
+						try:
+							from optimus import telemetry
+							telemetry.emit_failure(
+								"analyze.pyi_tree.signature_mismatch",
+								context={"recording_uuid": uuid or ""},
+							)
+						except Exception:
+							pass
+		except Exception as exc:
 			frappe.log_error(
 				title="optimus analyze",
 				message=f"Failed to deserialize pyi tree for {uuid}",
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.pyi_tree.deserialize", exc,
+					context={"recording_uuid": uuid or ""},
+				)
+			except Exception:
+				pass
 			pyi_session = None
 
 		# Load the sidecar argument log (best-effort)
@@ -1078,11 +1174,19 @@ def _fetch_recordings(recording_uuids: list[str]):
 			loaded = frappe.cache.get_value(f"profiler:sidecar:{uuid}")
 			if isinstance(loaded, list):
 				sidecar = loaded
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(
 				title="optimus analyze",
 				message=f"Failed to load sidecar for {uuid}",
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.sidecar.load_failed", exc,
+					context={"recording_uuid": uuid or ""},
+				)
+			except Exception:
+				pass
 			sidecar = []
 
 		rec["pyi_session"] = pyi_session
@@ -1622,10 +1726,26 @@ def _persist(
 					"duration_ms": _jm.get("duration_ms") or 0,
 					"recording_uuid": _jm.get("recording_uuid") or "",
 				})
-			except Exception:
+			except Exception as exc:
 				frappe.log_error(title="optimus persist background_job row")
-	except Exception:
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"analyze.bg_job.persist_row", exc,
+						context={"session_uuid": getattr(context, "session_uuid", "") or ""},
+					)
+				except Exception:
+					pass
+	except Exception as exc:
 		frappe.log_error(title="optimus persist background_jobs")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.bg_job.persist_batch", exc,
+				context={"session_uuid": getattr(context, "session_uuid", "") or ""},
+			)
+		except Exception:
+			pass
 
 	doc.save(ignore_permissions=True)
 	safe_commit()
@@ -2009,10 +2129,18 @@ def _enrich_findings_with_ai_suggestions(context, *, recordings: list | None = N
 				actions_by_idx=actions_by_idx,
 			))
 			f["llm_fix_json"] = json.dumps(result, default=str)
-		except Exception:
+		except Exception as exc:
 			failures += 1
 			try:
 				frappe.log_error(title="optimus ai auto-suggest")
+			except Exception:
+				pass
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.ai_auto_suggest", exc,
+					context={"finding_type": f.get("finding_type") or ""},
+				)
 			except Exception:
 				pass
 
@@ -2245,10 +2373,15 @@ def _run_ai_backfill(doc, *, cap: int | None = None,
 			frappe.db.set_value("Optimus Finding", r.name, "llm_fix_json", blob)
 			r.llm_fix_json = blob
 			out["added"] += 1
-		except Exception:
+		except Exception as exc:
 			out["failed"] += 1
 			try:
 				frappe.log_error(title="optimus ai backfill")
+			except Exception:
+				pass
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("analyze.ai_backfill", exc)
 			except Exception:
 				pass
 	if out["added"]:
@@ -2392,9 +2525,17 @@ def _enrich_table_breakdown_with_ai_suggestions(context, recordings: list[dict])
 			pass
 		try:
 			t["ai_index"] = ai_fix.suggest_index(_ai_payload_for_table(t, recordings))
-		except Exception:
+		except Exception as exc:
 			try:
 				frappe.log_error(title="optimus ai index-suggest")
+			except Exception:
+				pass
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"analyze.ai_index_suggest", exc,
+					context={"table": (t.get("table") if isinstance(t, dict) else "") or ""},
+				)
 			except Exception:
 				pass
 
@@ -2642,9 +2783,14 @@ def _build_humanized_notes_html(
 		return ""
 	try:
 		steps_md = ai_fix.humanize_steps(actions, session_title=session_title)
-	except Exception:
+	except Exception as exc:
 		try:
 			frappe.log_error(title="optimus humanize_steps")
+		except Exception:
+			pass
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("analyze.humanize_steps", exc)
 		except Exception:
 			pass
 		return ""
@@ -2876,8 +3022,16 @@ def _render_and_attach_reports(docname: str, recordings: list[dict]) -> None:
 		)
 		if raw_url:
 			frappe.db.set_value("Optimus Session", docname, "raw_report_file", raw_url)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus render raw report")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.render_raw_report", exc,
+				context={"session_uuid": getattr(doc, "session_uuid", "") or "", "docname": docname or ""},
+			)
+		except Exception:
+			pass
 
 	safe_commit()
 
@@ -2942,8 +3096,16 @@ def _save_report_file(*, docname: str, filename: str, attached_to_field: str, co
 			except Exception:
 				pass
 		return file_doc.file_url
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title=f"optimus save_report_file {filename}")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.save_report_file", exc,
+				context={"filename": filename or "", "docname": docname or ""},
+			)
+		except Exception:
+			pass
 		return None
 
 
@@ -2956,8 +3118,16 @@ def _cleanup_redis(session_uuid: str, recording_uuids: list[str]) -> None:
 	"""
 	try:
 		session.delete_session_state(session_uuid)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus cleanup session_state")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.cleanup_session_state", exc,
+				context={"session_uuid": session_uuid or ""},
+			)
+		except Exception:
+			pass
 
 	for uuid in recording_uuids:
 		try:

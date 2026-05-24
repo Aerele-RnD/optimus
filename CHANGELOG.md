@@ -8,6 +8,118 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.11.1] — 2026-05-24
+
+**Telemetry instrumentation sweep — closes the v0.8.0 deferral.**
+
+v0.8.0 (`5529cde`) shipped opt-in failure telemetry with 15 hand-picked
+top-of-stack migration sites and an explicit deferral: *"migration of
+remaining ~65 log_error sites — picked once we see the v0.8.0 signal
+shape."* This release closes that deferral with a sweep of **72 additional
+sites** across 8 files, plus a **drift-protection audit test** that
+forever-after fails CI if a new `frappe.log_error(...)` call lands
+without a matching `telemetry.emit_failure(...)` within the next 16
+lines.
+
+### Added
+
+- **NEW `optimus/tests/test_telemetry_audit.py`** — the forever-after
+  drift-protection canary. Walks every `.py` file under `optimus/`,
+  asserts every `frappe.log_error(` line has a `telemetry.emit_failure(`
+  call within 16 lines after. Excludes `tests/`, `tests_integration/`,
+  `patches/`, `renderer/_internal.py` (deferred per the renderer-split
+  roadmap), and `telemetry.py` itself (its sink-failure handler can't
+  recurse into emit). Lists orphans with file:line on failure so a new
+  contributor knows exactly where to add the emit. The audit is the
+  v0.11.1 contract — from this PR forward, drift is mechanically caught.
+
+### Code
+
+- `optimus/api.py` — 16 new emit sites (`api.set_draining_window`,
+  `api.scheduler_check`, `api.inline_analyze.mark_failed`,
+  `api.inline_analyze.run`, `api.frontend_metrics.{xhr,vitals}_{rpush,ltrim}`,
+  `api.regenerate_reports.{fetch,ai_backfill}`, `api.suggest_fix.persist`,
+  `api.humanize_steps.fetch`, `api.refill_indexes.per_table`,
+  `api.phase2.{force_stop_redis_cleanup,force_stop_parent_save,scheduler_check}`).
+- `optimus/analyze.py` — 22 new emit sites
+  (`analyze.{custom_hook.{not_callable,load_failed},singleflight_reenqueue,
+  bg_job_wait_reenqueue,auto_arm_phase2,missing_session,analyzer_failed,
+  ai_auto_suggest_outer,ai_index_suggest_outer,pyi_tree.{load_failed_both_paths,
+  signature_mismatch,deserialize},sidecar.load_failed,bg_job.{persist_row,
+  persist_batch},ai_auto_suggest,ai_backfill,ai_index_suggest,humanize_steps,
+  render_raw_report,save_report_file,cleanup_session_state}`). Dynamic
+  identifiers (analyzer_name, recording_uuid, filename, table) go into
+  `context=`, not the event_name, so the DocType-level dedup groups all
+  failures of the same class under one row.
+- `optimus/janitor.py` — 14 new emit sites covering the 7 outer
+  sweep wrappers + the 7 inner-loop sites (per-old-session deletes,
+  enqueue_failed, stopping re-enqueue, phase-2 cleanup ×2, stuck phase-2
+  ×2).
+- `optimus/infra_capture.py` — 6 new emit sites
+  (`infra_capture.{process_metrics,system_metrics,loadavg,db_metrics,
+  redis_metrics,rq_metrics}`).
+- `optimus/install.py` — 5 new emit sites
+  (`install.after_install.{auto_role,tracked_apps_seed}`,
+  `install.on_user_role_change`, `install.before_uninstall.capture`,
+  `install.uninstall.cleanup`).
+- `optimus/hooks_callbacks.py` — 5 sites missed by the v0.8.0 sweep
+  (`after_request.{infra_end,header_injection,pyi_dump,sidecar_dump}`,
+  `after_job.infra_end`).
+- `optimus/analyzers/explain_flags.py` — 1 new emit site
+  (`analyzers.explain_flags.row_parse`).
+- `optimus/analyzers/index_suggestions.py` — 2 new emit sites
+  (`analyzers.index_suggestions.{optimizer_failure,dropped}`).
+- `optimus/line_profile/analyzer.py` — 1 new emit site
+  (`phase2.rerender_failed`).
+
+Every migrated site keeps its existing `frappe.log_error(...)` call
+unchanged — the emit is **additive**, never a replacement. Bare
+`except Exception:` blocks were converted to `except Exception as exc:`
+to feed the exception into `emit_failure`.
+
+### Event-name taxonomy (forever-after convention)
+
+- **Module prefix**: `api.`, `analyze.`, `janitor.`, `infra_capture.`,
+  `install.`, `analyzers.`, `phase2.`, `after_request.`, `after_job.`
+- **Phase suffix** where the failure has a natural inner identity
+  (e.g. `analyze.pyi_tree.deserialize`).
+- **Dynamic identity in context, not event_name** — the per-analyzer
+  failures all share `event_name="analyze.analyzer_failed"` with the
+  analyzer name in `context["analyzer"]`. Keeps the operator-facing
+  Optimus Telemetry Event list view scannable as instrumentation grows.
+
+### Operator notes
+
+- Defaults preserve existing behavior — telemetry stays opt-in
+  (`telemetry_enabled` default OFF). This release adds instrumentation,
+  not surveillance.
+- High-rate loops (frontend XHR/vitals rpush, per-finding AI auto-
+  suggest, per-pyi-tree deserialize, per-analyzer, per-bg-job, per-table
+  index, janitor per-old-session deletes) compress to a handful of
+  unique signatures at flush time via the v0.8.0 signature dedup — one
+  DocType row per `(event_name, signature)` with `count=N`. The deque's
+  `maxlen=500` provides backpressure if a single 10-minute window
+  somehow produces > 500 distinct signatures.
+
+### Deferred
+
+- `optimus/renderer/_internal.py` — graceful-degradation paths inside
+  the 60+ silent excepts. Picked up in a follow-up PR using the
+  renderer-split extraction recipe in `optimus/renderer/README.md`. The
+  allowlist entry in `test_telemetry_audit.py` documents the deferral.
+- Event-name standardization for the v0.8.0-migrated sites — they're
+  shipped + stable; no reason to churn.
+- A Frappe report ranking telemetry events by recent count — operator UX,
+  not blocked by this PR.
+
+### Engineering
+
+- 1 new test (`test_telemetry_audit.py::test_no_orphan_log_error_sites`,
+  the drift-protection canary). Unit suite: 1810 → 1811 passing,
+  1 skipped. Ruff clean.
+
+---
+
 ## [0.11.0] — 2026-05-24
 
 **Real-bench integration-test foundation — CI workflow + harness + two

@@ -49,28 +49,48 @@ def sweep_stale_sessions():
 	"""Run from scheduler every 5 minutes. Force-stop or mark-failed any stuck sessions."""
 	try:
 		_sweep_stale_recording()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_stale_recording")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_stale_recording", exc)
+		except Exception:
+			pass
 
 	try:
 		_sweep_stuck_analyzing()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_stuck_analyzing")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_stuck_analyzing", exc)
+		except Exception:
+			pass
 
 	# v0.7.x: sessions stranded in "Stopping" (analyze never ran — no worker,
 	# backlog, or an OOM-killed worker left a zombie job) — re-enqueue analyze.
 	try:
 		_sweep_stale_stopping()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_stale_stopping")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_stale_stopping", exc)
+		except Exception:
+			pass
 
 	# v0.6.0: phase-2 line-profile runs follow the same staleness model
 	# but live on the Optimus Phase Two Run child rows. Reuses the same
 	# thresholds (recording → 11min, analyzing → 30min).
 	try:
 		_sweep_stale_phase2_runs()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_stale_phase2_runs")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_stale_phase2_runs", exc)
+		except Exception:
+			pass
 
 
 def sweep_old_sessions():
@@ -88,20 +108,35 @@ def sweep_old_sessions():
 	"""
 	try:
 		_sweep_old_sessions()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_old_sessions")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_old_sessions", exc)
+		except Exception:
+			pass
 
 	try:
 		_sweep_orphan_redis_state()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_orphan_redis_state")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_orphan_redis_state", exc)
+		except Exception:
+			pass
 
 	# v0.8.0: opt-in failure telemetry retention. Only deletes anything
 	# when the feature is enabled; safe to call unconditionally.
 	try:
 		_sweep_old_telemetry()
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus janitor sweep_old_telemetry")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_old_telemetry", exc)
+		except Exception:
+			pass
 
 
 def _sweep_orphan_redis_state():
@@ -353,8 +388,16 @@ def _sweep_old_sessions():
 				delete_permanently=True,
 			)
 			deleted += 1
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title=f"optimus retention delete {row['name']}")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"janitor.retention_delete", exc,
+					context={"docname": row.get("name") or ""},
+				)
+			except Exception:
+				pass
 
 	if deleted:
 		safe_commit()
@@ -402,8 +445,16 @@ def _sweep_stale_recording():
 				queue="long",
 				session_uuid=row["session_uuid"],
 			)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title=f"optimus janitor enqueue {row['session_uuid']}")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"janitor.enqueue_analyze", exc,
+					context={"session_uuid": row.get("session_uuid") or ""},
+				)
+			except Exception:
+				pass
 
 
 def _sweep_stuck_analyzing():
@@ -469,10 +520,18 @@ def _sweep_stale_stopping():
 				queue="long",
 				session_uuid=row["session_uuid"],
 			)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(
 				title=f"optimus janitor stopping re-enqueue {row['session_uuid']}"
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"janitor.stopping_reenqueue", exc,
+					context={"session_uuid": row.get("session_uuid") or ""},
+				)
+			except Exception:
+				pass
 
 
 def _sweep_stale_phase2_runs():
@@ -515,13 +574,26 @@ def _sweep_stale_phase2_runs():
 				},
 			)
 			safe_commit()
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus janitor stale phase-2 recording")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("janitor.phase2_stale_recording.batch_update", exc)
+			except Exception:
+				pass
 		for row in rec_stale:
 			try:
 				_lp_capture.cleanup_run(row["run_uuid"])
-			except Exception:
+			except Exception as exc:
 				frappe.log_error(title="optimus janitor stale phase-2 recording cleanup")
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"janitor.phase2_stale_recording.redis_cleanup", exc,
+						context={"run_uuid": row.get("run_uuid") or ""},
+					)
+				except Exception:
+					pass
 
 	ana_cutoff = add_to_date(now_datetime(), minutes=-STALE_ANALYZING_MINUTES)
 	ana_stuck = frappe.db.get_all(
@@ -546,10 +618,23 @@ def _sweep_stale_phase2_runs():
 				},
 			)
 			safe_commit()
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus janitor stuck phase-2 analyzing")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("janitor.phase2_stuck_analyzing.batch_update", exc)
+			except Exception:
+				pass
 		for row in ana_stuck:
 			try:
 				_lp_capture.cleanup_run(row["run_uuid"])
-			except Exception:
+			except Exception as exc:
 				frappe.log_error(title="optimus janitor stuck phase-2 analyzing cleanup")
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"janitor.phase2_stuck_analyzing.redis_cleanup", exc,
+						context={"run_uuid": row.get("run_uuid") or ""},
+					)
+				except Exception:
+					pass

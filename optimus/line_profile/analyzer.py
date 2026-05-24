@@ -742,3 +742,11 @@ def _regenerate_parent_reports(session_uuid: str) -> None:
 			title="phase 2 re-render failed",
 			message=f"{session_uuid}: {exc}\n{traceback.format_exc()}",
 		)
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"phase2.rerender_failed", exc,
+				context={"session_uuid": session_uuid or ""},
+			)
+		except Exception:
+			pass

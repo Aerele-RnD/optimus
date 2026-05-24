@@ -408,8 +408,13 @@ def after_request(*args, **kwargs):
 					infra_capture.diff(start_snap, end_snap),
 					expires_in_sec=session.SESSION_TTL_SECONDS,
 				)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus infra end snapshot")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("after_request.infra_end", exc)
+			except Exception:
+				pass
 
 		# v0.5.0: correlation header for optimus_frontend.js. Must set
 		# Access-Control-Expose-Headers or browsers will refuse to surface
@@ -439,8 +444,13 @@ def after_request(*args, **kwargs):
 					recording_uuid_for_dump,
 					response=kwargs.get("response"),
 				)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus header injection")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("after_request.header_injection", exc)
+			except Exception:
+				pass
 
 		# Clear the per-request markers so they don't leak across requests
 		# (frappe.local is per-request anyway, but explicit is good).
@@ -667,8 +677,13 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 					infra_capture.diff(start_snap, end_snap),
 					expires_in_sec=session.SESSION_TTL_SECONDS,
 				)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus infra end snapshot (job)")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("after_job.infra_end", exc)
+			except Exception:
+				pass
 
 		# v0.6.0: this job ran — drop its RQ id from the session's
 		# pending-jobs set so analyze.run's wait can end early. Best-effort.
@@ -771,8 +786,16 @@ def _dump_capture_state_to_redis(recording_uuid: str | None) -> None:
 				tree_blob,
 				expires_in_sec=SESSION_TTL_SECONDS,
 			)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus pyi dump")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"after_request.pyi_dump", exc,
+					context={"recording_uuid": recording_uuid or ""},
+				)
+			except Exception:
+				pass
 
 	sidecar = getattr(frappe.local, "optimus_sidecar", None)
 	if sidecar:
@@ -788,8 +811,16 @@ def _dump_capture_state_to_redis(recording_uuid: str | None) -> None:
 				payload,
 				expires_in_sec=SESSION_TTL_SECONDS,
 			)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus sidecar dump")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"after_request.sidecar_dump", exc,
+					context={"recording_uuid": recording_uuid or ""},
+				)
+			except Exception:
+				pass
 
 	_clear_capture_locals()
 
