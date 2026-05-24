@@ -157,10 +157,12 @@ class TestTemplateCSS:
 		)
 
 	def test_queries_flat_table_col_num_fits_per_hit_label(self):
-		"""The Duration header carries a ``<small class=\"scope-tag\">per
-		hit</small>`` sub-label. At 92px the column couldn't fit
-		``Duration per hit`` inline and the sub-label collapsed to a barely-
-		visible ``P``. ≥ 100px gives room for the inline label."""
+		"""Historical: at 92px col-num couldn't fit ``Duration per hit`` inline
+		and the sub-label collapsed to a barely-visible ``P``. We later flipped
+		header scope-tags to ``display: block`` so the sub-label stacks below
+		the main word (no horizontal space needed) — but the 110px width is
+		kept as defensive headroom: even if some future revert makes scope-
+		tags inline again, the column still has room for the inline label."""
 		tpl = _read_template()
 		m = re.search(
 			r"table\.queries-flat-table\s+col\.col-num\s+\{[^}]*width:\s*(\d+)px",
@@ -169,8 +171,8 @@ class TestTemplateCSS:
 		assert m, "queries-flat-table col-num width rule missing"
 		width = int(m.group(1))
 		assert width >= 100, (
-			f"queries-flat-table col-num is {width}px; must be ≥ 100px so "
-			"the 'Duration per hit' header doesn't truncate to 'Duration P'."
+			f"queries-flat-table col-num is {width}px; must be ≥ 100px as "
+			"defensive headroom for the 'Duration per hit' header."
 		)
 
 	def test_scope_tag_has_nowrap_guard(self):
@@ -187,6 +189,45 @@ class TestTemplateCSS:
 		assert "white-space" in body and "nowrap" in body, (
 			"`.scope-tag` must declare `white-space: nowrap` to prevent "
 			"mid-word truncation in tight Duration headers"
+		)
+
+	def test_header_scope_tag_stacks_block(self):
+		"""``th .scope-tag`` must use ``display: block`` so sub-labels stack
+		BELOW the main header word instead of running inline. With nowrap
+		(see test_scope_tag_has_nowrap_guard) the inline form would overflow
+		into the next column header — block-display moves the label to a new
+		row of the th, taking zero horizontal space."""
+		tpl = _read_template()
+		# Match the BARE global rule whose selector starts with ``th .scope-tag``
+		# at the start of a line — distinguishes from compound selectors like
+		# ``#frontend table.vitals-table thead th .scope-tag``.
+		m = re.search(r"^\s*th\s+\.scope-tag\s*\{", tpl, re.MULTILINE)
+		assert m, (
+			"`th .scope-tag` CSS rule (bare, no table-scope prefix) not found"
+		)
+		# Walk to the matching '}' to extract the body.
+		body = tpl[m.end() : tpl.index("}", m.end())]
+		assert "display" in body and "block" in body and "inline-block" not in body, (
+			"`th .scope-tag` must use `display: block` (not inline-block) so "
+			"the sub-label stacks below the main header and can't overflow "
+			"into the next column. Found body: " + body.strip()
+		)
+
+	def test_vitals_table_no_longer_overrides_scope_tag_display(self):
+		"""The vitals-table used to have its own override for header scope-
+		tag display:block — we promoted that pattern to the global default,
+		so the per-table override is now redundant and must be removed (to
+		keep the CSS as single-source-of-truth)."""
+		tpl = _read_template()
+		# Match the old override's selector with flexible whitespace.
+		m = re.search(
+			r"#frontend\s+table\.vitals-table\s+thead\s+th\s+\.scope-tag\s*\{",
+			tpl,
+		)
+		assert m is None, (
+			"The `#frontend table.vitals-table thead th .scope-tag` override "
+			"should be removed — the global `th .scope-tag { display: block }` "
+			"rule subsumes it."
 		)
 
 

@@ -697,7 +697,19 @@
        quietly clipping mid-word. */
     white-space: nowrap;
   }
-  th .scope-tag, td.num .scope-tag { display: inline-block; }
+  /* Stack scope-tag sub-labels BELOW the main header text — keeps tight
+     numeric columns from having their sub-labels (e.g. "per hit", "per req
+     · all queries") overflow into the next column's header. The
+     vitals-table used to override this case-by-case; now it's the default
+     for every table header in the report. Cell values (td.num) still keep
+     scope-tags inline because the value column is single-line and the
+     label sits next to the number naturally. */
+  th .scope-tag {
+    display: block;
+    margin-left: 0;
+    margin-top: 2px;
+  }
+  td.num .scope-tag { display: inline-block; }
 
   /* NAV PILLS - replaces the Jump-to .section.small block. Phase K.2:
      sticky-top so the jump-to nav stays accessible when the reader
@@ -1268,13 +1280,6 @@
   #server-resource table.data thead th,
   #frontend table.vitals-table thead th {
     white-space: normal;
-  }
-  /* Render the scope-tag on its own line under the metric name —
-     cleaner than wrapping mid-phrase. */
-  #frontend table.vitals-table thead th .scope-tag {
-    display: block;
-    margin-left: 0;
-    margin-top: 2px;
   }
   table.data thead th.num { text-align: right; }
   table.data tbody td {
