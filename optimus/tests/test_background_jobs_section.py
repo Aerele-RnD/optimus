@@ -438,7 +438,7 @@ class TestEntryCallsiteInReport:
 		html = renderer.render_raw(doc, recordings=[])
 		assert "<h2>RQ Jobs</h2>" in html
 		# Inline path IS present (compact, useful).
-		assert "optimus/renderer.py:" in html
+		assert "optimus/renderer/_internal.py:" in html
 		# But the multi-line snippet PANEL's content is absent: the def
 		# line body itself doesn't render anywhere in the row.
 		assert "def render(" not in html
@@ -458,7 +458,7 @@ class TestEntryCallsiteInReport:
 		html = renderer.render_raw(doc, recordings=[])
 		# Action label and inline path both present.
 		assert self._DOTTED in html
-		assert "optimus/renderer.py:" in html
+		assert "optimus/renderer/_internal.py:" in html
 		# But the multi-line snippet panel's body (def line) isn't.
 		assert "def render(" not in html
 
@@ -540,7 +540,7 @@ class TestEntryCallsiteInReport:
 		])
 		html = renderer.render_raw(doc, recordings=[])
 		# Inline path with the function-name separator.
-		assert "optimus/renderer.py:" in html
+		assert "optimus/renderer/_internal.py:" in html
 		# v0.7.x Phase E: the parenthetical "(function)" form was
 		# replaced by " · function" in the editorial action-meta row.
 		assert "&middot; render" in html or "· render" in html

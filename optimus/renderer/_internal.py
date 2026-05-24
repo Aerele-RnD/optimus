@@ -24,15 +24,6 @@ from markupsafe import Markup
 
 from optimus.analyzers.base import SEVERITY_ORDER
 
-# Pygments is loaded lazily inside ``_ensure_pygments`` so paths that
-# never highlight code (DocType save callbacks, janitor sweeps, light
-# API endpoints) don't pay the ~30-50ms import cost at module load.
-# Module-level slots are populated on first use and cached.
-_PY_LEXER = None
-_PY_HTML_FMT = None
-_pyg_highlight = None
-
-
 # Sensitive-data redaction lives in ``optimus/redaction.py`` (pure
 # functions, no Frappe imports) so the recorder-patch path in
 # ``optimus/__init__.py`` can run them at CAPTURE time — before raw
@@ -44,6 +35,19 @@ _pyg_highlight = None
 from optimus.redaction import redact_call_queries as _redact_call_queries_base
 from optimus.redaction import redact_sensitive as _redact_sensitive_base
 from optimus.redaction import redact_sql_literals as _redact_sql_literals_base
+
+# v0.10.0+: Pygments syntax highlighting + the diff-block helpers moved to
+# ``optimus/renderer/syntax.py``. They're imported here under the same
+# names so existing call sites in this file resolve unchanged. The lazy
+# import of Pygments still happens on first call to ``_ensure_pygments``,
+# so the import-time cost story is preserved.
+from optimus.renderer.syntax import (
+	_ensure_pygments,
+	_highlight_all_snippets,
+	_highlight_diff_html,
+	_highlight_python_block_cached,
+	_highlight_python_snippet,
+)
 
 
 def _settings_extras() -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -85,142 +89,49 @@ def _redact_call_queries(calls) -> None:
 	_redact_call_queries_base(calls, extra_columns=extra_cols)
 
 
-_FILE_CACHE_MAX_ENTRIES = 50
+# v0.10.0+: source-file I/O + the bounded LRU cache moved to
+# optimus/renderer/source.py. The imports below re-introduce them under
+# the same names so the legacy call sites in this file resolve unchanged.
+from optimus.renderer.source import (
+	_FILE_CACHE_MAX_ENTRIES,
+	_SNIPPET_TRUNCATE_CHARS,
+	_BoundedFileCache,
+	_path_within_bench,
+	_read_source_snippet,
+	_read_source_window,
+	_resolve_source_path,
+)
 
+# v0.10.0+: duration + datetime formatting helpers moved to
+# optimus/renderer/time_format.py. Reintroduced under the same names.
+from optimus.renderer.time_format import (
+	_format_datetime_display,
+	_format_duration_ms,
+	_get_server_timezone,
+)
 
-class _BoundedFileCache:
-	"""Bounded LRU dict for ``_read_source_snippet``'s per-render file
-	cache. Caps memory growth on sessions that touch many unique
-	source files (the unbounded variant could hold ~50MB of file
-	content on a monolithic codebase). Supports the same dict-style
-	protocol the read site already uses: ``filename in cache``,
-	``cache[filename]``, ``cache[filename] = lines``.
-	"""
+# v0.10.0+: donut chart + hot-frames table + frame-name redaction moved to
+# optimus/renderer/visualization.py. All four are PUBLIC (passed into the
+# template context as helpers) so the package __init__.py also re-exports
+# them — the imports here keep the symbols available at this module's
+# namespace for callers that resolve via ``optimus.renderer._internal.X``.
+from optimus.renderer.visualization import (
+	_DONUT_COLORS,
+	build_donut_data,
+	build_donut_svg,
+	build_hot_frames_table,
+	redact_frame_name,
+)
 
-	__slots__ = ("_data", "_max")
-
-	def __init__(self, max_entries: int = _FILE_CACHE_MAX_ENTRIES):
-		from collections import OrderedDict
-		self._data: OrderedDict = OrderedDict()
-		self._max = max_entries
-
-	def __contains__(self, key) -> bool:
-		return key in self._data
-
-	def __getitem__(self, key):
-		# Touch on read so true LRU semantics apply (recently-read
-		# files stay in the cache longer than ones read once and
-		# forgotten).
-		value = self._data[key]
-		self._data.move_to_end(key)
-		return value
-
-	def __setitem__(self, key, value):
-		self._data[key] = value
-		self._data.move_to_end(key)
-		while len(self._data) > self._max:
-			self._data.popitem(last=False)
-
-
-def _ensure_pygments() -> bool:
-	"""Lazy-init Pygments lexer + formatter. Returns ``False`` if
-	Pygments isn't available (graceful degradation - the caller writes
-	``content_html = None`` and the template's plain-text fallback
-	kicks in)."""
-	global _PY_LEXER, _PY_HTML_FMT, _pyg_highlight
-	if _pyg_highlight is not None:
-		return True
-	try:
-		from pygments import highlight as _pyg_highlight_fn
-		from pygments.formatters import HtmlFormatter
-		from pygments.lexers import PythonLexer
-		_PY_LEXER = PythonLexer(stripnl=False, ensurenl=False)
-		_PY_HTML_FMT = HtmlFormatter(nowrap=True, classprefix="tok-")
-		_pyg_highlight = _pyg_highlight_fn
-		return True
-	except Exception:
-		return False
-
-
-@functools.lru_cache(maxsize=512)
-def _highlight_python_block_cached(joined: str) -> str:
-	"""Pygments tokenise + format a multi-line Python source block.
-	Cached across all calls within the same worker process so N
-	overlapping snippets from N findings tokenise the underlying source
-	exactly once. ``maxsize=512`` covers reasonable session sizes; LRU
-	eviction handles the long-tail.
-	"""
-	return _pyg_highlight(joined, _PY_LEXER, _PY_HTML_FMT).rstrip("\n")
-
-
-def _highlight_python_snippet(lines):
-	"""Mutate each ``{"lineno", "content"}`` dict in ``lines`` to add a
-	``content_html`` field carrying Pygments-highlighted span markup
-	(GitHub Light palette via CSS in the template).
-
-	The lines are joined into one source block before highlighting so
-	multi-line strings, decorators, and other multi-line constructs
-	keep correct tokenisation; the resulting HTML is then split per
-	``\\n`` and each chunk assigned back to its source line. Idempotent
-	on lines that already carry ``content_html``. Falls back to
-	``content_html = None`` (template uses plain ``content``) on any
-	Pygments failure or when Pygments isn't available.
-	"""
-	if not lines:
-		return
-	if all(isinstance(l, dict) and l.get("content_html") is not None for l in lines):
-		return
-	if not _ensure_pygments():
-		for l in lines:
-			if isinstance(l, dict):
-				l["content_html"] = None
-		return
-	try:
-		src = "\n".join((l.get("content") or "") for l in lines if isinstance(l, dict))
-		out = _highlight_python_block_cached(src)
-		chunks = out.split("\n")
-		if len(chunks) != len(lines):
-			for l in lines:
-				if isinstance(l, dict):
-					l["content_html"] = None
-			return
-		for l, chunk in zip(lines, chunks, strict=True):
-			if isinstance(l, dict):
-				l["content_html"] = chunk
-	except Exception:
-		for l in lines:
-			if isinstance(l, dict):
-				l["content_html"] = None
-
-
-def _highlight_all_snippets(actions, all_findings):
-	"""Walk findings + actions and apply VSCode Dark+ syntax highlighting
-	to every ``source_snippet`` list reachable from the data shapes the
-	template + line-prof builder iterate. Mutates in place.
-	"""
-	for f in all_findings or []:
-		if not isinstance(f, dict):
-			continue
-		td = f.get("technical_detail")
-		if not isinstance(td, dict):
-			continue
-		cs = td.get("callsite")
-		if isinstance(cs, dict):
-			_highlight_python_snippet(cs.get("source_snippet") or [])
-		for chain_key in ("drilldown_chain", "frame_chain", "call_chain"):
-			chain = td.get(chain_key)
-			if isinstance(chain, list):
-				for step in chain:
-					if isinstance(step, dict):
-						_highlight_python_snippet(step.get("source_snippet") or [])
-	for a in actions or []:
-		if not isinstance(a, dict):
-			continue
-		ec = a.get("entry_callsite")
-		if isinstance(ec, dict):
-			_highlight_python_snippet(ec.get("source_snippet") or [])
-
-_TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+# v0.10.0+: this module lives at ``optimus/renderer/_internal.py``; the
+# templates directory is ``optimus/templates/`` (one level up from the
+# package). The pre-split path was ``os.path.dirname(__file__) + "/templates"``,
+# which worked because the old monolithic ``renderer.py`` lived next to
+# ``templates/``. Resolve via the parent dir so the package-aware path
+# still points at the same on-disk template files.
+_TEMPLATES_DIR = os.path.join(
+	os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
+)
 
 
 # v0.6.0 Round 7: safe-mode redaction removed. _safe_url, redact_sensitive,
@@ -2996,243 +2907,19 @@ def _markdown_to_safe_html(text) -> str:
 		)
 
 
-# <pre> block, optionally wrapping a <code>...</code> (with or without a class).
-_PRE_BLOCK_RE = re.compile(
-	r'<pre[^>]*>(?:\s*<code([^>]*)>)?(.*?)(?:</code>\s*)?</pre>', re.S
-)
+# v0.10.0+: _PRE_BLOCK_RE, _looks_like_diff, _diff_line_class, and
+# _highlight_diff_html moved to optimus/renderer/syntax.py with the rest
+# of the Pygments + diff-highlighting helpers. The imports at the top of
+# this file re-introduce ``_highlight_diff_html`` under the same name.
 
 
-def _looks_like_diff(code_attrs: str, lines: list[str]) -> bool:
-	if "diff" in (code_attrs or ""):
-		return True
-	if any(ln.startswith("@@") for ln in lines):
-		return True
-	has_add = any(ln.startswith("+") for ln in lines)
-	has_del = any(ln.startswith("-") for ln in lines)
-	return has_add and has_del
-
-
-def _diff_line_class(line: str) -> str | None:
-	if line.startswith("@@") or line.startswith("+++") or line.startswith("---"):
-		return "dh-meta"
-	if line.startswith("+"):
-		return "dh-add"
-	if line.startswith("-"):
-		return "dh-del"
-	return None
-
-
-def _highlight_diff_html(html: str) -> str:
-	"""Wrap +/-/@@ lines inside diff-looking ``<pre>`` blocks in classed
-	spans. Pure string transform over already-sanitized HTML — only adds
-	``<span class="dh-…">`` wrappers around existing escaped text."""
-
-	def _wrap(match: re.Match) -> str:
-		code_attrs = match.group(1) or ""
-		inner = match.group(2) or ""
-		lines = inner.split("\n")
-		# A trailing "" from the markdown renderer's final newline — drop it
-		# so we don't emit an empty trailing block-span.
-		if lines and lines[-1] == "":
-			lines = lines[:-1]
-		if not lines or not _looks_like_diff(code_attrs, lines):
-			return match.group(0)
-		out: list[str] = []
-		for ln in lines:
-			cls = _diff_line_class(ln)
-			label = f"dh-line {cls}" if cls else "dh-line dh-ctx"
-			out.append(f'<span class="{label}">{ln or "&#8203;"}</span>')
-		code_open = f"<code{code_attrs}>" if code_attrs else "<code>"
-		return f'<pre class="dh">{code_open}' + "".join(out) + "</code></pre>"
-
-	return _PRE_BLOCK_RE.sub(_wrap, html)
-
-
-# Per-line truncation for source snippets/windows — keeps a single
-# multi-kilobyte minified line out of technical_detail_json / the LLM prompt.
-# (Kept here, with the readers, rather than imported from analyze.py — so the
-# readers don't pull in analyze.py, which imports frappe.recorder.)
-_SNIPPET_TRUNCATE_CHARS = 200
-
-
-def _path_within_bench(path: str) -> bool:
-	"""Phase-K-hardening boundary check: return True only when the
-	absolute ``path`` lies inside the bench directory tree. Used by
-	``_resolve_source_path`` to refuse callsite filenames that resolve
-	to ``/etc/passwd`` or other locations outside the bench.
-
-	Returns ``True`` (bypass) when:
-	  - ``frappe.flags.in_test`` is set (pytest fixtures legitimately
-	    point at /tmp/... paths the boundary would otherwise reject);
-	  - ``frappe.utils.get_bench_path`` isn't importable / fails (the
-	    check is a defence-in-depth layer, not a hard requirement).
-	"""
-	try:
-		import frappe
-		if getattr(frappe.flags, "in_test", False):
-			return True
-		import frappe.utils
-		bench = frappe.utils.get_bench_path()
-	except Exception:
-		return True
-	if not bench:
-		return True
-	try:
-		bench_abs = os.path.abspath(bench)
-		path_abs = os.path.abspath(path)
-	except Exception:
-		return False
-	return path_abs == bench_abs or path_abs.startswith(bench_abs + os.sep)
-
-
-def _resolve_source_path(filename):
-	"""Map a finding's callsite ``filename`` to a real file on disk — OR to a
-	Server Script sentinel for synthetic ``<serverscript>`` filenames.
-
-	Return shapes:
-	  - ``str`` — a real on-disk path (for app code / framework code).
-	  - ``("server_script", scrubbed_name)`` — Server Script tuple sentinel.
-	    Snippet readers branch on ``isinstance(resolved, tuple)`` and load
-	    the script body from the ``tabServer Script`` DocType via
-	    ``optimus.server_script_source.get_server_script_lines``. The
-	    template/callsite-builder side branches similarly to render a Desk
-	    link instead of a ``vscode://file`` editor link.
-	  - ``None`` — unresolvable (truly synthetic frames like ``<string>`` /
-	    ``<frozen …>``, missing files, or paths that escape the bench).
-
-	Call-tree / pyinstrument callsites are stored in app-relative form
-	(``<app>/<module-path-within-the-app-dir>`` — e.g. ``ugly_code/python/
-	common.py`` for ``<bench>/apps/ugly_code/ugly_code/python/common.py``,
-	or ``frappe/handler.py``). A bare ``open()`` fails because the Frappe
-	process cwd is ``<bench>/sites``. Resolve via ``frappe.get_app_path``
-	(``frappe.get_app_path("ugly_code", "python", "common.py")`` →
-	``<bench>/apps/ugly_code/ugly_code/python/common.py``), with fallbacks
-	for absolute / cwd-relative / ``apps/…``-prefixed forms.
-
-	Phase K hardening: every resolved path is finally checked against
-	the bench-directory boundary (``_path_within_bench``). A filename
-	that points outside the bench (e.g. ``/etc/passwd`` via a
-	malicious analyzer dict) returns ``None``.
-	"""
-	if not filename:
-		return None
-	name = str(filename).strip()
-	if not name:
-		return None
-	# Server Script special case: bridge to DB-stored script body via the
-	# tuple sentinel; downstream branches load + link to the Desk form.
-	if name.startswith("<serverscript") or name.startswith("<server-script"):
-		from optimus.server_script_source import extract_script_name
-
-		_scrubbed = extract_script_name(name)
-		if _scrubbed:
-			return ("server_script", _scrubbed)
-		# Bare ``<serverscript>`` — no script to look up; treat as
-		# unresolvable so the renderer falls back to plain-text display
-		# without a broken link.
-		return None
-	if name.startswith("<"):
-		return None
-	resolved: str | None = None
-	try:
-		if os.path.isabs(name):
-			resolved = name if os.path.exists(name) else None
-		elif os.path.exists(name):
-			resolved = name
-		else:
-			parts = [p for p in name.replace("\\", "/").split("/") if p]
-			if not parts:
-				return None
-			import frappe
-
-			candidates = []
-			try:
-				candidates.append(frappe.get_app_path(parts[0], *parts[1:]))
-			except Exception:
-				pass
-			try:
-				import frappe.utils
-				bench = frappe.utils.get_bench_path()
-				candidates.append(os.path.join(bench, name))
-				candidates.append(os.path.join(bench, "apps", name))
-			except Exception:
-				pass
-			for cand in candidates:
-				if cand and os.path.exists(cand):
-					resolved = cand
-					break
-	except Exception:
-		return None
-	if resolved and not _path_within_bench(resolved):
-		# Defence-in-depth: refuse paths that escape the bench tree.
-		# Log at warning level (best-effort - frappe may not be
-		# importable in unit-test contexts).
-		try:
-			import frappe
-			frappe.logger().warning(
-				f"optimus._resolve_source_path: rejected out-of-bench path {resolved!r}"
-			)
-		except Exception:
-			pass
-		return None
-	return resolved
-
-
-def _read_source_snippet(
-	filename: str,
-	lineno,
-	*,
-	cache: dict | None = None,
-) -> list[dict] | None:
-	"""Return a ±1-line source snippet for ``(filename, lineno)``, or
-	``None`` when the file isn't readable / lineno is out of range. The
-	(possibly app-relative) ``filename`` is resolved via
-	``_resolve_source_path`` before opening. Server Script filenames
-	(``<serverscript>: name``) resolve to a tuple sentinel and are read
-	from the ``tabServer Script`` DocType instead of disk."""
-	try:
-		ln = int(lineno)
-	except (TypeError, ValueError):
-		return None
-	if ln <= 0 or not filename:
-		return None
-
-	if cache is not None and filename in cache:
-		lines = cache[filename]
-	else:
-		resolved = _resolve_source_path(filename)
-		if isinstance(resolved, tuple) and resolved[0] == "server_script":
-			from optimus.server_script_source import get_server_script_lines
-
-			lines = get_server_script_lines(resolved[1], cache=cache)
-		else:
-			try:
-				with open(resolved, encoding="utf-8") as fh:
-					lines = fh.read().splitlines()
-			except Exception:
-				lines = None
-		if cache is not None:
-			cache[filename] = lines
-
-	if not lines:
-		return None
-
-	limit = _SNIPPET_TRUNCATE_CHARS
-	snippet: list[dict] = []
-	# v0.7.x: read a ±2-line window around the anchor (compromise
-	# between ±1 — too tight, body invisible — and ±4 — included
-	# preceding-function noise). The template's blank-line filter
-	# drops empties (except the callsite itself), so the visible
-	# snippet ends up at ~3-4 lines: the anchor `def` + a couple of
-	# body lines. For the exact hot line inside the function, the
-	# Slow-Hot-Path description points to the Line-Level Drilldown.
-	for n in range(max(1, ln - 2), ln + 3):
-		if 1 <= n <= len(lines):
-			content = lines[n - 1]
-			if len(content) > limit:
-				content = content[:limit] + "..."
-			snippet.append({"lineno": n, "content": content})
-	return snippet or None
+# v0.10.0+: _SNIPPET_TRUNCATE_CHARS, _path_within_bench, _resolve_source_path,
+# _read_source_snippet, _read_source_window all moved to
+# optimus/renderer/source.py — imported at the top of this file.
+# (Dead code that was moved to optimus/renderer/source.py has been removed here.
+# _resolve_source_path / _read_source_snippet / _read_source_window / _path_within_bench
+# / _SNIPPET_TRUNCATE_CHARS / _BoundedFileCache / _FILE_CACHE_MAX_ENTRIES now live in
+# optimus/renderer/source.py and are re-imported at the top of this file.)
 
 
 def _read_function_body_snippet(
@@ -3594,55 +3281,9 @@ def _resolve_frame_key_to_callsite(function_key, *, cache: dict | None = None) -
 	return None
 
 
-def _read_source_window(
-	filename: str,
-	lineno,
-	*,
-	before: int = 12,
-	after: int = 12,
-	cache: dict | None = None,
-	max_line_chars: int | None = None,
-) -> list[dict] | None:
-	"""Return a wider source window around ``(filename, lineno)`` for the
-	AI-fix prompt: a list of ``{lineno, content, is_target}`` covering
-	``lineno - before`` … ``lineno + after`` (clamped to the file). Same
-	per-line truncation as ``_read_source_snippet`` unless ``max_line_chars``
-	overrides it. Returns ``None`` when the file isn't readable / the lineno
-	is out of range. The (possibly app-relative) ``filename`` is resolved via
-	``_resolve_source_path`` before opening.
-	"""
-	try:
-		ln = int(lineno)
-	except (TypeError, ValueError):
-		return None
-	if ln <= 0 or not filename:
-		return None
-
-	if cache is not None and filename in cache:
-		lines = cache[filename]
-	else:
-		resolved = _resolve_source_path(filename)
-		try:
-			with open(resolved, encoding="utf-8") as fh:
-				lines = fh.read().splitlines()
-		except Exception:
-			lines = None
-		if cache is not None:
-			cache[filename] = lines
-
-	if not lines:
-		return None
-
-	limit = max_line_chars or _SNIPPET_TRUNCATE_CHARS
-	start = max(1, ln - max(0, before))
-	end = min(len(lines), ln + max(0, after))
-	window: list[dict] = []
-	for n in range(start, end + 1):
-		content = lines[n - 1]
-		if len(content) > limit:
-			content = content[:limit] + "..."
-		window.append({"lineno": n, "content": content, "is_target": n == ln})
-	return window or None
+# (_read_source_window duplicate definition removed — the function now
+# lives in optimus/renderer/source.py and is re-imported at the top of
+# this file.)
 
 
 # ---------------------------------------------------------------------------
@@ -4710,70 +4351,8 @@ def _now_iso() -> str:
 	return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _format_duration_ms(ms, threshold_ms: float = 1000.0, decimals: int = 0):
-	"""Render a duration as ``"<n>ms"`` (with ``decimals`` digits) — or, if it
-	crosses ``threshold_ms``, as ``"<n.nn>s"`` (always 2 decimals). The
-	``decimals`` arg controls only the ms branch so the existing ``%.1f`` /
-	``%.2f`` callsites (sub-ms query timings) keep their resolution below the
-	threshold. ``threshold_ms = 0`` disables the conversion.
-
-	Defensive on input: ``None`` / non-numeric → ``"0ms"``; honours sign.
-
-	v0.7.x: returns ``markupsafe.Markup`` so the seconds branch can
-	emit a ``<span class="time-high">`` wrapper without being escaped
-	when rendered via ``{{ fmt_ms(...) }}`` in Jinja. The wrapper draws
-	the reader's eye to values slow enough to roll over into seconds —
-	the timing rule itself is unchanged, just the visual emphasis is
-	new. ``Markup`` subclasses ``str`` so Python callers that compare /
-	concat the return value still work.
-	"""
-	try:
-		v = float(ms) if ms is not None else 0.0
-	except (TypeError, ValueError):
-		return Markup("0ms")
-	if threshold_ms and abs(v) >= threshold_ms:
-		return Markup(f'<span class="time-high">{v / 1000:.2f}s</span>')
-	return Markup(f"{v:.{decimals}f}ms")
-
-
-def _format_datetime_display(value) -> str:
-	"""Format a datetime (or datetime-string) for display in the report using
-	the site's System Settings (Date Format + Time Format) — which also drops
-	the microseconds. Falls back to the value with any trailing microseconds
-	stripped when Frappe isn't available (standalone / tests)."""
-	if not value:
-		return ""
-	try:
-		from frappe.utils import format_datetime
-
-		return format_datetime(value)
-	except Exception:
-		return re.sub(r"\.\d+", "", str(value))
-
-
-def _get_server_timezone() -> str:
-	"""Return a human-readable server timezone label.
-
-	Tries frappe's system settings first (more accurate than Python's
-	local tz guess). Falls back to the Python datetime tzname.
-	"""
-	try:
-		import frappe
-
-		tz = frappe.db.get_single_value("System Settings", "time_zone")
-		if tz:
-			return str(tz)
-	except Exception:
-		pass
-	try:
-		from datetime import datetime
-
-		name = datetime.now().astimezone().tzname()
-		if name:
-			return name
-	except Exception:
-		pass
-	return "UTC"
+# v0.10.0+: duration + datetime formatting moved to
+# optimus/renderer/time_format.py — see top-of-file import.
 
 
 # ---------------------------------------------------------------------------
@@ -4825,134 +4404,15 @@ _ACTIONABLE_FINDING_TYPES = frozenset({
 #   Network Overhead         — client/proxy territory, not user code
 
 
-def redact_frame_name(node: dict) -> str:
-	"""Build a tree node's display name. Always emits the full function
-	name plus its short filename and line number — single admin-scoped
-	report has no need for the safe-mode app collapse this used to do.
-	"""
-	if not isinstance(node, dict):
-		return "<unknown>"
-
-	function = node.get("function") or "<unknown>"
-	filename = node.get("filename") or ""
-	lineno = node.get("lineno") or 0
-
-	short_file = filename.split("/")[-1] if filename else "?"
-	return f"{function} ({short_file}:{lineno})"
+# v0.10.0+: redact_frame_name + build_donut_data + build_donut_svg +
+# build_hot_frames_table + the _DONUT_COLORS palette moved to
+# optimus/renderer/visualization.py. Imported at the top of this file.
+# (Dead code that was moved to optimus/renderer/visualization.py has been removed here.
+# _DONUT_COLORS / redact_frame_name / build_donut_data / build_donut_svg /
+# build_hot_frames_table now live in optimus/renderer/visualization.py and are
+# re-imported at the top of this file.)
 
 
-# Donut color palette (8 colors; rolls over for more).
-_DONUT_COLORS = [
-	"#ff6b6b", "#4ecdc4", "#ffd93d", "#6c5ce7",
-	"#a8e6cf", "#ff8b94", "#95e1d3", "#ffaaa5",
-]
-
-
-def build_donut_data(breakdown: dict) -> list:
-	"""Convert session_time_breakdown_json into ordered (label, ms, color) tuples.
-
-	v0.5.1: hides slices that round to 0ms in display. A session with
-	148ms of SQL and only a handful of sub-ms Python self-times was
-	rendering seven "Python (…) — 0ms" entries, all noise.
-	"""
-	if not breakdown:
-		return []
-
-	DONUT_DISPLAY_MIN_MS = 1.0
-
-	slices = []
-	sql_ms = breakdown.get("sql_ms", 0)
-	if sql_ms >= DONUT_DISPLAY_MIN_MS:
-		slices.append(("SQL", sql_ms, _DONUT_COLORS[0]))
-
-	by_app = breakdown.get("by_app", {})
-	for app, ms in by_app.items():
-		if ms < DONUT_DISPLAY_MIN_MS:
-			continue
-		color = _DONUT_COLORS[(len(slices)) % len(_DONUT_COLORS)]
-		slices.append((f"Python ({app})", ms, color))
-
-	return slices
-
-
-def build_donut_svg(slices: list) -> str:
-	"""Render the donut as an inline SVG pie for PDF mode.
-
-	wkhtmltopdf does not handle conic-gradient reliably; this SVG
-	fallback always renders correctly. Each slice becomes a <path>
-	element with a precomputed arc.
-	"""
-	if not slices:
-		return ""
-	import math
-
-	total = sum(s[1] for s in slices) or 1
-	cx, cy, r = 80, 80, 70
-	parts = ['<svg width="160" height="160" xmlns="http://www.w3.org/2000/svg">']
-	angle_start = -math.pi / 2  # start at 12 o'clock
-
-	for _label, ms, color in slices:
-		fraction = ms / total
-		angle_end = angle_start + fraction * 2 * math.pi
-		x1 = cx + r * math.cos(angle_start)
-		y1 = cy + r * math.sin(angle_start)
-		x2 = cx + r * math.cos(angle_end)
-		y2 = cy + r * math.sin(angle_end)
-		large_arc = 1 if fraction > 0.5 else 0
-		path = (
-			f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} '
-			f'A {r} {r} 0 {large_arc} 1 {x2:.1f} {y2:.1f} Z" '
-			f'fill="{color}" stroke="#fff" stroke-width="1"/>'
-		)
-		parts.append(path)
-		angle_start = angle_end
-
-	parts.append("</svg>")
-	return "".join(parts)
-
-
-def build_hot_frames_table(rows: list, is_hot: bool = False) -> list:
-	"""Build the hot-frames leaderboard rows.
-
-	``is_hot`` (Phase E): caller-controlled flag attached to each
-	emitted dict so the template can apply `tr.is-hot` styling on the
-	user-code rows (yellow tint) and leave the framework rows
-	unmarked. The renderer always splits hot frames into user-vs-
-	framework lists before calling this builder, so the flag is a
-	per-list constant — True for the user-code table, False for the
-	framework sibling.
-
-	v0.7.x: ``is_hot`` also selects WHICH time metric the row
-	displays. User-app frames (``is_hot=True``) keep the self-sum
-	``total_ms`` (precise per A.AE1). Framework frames
-	(``is_hot=False``) display ``total_cumulative_ms`` because
-	wrapper self-time is sub-sampler-interval and rounds to 0 across
-	every row. Framework rows are re-sorted by the cumulative metric
-	so the column reads top-down by impact.
-	"""
-	out = []
-	for row in rows or []:
-		# The hot-frame key already encodes "<short_path>::<func>" — use it
-		# directly. Routing through redact_frame_name appended a bogus "(?:0)"
-		# (placeholder file "?" + lineno 0, since no file/line is known here).
-		display = row.get("function") or "<unknown>"
-		if is_hot:
-			display_ms = row.get("total_ms", 0)
-		else:
-			display_ms = row.get(
-				"total_cumulative_ms", row.get("total_ms", 0)
-			)
-		out.append({
-			"display_name": display,
-			"total_ms": display_ms,
-			"occurrences": row.get("occurrences", 0),
-			"distinct_actions": row.get("distinct_actions", 0),
-			"action_refs": row.get("action_refs", []),
-			"is_hot": is_hot,
-		})
-	# Framework variant ranks by the displayed (cumulative) metric —
-	# the aggregator's outer sort was by self_ms, which produces
-	# all-zero ties on framework rows.
-	if not is_hot:
-		out.sort(key=lambda r: r.get("total_ms", 0), reverse=True)
-	return out
+# (build_donut_svg / build_hot_frames_table removed — they live in
+# optimus/renderer/visualization.py and are re-imported at the top
+# of this file.)

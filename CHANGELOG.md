@@ -8,6 +8,106 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.10.0] — 2026-05-24
+
+**Renderer refactor — foundation PR splitting the 4,958-line monolith
+into a package, with a structural-snapshot canary.**
+
+`optimus/renderer.py` (4,958 lines, 86 top-level defs, one 812-line
+`render()` orchestrator) was the app's single biggest maintainability
+hazard. Touching one helper rippled through 15+ callers spread over
+3,000+ lines of context; code review became "find the section" before
+"review the change"; new contributors faced a steep on-ramp.
+
+This release converts the file into a package and extracts the four
+lowest-coupling clusters as a proof-of-concept of the extraction
+recipe. The remaining five clusters stay in `_internal.py` and are
+staged for follow-up PRs — see `optimus/renderer/README.md` for the
+roadmap.
+
+### Architecture
+
+`optimus/renderer.py` → `optimus/renderer/` (package). A backward-compat
+shim in `__init__.py` walks `dir(_internal)` and re-exports every
+non-dunder name (including underscore-prefixed internals), so every
+existing `from optimus.renderer import X` and `optimus.renderer.X` call
+site continues to work unchanged — `analyze.py`, `api.py`, the test
+suite, and any third-party fork stay on the contract.
+
+### Extracted modules (~538 LOC moved)
+
+- `optimus/renderer/syntax.py` — Pygments highlighting + diff-block
+  wrapper. `_ensure_pygments`, `_highlight_python_block_cached`,
+  `_highlight_python_snippet`, `_highlight_all_snippets`,
+  `_highlight_diff_html`, plus the `_PRE_BLOCK_RE` / `_diff_line_class`
+  / `_looks_like_diff` internals.
+- `optimus/renderer/source.py` — source-file I/O + bounded LRU cache.
+  `_BoundedFileCache`, `_path_within_bench`, `_resolve_source_path`,
+  `_read_source_snippet`, `_read_source_window`,
+  `_SNIPPET_TRUNCATE_CHARS`, `_FILE_CACHE_MAX_ENTRIES`.
+- `optimus/renderer/visualization.py` — donut chart + hot-frames table +
+  frame-name redaction. `build_donut_data`, `build_donut_svg`,
+  `build_hot_frames_table`, `redact_frame_name`, plus the
+  `_DONUT_COLORS` palette.
+- `optimus/renderer/time_format.py` — duration + datetime formatting.
+  `_format_duration_ms`, `_format_datetime_display`,
+  `_get_server_timezone`.
+
+### Added
+
+- **NEW `test_renderer_structure_snapshot.py`** — the structural canary.
+  Pre-v0.10.0 tests asserted *content* ("the string '50× hits' appears
+  in the HTML") but never *structure*. A refactor that renamed
+  `<div class="finding-card">` to `<section class="finding">` would
+  have passed every existing test and quietly broken the (frozen)
+  template's CSS. The new test renders a synthetic fixture through
+  `render_raw()`, computes a structural fingerprint (section IDs + CSS
+  class multiset + per-tag count), and compares against
+  `optimus/tests/fixtures/renderer_structure.json`. Regenerate via
+  `REGENERATE_RENDERER_SNAPSHOT=1 pytest`. 14 tests total, including
+  enumerated public-API resolution checks for the 10 named symbols that
+  matter to external callers.
+- **NEW `optimus/renderer/README.md`** — the future-author roadmap: why
+  the package exists, the 5-step extraction recipe, the structural
+  snapshot's role, the public-API stability promise, and the 5-cluster
+  follow-up table with coupling estimates.
+
+### Code
+
+- `git mv optimus/renderer.py → optimus/renderer/_internal.py` to
+  preserve blame; the four extractions are smaller moves that follow
+  function-level via `git log --follow -L`.
+- `_internal.py`: 4,958 → 4,420 lines after the extractions. Each
+  submodule is imported back at the top of `_internal.py` so the bulk
+  of the file resolves all four clusters' names unchanged.
+- Updated tests that referenced `optimus/renderer.py` as a known file
+  path (5 test files, ~14 sites) to point at the new
+  `optimus/renderer/_internal.py`.
+- `test_app_priority_split.py` — one `patch.object(renderer, X)` call
+  rewritten to `patch.object(_renderer_internal, X)` because the
+  package re-export trick doesn't apply when `_internal.py`'s own call
+  sites resolve names through its own globals.
+
+### Deferred (follow-up PRs)
+
+- `call_tree_renderer` (~240 LOC, weak coupling).
+- `line_drilldown` (~840 LOC, internal coupling) — single biggest
+  remaining chunk.
+- `doc_event_renderer` (~300 LOC, moderate coupling).
+- `finding_enrichment` (~380 LOC, HIGH coupling) — tightly coupled to
+  `analyze.py`; defer until the surrounding modules are extracted.
+- `render()` orchestrator (~812 LOC, core) — keep integrated; an
+  orchestrator isn't a section.
+
+### Engineering
+
+- 14 new pure-pytest tests in `test_renderer_structure_snapshot.py`:
+  fingerprint match, self-containment invariant, section minimum,
+  public-API resolution (10 named symbols), and a circular-import
+  defense. Full suite **1810 passing + 1 skipped** (1796 → 1810).
+
+---
+
 ## [0.9.0] — 2026-05-24
 
 **AI privacy hardening — Critical Risk #2 of the architecture review.**

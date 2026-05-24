@@ -66,7 +66,7 @@ class TestResolveDottedToCode:
 		assert out is not None
 		abs_path, lineno, name = out
 		assert os.path.isabs(abs_path)
-		assert abs_path.replace("\\", "/").endswith("optimus/renderer.py")
+		assert abs_path.replace("\\", "/").endswith("optimus/renderer/_internal.py")
 		assert lineno == _expected_lineno()
 		assert name == "render"
 
@@ -94,10 +94,10 @@ class TestActionEntryCallsite:
 		assert cs["function"] == "render"
 		assert cs["lineno"] == _expected_lineno()
 		assert os.path.isabs(cs["_abs"])
-		assert cs["_abs"].replace("\\", "/").endswith("optimus/renderer.py")
+		assert cs["_abs"].replace("\\", "/").endswith("optimus/renderer/_internal.py")
 		# Display path is bench-relative (apps/...), not absolute, for in-bench files.
 		fn = cs["filename"].replace("\\", "/")
-		assert fn.endswith("optimus/renderer.py")
+		assert fn.endswith("optimus/renderer/_internal.py")
 		assert not os.path.isabs(cs["filename"])
 		# v0.7.x: snippet window widened from ±1 to ±4 — up to 9 rows
 		# centered on the target line. The target row is "def render(".
@@ -166,10 +166,10 @@ class TestActionEntryCallsite:
 
 class TestResolveFrameKeyToCallsite:
 	def test_resolves_via_dotted_strategy(self):
-		cs = renderer._resolve_frame_key_to_callsite("optimus/renderer.py::render")
+		cs = renderer._resolve_frame_key_to_callsite("optimus/renderer/_internal.py::render")
 		assert cs is not None
-		assert cs["filename"].replace("\\", "/").endswith("optimus/renderer.py")
-		assert os.path.isabs(cs["_abs"]) and cs["_abs"].endswith("renderer.py")
+		assert cs["filename"].replace("\\", "/").endswith("optimus/renderer/_internal.py")
+		assert os.path.isabs(cs["_abs"]) and cs["_abs"].endswith("renderer/_internal.py")
 		assert cs["function"] == "render"
 		assert cs["lineno"] == _expected_lineno()
 		assert cs["source_snippet"] and len(cs["source_snippet"]) <= 5
@@ -177,7 +177,7 @@ class TestResolveFrameKeyToCallsite:
 		assert target and target[0]["content"].lstrip().startswith("def render(")
 
 	def test_resolves_a_module_level_private_function(self):
-		cs = renderer._resolve_frame_key_to_callsite("optimus/renderer.py::_read_source_snippet")
+		cs = renderer._resolve_frame_key_to_callsite("optimus/renderer/_internal.py::_read_source_snippet")
 		assert cs is not None and cs["function"] == "_read_source_snippet"
 		assert cs["lineno"] == inspect.unwrap(renderer._read_source_snippet).__code__.co_firstlineno
 
@@ -191,7 +191,7 @@ class TestResolveFrameKeyToCallsite:
 	def test_none_when_func_missing_in_resolvable_file(self):
 		# dotted resolution fails (no such attr) AND grep finds no def → None.
 		assert renderer._resolve_frame_key_to_callsite(
-			"optimus/renderer.py::no_such_func_xyzq"
+			"optimus/renderer/_internal.py::no_such_func_xyzq"
 		) is None
 
 	def test_none_for_empty_or_malformed(self):
