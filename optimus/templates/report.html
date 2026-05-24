@@ -822,8 +822,13 @@
     background: var(--bg-paper); border: 1px solid var(--rule);
     border-radius: 6px; padding: 18px 20px;
   }
+  /* 340px label column (was 240px) so typical 47-49 char action labels
+     like "POST /api/method/erpnext.accounts.utils.recompute" fit without
+     ellipsis. The bar track (1fr) auto-shrinks to make room; the bar's
+     relative scaling within its track is unchanged (still 100% of track
+     for the longest action). Duration column unchanged at 88px. */
   .waterfall-row {
-    display: grid; grid-template-columns: 240px 1fr 88px;
+    display: grid; grid-template-columns: 340px 1fr 88px;
     gap: 12px; align-items: center; padding: 6px 0; font-size: 12.5px;
   }
   .waterfall-row + .waterfall-row { border-top: 1px solid var(--rule); }
