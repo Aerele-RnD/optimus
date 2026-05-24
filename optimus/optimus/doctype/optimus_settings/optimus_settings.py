@@ -23,7 +23,9 @@ class OptimusSettings(Document):
 		# Settings are read on every request (via the `enabled` gate in
 		# hooks_callbacks), so the cache version bumps on every save.
 		# The settings module's reader respects the cache version.
-		frappe.cache.delete_value("optimus_settings_cached")
+		from optimus import redis_keys
+
+		frappe.cache.delete_value(redis_keys.settings_cache())
 
 	# Numeric floors per field — a value below the floor would either
 	# break the analyzer at runtime (negative interval, zero retention)

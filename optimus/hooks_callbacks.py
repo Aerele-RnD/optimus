@@ -403,8 +403,9 @@ def after_request(*args, **kwargs):
 			if start_snap and recording_uuid_for_dump:
 				from optimus import infra_capture
 				end_snap = infra_capture.snapshot()
+				from optimus import redis_keys
 				frappe.cache.set_value(
-					f"profiler:infra:{recording_uuid_for_dump}",
+					redis_keys.infra(recording_uuid_for_dump),
 					infra_capture.diff(start_snap, end_snap),
 					expires_in_sec=session.SESSION_TTL_SECONDS,
 				)
@@ -672,8 +673,9 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 			if start_snap and recording_uuid_for_dump:
 				from optimus import infra_capture
 				end_snap = infra_capture.snapshot()
+				from optimus import redis_keys
 				frappe.cache.set_value(
-					f"profiler:infra:{recording_uuid_for_dump}",
+					redis_keys.infra(recording_uuid_for_dump),
 					infra_capture.diff(start_snap, end_snap),
 					expires_in_sec=session.SESSION_TTL_SECONDS,
 				)
@@ -781,8 +783,9 @@ def _dump_capture_state_to_redis(recording_uuid: str | None) -> None:
 				)
 			except Exception:
 				pass
+			from optimus import redis_keys
 			frappe.cache.set_value(
-				f"profiler:tree:{recording_uuid}",
+				redis_keys.tree(recording_uuid),
 				tree_blob,
 				expires_in_sec=SESSION_TTL_SECONDS,
 			)
@@ -806,8 +809,9 @@ def _dump_capture_state_to_redis(recording_uuid: str | None) -> None:
 			payload = list(sidecar)
 			if getattr(frappe.local, "optimus_sidecar_truncated", False):
 				payload.append({"_truncated": True})
+			from optimus import redis_keys
 			frappe.cache.set_value(
-				f"profiler:sidecar:{recording_uuid}",
+				redis_keys.sidecar(recording_uuid),
 				payload,
 				expires_in_sec=SESSION_TTL_SECONDS,
 			)

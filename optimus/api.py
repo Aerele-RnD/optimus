@@ -585,12 +585,20 @@ SOFT_CAP_FRONTEND_XHR = 1000
 SOFT_CAP_FRONTEND_VITALS = 200
 
 
+# v0.12.0: keys centralized in optimus.redis_keys. The two local helpers
+# kept their original names + signatures so call sites don't churn, but
+# now delegate to the canonical builders. Future PRs can inline the
+# calls; for now this keeps the api.py diff localized.
 def _frontend_xhr_key(session_uuid: str) -> str:
-	return f"profiler:frontend:{session_uuid}:xhr"
+	from optimus import redis_keys
+
+	return redis_keys.frontend_xhr(session_uuid)
 
 
 def _frontend_vitals_key(session_uuid: str) -> str:
-	return f"profiler:frontend:{session_uuid}:vitals"
+	from optimus import redis_keys
+
+	return redis_keys.frontend_vitals(session_uuid)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -832,7 +840,10 @@ def health() -> dict:
 
 # v0.4.0: onboarding toast state endpoints. Used by floating_widget.js
 # to decide whether to render the one-time onboarding toast.
-ONBOARDING_CACHE_PREFIX = "profiler:onboarding_seen:"
+# v0.12.0: key construction moved to optimus.redis_keys.onboarding_seen.
+# The TTL constant stays here as the policy lever — bump from the 1-year
+# default if a real complaint surfaces. The PREFIX constant is gone; the
+# read/write sites below call redis_keys.onboarding_seen(user) directly.
 ONBOARDING_CACHE_TTL_SECONDS = 365 * 24 * 60 * 60  # 1 year
 
 
@@ -854,7 +865,9 @@ def check_onboarding_seen() -> dict:
 			return {"seen": True}
 	except Exception:
 		pass
-	flag = frappe.cache.get_value(f"{ONBOARDING_CACHE_PREFIX}{user}")
+	from optimus import redis_keys
+
+	flag = frappe.cache.get_value(redis_keys.onboarding_seen(user))
 	return {"seen": bool(flag)}
 
 
@@ -862,8 +875,10 @@ def check_onboarding_seen() -> dict:
 def mark_onboarding_seen() -> dict:
 	"""Mark the onboarding toast as dismissed for the current user."""
 	user = _require_user()
+	from optimus import redis_keys
+
 	frappe.cache.set_value(
-		f"{ONBOARDING_CACHE_PREFIX}{user}",
+		redis_keys.onboarding_seen(user),
 		"1",
 		expires_in_sec=ONBOARDING_CACHE_TTL_SECONDS,
 	)

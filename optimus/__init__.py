@@ -1,4 +1,4 @@
-__version__ = "0.11.1"
+__version__ = "0.12.0"
 
 
 def safe_commit() -> None:
@@ -414,3 +414,26 @@ def _try_install_capture_wraps() -> bool:
 # before_request / before_job hooks will trigger the deferred install
 # on first request.
 _try_install_capture_wraps()
+
+
+# ---------------------------------------------------------------------------
+# v0.12.0: Redis schema-version sentinel
+# ---------------------------------------------------------------------------
+# Write the current SCHEMA_VERSION to ``optimus:schema_version`` at app
+# import so future migration paths can detect upgrades. Idempotent —
+# overwrites the sentinel on every boot. Best-effort: a Redis hiccup
+# must never break app load, same discipline as ``_startup_probe_tool2``
+# and ``_try_install_capture_wraps`` above. See
+# :mod:`optimus.redis_schema` for the contract.
+def _write_schema_sentinel() -> None:
+	try:
+		from optimus import redis_schema
+
+		redis_schema.write_schema_sentinel()
+	except Exception:
+		# Sentinel write isn't strictly required for normal operation
+		# (no read path uses it yet). Silently degrade.
+		pass
+
+
+_write_schema_sentinel()

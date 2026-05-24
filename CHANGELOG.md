@@ -8,6 +8,108 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.0] — 2026-05-24
+
+**Redis schema versioning foundation — closes the architecture review's
+mid-term refactor list.**
+
+Pre-v0.12.0, every Redis key Optimus writes had been evolving across
+the v0.5 → v0.11 sweep (the v0.7.x bg-tracking trilogy added per-job
+hashes; v0.8.0 added the telemetry buffer; v0.5.1 split combined
+frontend metrics into separate XHR/vitals lists) and **nothing in the
+codebase carried a version tag** — not the key names, not the value
+envelopes, not a startup sentinel. The HMAC envelope used for
+``profiler:tree:*`` was bare ``sig | pickle``; a future change to the
+pyinstrument tree shape would silently corrupt reads with no detection
+layer. Five modules also built keys via inline f-strings, scattering
+the schema surface across the codebase.
+
+This release establishes the foundation. It does NOT retroactively
+wrap every existing Redis value in a versioned envelope (that would
+break in-flight benches); it makes every FUTURE schema change safe by
+construction.
+
+### Added
+
+- **NEW `optimus/redis_keys.py`** — single source of truth for every
+  Redis key Optimus writes. ~22 public builder functions, one per key
+  pattern. ``SCHEMA_VERSION = 1`` constant + a ``KEY_PATTERNS`` tuple
+  the audit test cross-references against the doc.
+- **NEW `optimus/redis_schema.py`** — versioned-value envelope helpers
+  (``wrap_value`` / ``unwrap_value``) + schema-version sentinel write/
+  read (``write_schema_sentinel`` / ``read_schema_sentinel``). The
+  helpers are opt-in for new code; legacy un-wrapped values continue
+  to read exactly as today. On drift detection, ``unwrap_value``
+  emits a ``redis.schema_drift`` telemetry event (via the v0.8.0
+  pipeline) so operators see the mismatch in
+  ``Optimus Telemetry Event``.
+- **NEW `docs/REDIS-SCHEMA.md`** — full schema documentation. Every
+  key pattern × value shape × encoding × TTL × lifecycle, with a
+  versioning contract section + a contributor checklist. The audit
+  asserts this doc stays in lock-step with ``KEY_PATTERNS``.
+- **NEW `optimus/tests/test_redis_audit.py`** — drift-protection
+  canary in the v0.11.1 audit-test style. Two assertions: no inline
+  f-string keys inside ``frappe.cache.*`` calls (orphans are listed
+  with file:line on failure); ``redis_keys.KEY_PATTERNS`` equals the
+  documented inventory. Plus 4 round-trip tests for the envelope +
+  sentinel helpers.
+- **NEW schema-version sentinel write** at app import in
+  ``optimus/__init__.py`` (after the existing ``_startup_probe_tool2``
+  / ``_try_install_capture_wraps`` patches). Best-effort; a Redis
+  hiccup never breaks app load.
+
+### Migrated
+
+15 inline ``f"profiler:..."`` / ``f"optimus:..."`` keys across 6 files
+now resolve through ``redis_keys.*`` builders:
+``optimus/api.py`` (5), ``optimus/hooks_callbacks.py`` (3),
+``optimus/analyze.py`` (5 + delete sites in ``_cleanup_redis``),
+``optimus/settings.py`` (1), ``optimus/janitor.py`` (1),
+``optimus/session.py`` (3 ``delete_session_state`` cleanup lines),
+``optimus/optimus/doctype/optimus_settings/optimus_settings.py`` (1).
+Behaviour-preserving — the strings the builders return are identical
+to the f-strings they replace; no deployed Redis state shifts.
+
+### Untouched
+
+- The HMAC ``sign_blob`` / ``unsign_blob`` envelope — adding a version
+  tag inside the signed envelope is a follow-up with its own
+  migration story.
+- ``session.py`` / ``line_profile/capture.py``'s pre-v0.12.0 internal
+  helpers (``_active_key``, ``_meta_key``, etc.) — those callers don't
+  go through ``frappe.cache.X(literal_key, ...)``; they pass the
+  helper's return value, which is invisible to the audit.
+- Every existing Redis value envelope — no wrapping in this PR. The
+  ``wrap_value`` / ``unwrap_value`` helpers are reserved for the next
+  schema-version bump.
+
+### Deferred
+
+- **Wrap every existing value in a versioned envelope** (per-key
+  rollout in v0.13.0+).
+- **Add a version tag inside the HMAC envelope** (worth its own PR
+  with a migration path for in-flight signed blobs).
+- **Migrate the jobs hash to JSON-only encoding** to drop the dual-
+  encoding hazard documented in REDIS-SCHEMA.md § 5.
+- **Janitor proactive purge on schema-version mismatch** — reactive
+  cleanup-on-read is sufficient for the foundation.
+- **Unify the legacy ``session._meta_key`` etc. into ``redis_keys``**
+  — could be done now but doubles the diff size; cleaner as its own
+  follow-up.
+
+### Engineering
+
+- 7 new tests in ``test_redis_audit.py``. Full suite **1818 passing
+  + 1 skipped** (1811 → 1818). Ruff clean.
+- Two existing wiring tests (``test_analyze_run_v5_wiring`` +
+  ``test_correlation_header``) updated to grep for the new
+  ``redis_keys.X(`` builder calls instead of the migrated inline
+  f-strings.
+
+Version: 0.11.1 → 0.12.0.
+
+---
+
 ## [0.11.1] — 2026-05-24
 
 **Telemetry instrumentation sweep — closes the v0.8.0 deferral.**

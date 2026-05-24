@@ -238,7 +238,12 @@ _BG_WAIT_THROTTLE_SECONDS = 2.0
 # A best-effort Redis flag (NOT a held lock) lets only one session do the heavy
 # work at a time; others re-enqueue themselves to yield the worker (mirrors the
 # bg-job wait pattern), so a single-worker bench still makes progress.
-_SINGLEFLIGHT_KEY = "optimus:analyze:inflight"
+# v0.12.0: key centralized in optimus.redis_keys. The constant is kept
+# for code-local readability — every internal use that references the
+# key still does so via this module-level alias.
+from optimus import redis_keys as _redis_keys
+
+_SINGLEFLIGHT_KEY = _redis_keys.analyze_inflight()
 # Flag TTL. Heartbeated at each progress milestone in run(); if a worker dies
 # mid-analyze the flag self-heals within this window (no permanent strand).
 _SINGLEFLIGHT_TTL_SECONDS = 300
@@ -622,8 +627,8 @@ def _auto_arm_phase2(docname: str, context) -> None:
 		# Guard: don't arm over an active phase-1 or phase-2 pass for this user.
 		try:
 			if (
-				frappe.cache.get_value(f"profiler:lp:active:{user}")
-				or frappe.cache.get_value(f"profiler:active:{user}")
+				frappe.cache.get_value(_redis_keys.lp_active(user))
+				or frappe.cache.get_value(_redis_keys.session_active(user))
 			):
 				return
 		except Exception:
@@ -836,7 +841,7 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 				and not context.frontend_data.get("vitals")
 			):
 				legacy = frappe.cache.get_value(
-					f"profiler:frontend:{session_uuid}"
+					_redis_keys.frontend_legacy(session_uuid)
 				)
 				if legacy and isinstance(legacy, dict):
 					context.frontend_data = legacy
@@ -850,7 +855,7 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 			rec_uuid = rec.get("uuid")
 			if not rec_uuid:
 				continue
-			infra_blob = frappe.cache.get_value(f"profiler:infra:{rec_uuid}")
+			infra_blob = frappe.cache.get_value(_redis_keys.infra(rec_uuid))
 			if infra_blob:
 				rec["infra"] = infra_blob
 
@@ -1081,7 +1086,7 @@ def _fetch_recordings(recording_uuids: list[str]):
 		pyi_session = None
 		try:
 			from optimus.session import unsign_blob
-			tree_blob = frappe.cache.get_value(f"profiler:tree:{uuid}")
+			tree_blob = frappe.cache.get_value(_redis_keys.tree(uuid))
 			if tree_blob:
 				verified = unsign_blob(tree_blob)
 				if verified is not None:
@@ -1171,7 +1176,7 @@ def _fetch_recordings(recording_uuids: list[str]):
 		# Load the sidecar argument log (best-effort)
 		sidecar = []
 		try:
-			loaded = frappe.cache.get_value(f"profiler:sidecar:{uuid}")
+			loaded = frappe.cache.get_value(_redis_keys.sidecar(uuid))
 			if isinstance(loaded, list):
 				sidecar = loaded
 		except Exception as exc:
@@ -1346,7 +1351,7 @@ def _enrich_recordings(recordings: list[dict]) -> list[str]:
 
 			# Second tier: cross-session frappe.cache with TTL. Two
 			# analyze runs on a stable schema will hit this cache.
-			shared_key = f"profiler:explain:{cache_key}"
+			shared_key = _redis_keys.explain_cache(cache_key)
 			if use_shared_cache:
 				cached = frappe.cache.get_value(shared_key)
 				if cached is not None:
@@ -3140,10 +3145,10 @@ def _cleanup_redis(session_uuid: str, recording_uuids: list[str]) -> None:
 			pass
 		# v0.3.0: also delete the per-recording tree and sidecar keys.
 		try:
-			frappe.cache.delete_value(f"profiler:tree:{uuid}")
+			frappe.cache.delete_value(_redis_keys.tree(uuid))
 		except Exception:
 			pass
 		try:
-			frappe.cache.delete_value(f"profiler:sidecar:{uuid}")
+			frappe.cache.delete_value(_redis_keys.sidecar(uuid))
 		except Exception:
 			pass

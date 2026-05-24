@@ -289,7 +289,16 @@ class OptimusConfig:
 	ai_request_timeout_seconds: int = 60
 
 
-_CACHE_KEY = "optimus_settings_cached"
+# v0.12.0: key centralized in optimus.redis_keys. The module-level
+# constant alias is kept so existing internal references resolve without
+# touching every call site.
+def _settings_cache_key() -> str:
+	from optimus import redis_keys
+
+	return redis_keys.settings_cache()
+
+
+_CACHE_KEY = _settings_cache_key()
 
 
 def _read_doctype_row() -> dict | None:

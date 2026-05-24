@@ -579,6 +579,7 @@ def delete_session_state(session_uuid: str) -> None:
 	# Per-recording infra keys (profiler:infra:<recording_uuid>) are
 	# cleaned up alongside RECORDER_REQUEST_HASH entries when analyze
 	# walks the recording UUIDs, so no separate sweep here.
-	frappe.cache.delete_value(f"profiler:frontend:{session_uuid}")
-	frappe.cache.delete_value(f"profiler:frontend:{session_uuid}:xhr")
-	frappe.cache.delete_value(f"profiler:frontend:{session_uuid}:vitals")
+	from optimus import redis_keys
+	frappe.cache.delete_value(redis_keys.frontend_legacy(session_uuid))
+	frappe.cache.delete_value(redis_keys.frontend_xhr(session_uuid))
+	frappe.cache.delete_value(redis_keys.frontend_vitals(session_uuid))
