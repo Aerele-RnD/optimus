@@ -81,7 +81,18 @@ def before_request_line_profile(*args, **kwargs) -> None:
 		# after_request teardown) and left tool 2 registered, clear the orphan
 		# before enabling so the worker recovers without a bench restart. Guarded
 		# on "no active profiler in this thread" so it can't drop our own run.
+		# Log when the reclaim actually fires — silent reclaim masked the leak
+		# class in production for months (Critical Risk #3 of the architecture
+		# review).
 		if getattr(frappe.local, "_lp_profiler", None) is None:
+			import sys as _sys
+
+			_mon = getattr(_sys, "monitoring", None)
+			if _mon is not None and _mon.get_tool(_mon.PROFILER_ID) == "line_profiler":
+				frappe.logger().warning(
+					"optimus.line_profile.before_request: reclaiming orphan "
+					"tool 2 from a prior request that skipped teardown."
+				)
 			capture.release_monitoring_tool()
 		profiler.enable_by_count()
 		frappe.local._lp_profiler = profiler
@@ -184,8 +195,17 @@ def before_job_line_profile(method=None, kwargs=None, **rest) -> None:
 
 		# Self-heal a tool 2 orphaned by a previously-killed job (see
 		# before_request_line_profile). RQ workers run one job at a time, so
-		# there's no in-process concurrency to disturb here.
+		# there's no in-process concurrency to disturb here. Log when the
+		# reclaim actually fires (Critical Risk #3).
 		if getattr(frappe.local, "_lp_profiler", None) is None:
+			import sys as _sys
+
+			_mon = getattr(_sys, "monitoring", None)
+			if _mon is not None and _mon.get_tool(_mon.PROFILER_ID) == "line_profiler":
+				frappe.logger().warning(
+					"optimus.line_profile.before_job: reclaiming orphan "
+					"tool 2 from a prior job that skipped teardown."
+				)
 			capture.release_monitoring_tool()
 		profiler.enable_by_count()
 		frappe.local._lp_profiler = profiler

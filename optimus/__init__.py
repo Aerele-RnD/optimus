@@ -261,6 +261,88 @@ def _patch_recorder():
 _patch_recorder()
 
 
+# ---------------------------------------------------------------------------
+# sys.monitoring tool-2 startup probe (v0.7.x+) — Critical Risk #3
+# ---------------------------------------------------------------------------
+# On Python 3.12+ line_profiler claims sys.monitoring.PROFILER_ID (tool 2).
+# If a worker died mid-Phase-2 without running its after_request finally
+# (or hit the pre-6f66a43 teardown bug), tool 2 stays owned by
+# "line_profiler" process-globally — and the next request to that worker
+# inherits the orphan AND gets line-traced. The pre-arm self-heal in
+# optimus/line_profile/hooks.py covers Phase 2 paths but only fires when
+# the NEXT Phase 2 request runs; every interim request between worker
+# boot and that Phase 2 fire pays the line-trace tax.
+#
+# This probe runs ONCE at app-import (between _patch_recorder and
+# _try_install_capture_wraps) and:
+#
+#   * Auto-reclaims tool 2 when it's owned by "line_profiler" — the
+#     worker-respawn-after-crash case — and LOGS the recovery so the
+#     event is visible in journalctl + Error Log.
+#   * Logs LOUDLY when tool 2 is owned by an unknown component (third-
+#     party profiler / debugger / future Python change), but does NOT
+#     touch the tool. Phase 2 will conflict; the operator decides.
+#   * Silent (and a no-op) on Python < 3.12 (no sys.monitoring) or when
+#     nobody owns tool 2.
+#
+# Best-effort everywhere — never raises out of the import path.
+
+
+def _startup_probe_tool2() -> None:
+	"""Detect a leaked sys.monitoring tool 2 at app-import. See the
+	rationale comment above. Best-effort; mirrors the discipline of
+	_patch_enqueue / _patch_recorder."""
+	try:
+		import sys
+
+		mon = getattr(sys, "monitoring", None)
+		if mon is None:
+			return  # Python < 3.12 — nothing to probe
+		pid = mon.PROFILER_ID
+		owner = mon.get_tool(pid)
+		if owner is None:
+			return  # happy path: nobody owns it
+
+		# Resolve a usable logger. Pre-frappe-init contexts (some bench
+		# bootstrap modes, plain pytest) won't have frappe.logger ready;
+		# degrade gracefully to print so the warning is still visible.
+		try:
+			import frappe
+
+			log = frappe.logger().warning
+		except Exception:
+			log = print
+
+		if owner == "line_profiler":
+			log(
+				"optimus._startup_probe_tool2: reclaiming line_profiler "
+				"orphan on sys.monitoring tool 2 (worker died mid-Phase-2). "
+				"Auto-released; next Phase 2 run starts clean."
+			)
+			try:
+				mon.set_events(pid, 0)
+				mon.free_tool_id(pid)
+			except Exception:
+				pass
+		else:
+			log(
+				f"optimus._startup_probe_tool2: sys.monitoring tool 2 is "
+				f"already owned by {owner!r} at app-import. Phase 2 will "
+				f"conflict; check for a third-party profiler / debugger."
+			)
+	except Exception:
+		# Probe failure must never break app load. Best-effort log + return.
+		try:
+			import frappe
+
+			frappe.log_error(title="optimus._startup_probe_tool2")
+		except Exception:
+			pass
+
+
+_startup_probe_tool2()
+
+
 # v0.3.0: install sidecar wraps for redundant-call detection.
 # Idempotent — safe to call multiple times. Wraps are activation-gated
 # at call time so they're no-ops for non-recording users.
