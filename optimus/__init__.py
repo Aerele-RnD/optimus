@@ -1,4 +1,4 @@
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 
 def safe_commit() -> None:
@@ -330,12 +330,17 @@ def _startup_probe_tool2() -> None:
 				f"already owned by {owner!r} at app-import. Phase 2 will "
 				f"conflict; check for a third-party profiler / debugger."
 			)
-	except Exception:
+	except Exception as exc:
 		# Probe failure must never break app load. Best-effort log + return.
 		try:
 			import frappe
 
 			frappe.log_error(title="optimus._startup_probe_tool2")
+		except Exception:
+			pass
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("startup_probe_tool2", exc)
 		except Exception:
 			pass
 
@@ -392,11 +397,16 @@ def _try_install_capture_wraps() -> bool:
 
 		capture.install_wraps()
 		return True
-	except Exception:
+	except Exception as exc:
 		try:
 			frappe.log_error(title="optimus capture.install_wraps")
 		except Exception:
 			pass  # never let a logging failure break app load
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("capture_install_wraps", exc)
+		except Exception:
+			pass
 		return False
 
 

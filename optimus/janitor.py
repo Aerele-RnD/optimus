@@ -96,6 +96,13 @@ def sweep_old_sessions():
 	except Exception:
 		frappe.log_error(title="optimus janitor sweep_orphan_redis_state")
 
+	# v0.8.0: opt-in failure telemetry retention. Only deletes anything
+	# when the feature is enabled; safe to call unconditionally.
+	try:
+		_sweep_old_telemetry()
+	except Exception:
+		frappe.log_error(title="optimus janitor sweep_old_telemetry")
+
 
 def _sweep_orphan_redis_state():
 	"""Delete profiler:session:*:* Redis keys with no matching DocType row.
@@ -185,6 +192,43 @@ def _sweep_orphan_redis_state():
 			)
 		except Exception:
 			pass
+
+
+def _sweep_old_telemetry():
+	"""Delete Optimus Telemetry Event rows older than the configured
+	retention window. Capped at :data:`MAX_DELETIONS_PER_RUN` so a
+	noisy site can't lock the DB with a single sweep — the next daily
+	tick picks up where this one stopped.
+
+	No-op when the feature is OFF (the DocType row still exists, but
+	there's nothing to delete because nothing was being written).
+	"""
+	try:
+		from optimus import settings
+		cfg = settings.get_config()
+	except Exception:
+		return
+	if not getattr(cfg, "telemetry_enabled", False):
+		return
+
+	retention_days = max(1, int(getattr(cfg, "telemetry_retention_days", 30) or 30))
+	cutoff = add_to_date(now_datetime(), days=-retention_days)
+	try:
+		# Direct SQL with the same cap pattern other sweeps use; bypasses
+		# the controller (which is a no-op anyway — see the DocType .py).
+		frappe.db.sql(
+			"""
+			DELETE FROM `tabOptimus Telemetry Event`
+			WHERE `last_seen` < %s
+			ORDER BY `last_seen` ASC
+			LIMIT %s
+			""",
+			(cutoff, MAX_DELETIONS_PER_RUN),
+		)
+		safe_commit()
+	except Exception:
+		# Best-effort — the caller has its own try/except wrapper.
+		raise
 
 
 def _sweep_old_sessions():

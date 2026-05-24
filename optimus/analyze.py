@@ -919,9 +919,16 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 			docname=docname,
 		)
 
-	except Exception:
+	except Exception as exc:
 		frappe.db.rollback()
 		frappe.log_error(title=f"optimus analyze {session_uuid}")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"analyze.run", exc, context={"session_uuid": session_uuid}
+			)
+		except Exception:
+			pass
 		try:
 			frappe.db.set_value("Optimus Session", docname, "status", "Failed")
 			safe_commit()

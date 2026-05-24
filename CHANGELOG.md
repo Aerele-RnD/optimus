@@ -8,6 +8,68 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.8.0] — 2026-05-24
+
+**Opt-in failure telemetry — Critical Risk #4 of the architecture review.**
+
+The app previously had ~79 `frappe.log_error` call sites and ~200+ silent
+`try/except` blocks but no aggregation: every failure landed in Frappe's
+global `Error Log` as a one-off row, so an operator couldn't tell
+*"fails 4000×/day from THIS code path"* from *"happened once and never
+again"*.
+
+This release adds an opt-in counter that aggregates failures by signature
+(event name + last 5 traceback frames). Default **OFF** — per the
+self-hosted product thesis, telemetry never phones home. When enabled the
+default sink is a local `Optimus Telemetry Event` DocType the operator
+inspects in their own Desk; a JSONL file sink (`<bench>/logs/optimus_telemetry.jsonl`)
+is opt-in for log aggregators. An HTTPS endpoint field exists in Settings
+for forward compatibility but its transport implementation is deferred to
+a follow-up release.
+
+### Added
+
+- `optimus/telemetry.py` — bounded in-process buffer (`maxlen=500`) +
+  lock-free `emit_failure()` hot path + scheduled `flush()` every 10 minutes.
+  PII scrub: file paths under bench rewrite to `<bench>/apps/<app>/file.py:LINE`,
+  frames outside `optimus/` collapse to `<user_code>:LINE`, context dicts
+  cap at 8 keys × 200 chars/value.
+- New DocType `Optimus Telemetry Event` (event_name, signature, count,
+  first_seen, last_seen, scrubbed traceback, version metadata). Unique key
+  via deterministic row name from `(event_name, signature)` enables atomic
+  `INSERT … ON DUPLICATE KEY UPDATE` so multi-worker flushes converge.
+- 15 high-leverage migration sites in `__init__.py`, `hooks_callbacks.py`,
+  `line_profile/hooks.py`, `analyze.py`, and `ai_fix.py`. Telemetry is
+  **additive** to the existing `frappe.log_error` calls — Error Log
+  visibility is unchanged; misconfigured telemetry cannot regress it.
+- Optimus Settings: new Telemetry tab with five additive fields
+  (master toggle, DocType sink, JSONL sink, endpoint URL, retention days).
+  All depend_on the master toggle so the form stays clean when OFF.
+- Janitor: `_sweep_old_telemetry()` runs in the existing daily cron,
+  deletes rows older than the configured retention (default 30 days),
+  capped at 100 deletions per run.
+- Patch `v0_8_0.add_telemetry_fields` reloads the new DocType + the
+  modified Settings deterministically during `bench migrate`.
+
+### Operator notes
+
+- Master toggle defaults OFF; the feature is invisible until enabled.
+- When enabled, the first rows appear within one 10-minute flush window.
+- Inspect via `Desk → Optimus Telemetry Event` (System Manager only;
+  read+delete permissions, no create/write — writes happen exclusively
+  via the flush worker).
+- The HTTPS endpoint field accepts a URL today but does nothing — the
+  transport will ship in a follow-up release without requiring a schema
+  change.
+
+### Engineering
+
+- 33 new pure-pytest tests covering emit hot path, signature dedup, path
+  scrub, context cap, flush sink wiring, settings clamp, and janitor
+  retention. Suite total now 1777 passing + 1 skipped.
+
+---
+
 ## [0.7.0] — 2026-05-13
 
 **The rename release.** The app rebrands from `frappe_profiler` →

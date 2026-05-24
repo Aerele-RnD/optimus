@@ -121,6 +121,16 @@ _DEFAULTS = {
 	# pre-profile Single (no config_profile key) keeps its stored thresholds —
 	# see _read_doctype_row's coalesce and the back-compat note in _resolve.
 	"config_profile": "Custom",
+	# v0.8.0: opt-in failure telemetry. Master gate defaults OFF — telemetry
+	# is per [[product_thesis_self_hosted]] a visibility feature, not a
+	# phone-home. The DocType sink is enabled by default once the master is
+	# flipped on (it's local, no transport). JSONL + endpoint URL stay off
+	# by default. See ``optimus.telemetry`` for the emit / flush pipeline.
+	"telemetry_enabled": False,
+	"telemetry_sink_doctype": True,
+	"telemetry_sink_jsonl_file": False,
+	"telemetry_endpoint_url": "",
+	"telemetry_retention_days": 30,
 }
 
 # v0.7.x: the nine detection-sensitivity knobs the Sensitivity Profile governs.
@@ -257,6 +267,14 @@ class OptimusConfig:
 	# "Custom" so the no-frappe / pre-bench path uses the dataclass threshold
 	# defaults (= Recommended numbers) as-is.
 	config_profile: str = "Custom"
+	# v0.8.0: opt-in failure telemetry. See _DEFAULTS comment above. The
+	# defaults here match _DEFAULTS so the no-frappe pure-pytest path
+	# resolves correctly (and Critical Risk #4 stays OFF by default).
+	telemetry_enabled: bool = False
+	telemetry_sink_doctype: bool = True
+	telemetry_sink_jsonl_file: bool = False
+	telemetry_endpoint_url: str = ""
+	telemetry_retention_days: int = 30
 
 
 _CACHE_KEY = "optimus_settings_cached"
@@ -358,6 +376,14 @@ def _read_doctype_row() -> dict | None:
 		# "Custom" so existing stored thresholds keep driving analysis — no
 		# migration patch, no silent reset to Recommended.
 		"config_profile": (doc.get("config_profile") or "Custom"),
+		# v0.8.0: opt-in failure telemetry. Checks: can't use ``or None``
+		# because False is legitimate. ``telemetry_retention_days`` allows
+		# the controller-clamped floor (1) through; defaults to 30 when unset.
+		"telemetry_enabled": bool(doc.get("telemetry_enabled")),
+		"telemetry_sink_doctype": bool(doc.get("telemetry_sink_doctype", 1)),
+		"telemetry_sink_jsonl_file": bool(doc.get("telemetry_sink_jsonl_file")),
+		"telemetry_endpoint_url": (doc.get("telemetry_endpoint_url") or "").strip() or None,
+		"telemetry_retention_days": int(doc.get("telemetry_retention_days") or 0) or None,
 	}
 
 
@@ -527,6 +553,26 @@ def _resolve() -> OptimusConfig:
 			else _DEFAULTS["ai_suggest_indexes"]
 		),
 		config_profile=profile,
+		# v0.8.0: opt-in failure telemetry. Checks: presence-test, not
+		# truthy-test, because False is legitimate. Endpoint URL coalesces
+		# the empty/None case to the default ("").
+		telemetry_enabled=bool(
+			row.get("telemetry_enabled")
+			if "telemetry_enabled" in row
+			else _DEFAULTS["telemetry_enabled"]
+		),
+		telemetry_sink_doctype=bool(
+			row.get("telemetry_sink_doctype")
+			if "telemetry_sink_doctype" in row
+			else _DEFAULTS["telemetry_sink_doctype"]
+		),
+		telemetry_sink_jsonl_file=bool(
+			row.get("telemetry_sink_jsonl_file")
+			if "telemetry_sink_jsonl_file" in row
+			else _DEFAULTS["telemetry_sink_jsonl_file"]
+		),
+		telemetry_endpoint_url=row.get("telemetry_endpoint_url") or _DEFAULTS["telemetry_endpoint_url"],
+		telemetry_retention_days=_int_with_default("telemetry_retention_days"),
 	)
 
 

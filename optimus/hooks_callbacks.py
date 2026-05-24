@@ -315,8 +315,13 @@ def before_request(*args, **kwargs):
 		try:
 			from optimus import infra_capture
 			frappe.local.optimus_infra_start = infra_capture.snapshot()
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus infra start snapshot")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("before_request.infra_start", exc)
+			except Exception:
+				pass
 
 		# v0.3.0: gate the new pyinstrument + sidecar capture on the
 		# session's capture_python_tree flag. Setting
@@ -330,9 +335,14 @@ def before_request(*args, **kwargs):
 				local_proxy=frappe.local,
 				interval_ms=_resolve_sampler_interval_ms(),
 			)
-	except Exception:
+	except Exception as exc:
 		# Never let a profiler bug break a customer request. Log and move on.
 		frappe.log_error(title="optimus before_request")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("before_request", exc)
+		except Exception:
+			pass
 
 
 def after_request(*args, **kwargs):
@@ -370,8 +380,13 @@ def after_request(*args, **kwargs):
 				f"optimus: recording cap hit for session "
 				f"{session_uuid}, dropped {recording_uuid}"
 			)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus after_request")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("after_request", exc)
+		except Exception:
+			pass
 	finally:
 		# v0.3.0: dump pyinstrument session and sidecar log to Redis under
 		# per-recording-UUID keys. Best-effort — failures here log but
@@ -501,6 +516,14 @@ def before_job(method=None, kwargs=None, **rest):
 				title="optimus before_job unexpected kwargs",
 				message=f"kwargs type: {type(kwargs).__name__}, method: {method}",
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"before_job.unexpected_kwargs",
+					context={"kwargs_type": type(kwargs).__name__, "method": str(method)},
+				)
+			except Exception:
+				pass
 			return
 
 		# Pop our marker so the user's method doesn't see it. This MUST
@@ -568,8 +591,13 @@ def before_job(method=None, kwargs=None, **rest):
 		try:
 			from optimus import infra_capture
 			frappe.local.optimus_infra_start = infra_capture.snapshot()
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus infra start snapshot (job)")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure("before_job.infra_start", exc)
+			except Exception:
+				pass
 
 		# v0.3.0: gate the new pyinstrument + sidecar capture on the
 		# session's capture_python_tree flag. Mirrors before_request.
@@ -580,8 +608,13 @@ def before_job(method=None, kwargs=None, **rest):
 				local_proxy=frappe.local,
 				interval_ms=_resolve_sampler_interval_ms(),
 			)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus before_job")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("before_job", exc)
+		except Exception:
+			pass
 
 
 def after_job(method=None, kwargs=None, result=None, **rest):
@@ -608,8 +641,13 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 				f"optimus: recording cap hit for session "
 				f"{session_uuid}, dropped job {recording_uuid}"
 			)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus after_job")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("after_job", exc)
+		except Exception:
+			pass
 	finally:
 		recording_uuid_for_dump = getattr(
 			getattr(frappe.local, "_recorder", None), "uuid", None
