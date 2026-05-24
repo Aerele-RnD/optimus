@@ -50,6 +50,11 @@ class OptimusSettings(Document):
 		# every row on the next janitor pass — clamp to 1 so the operator
 		# always has at least a one-day window of aggregated failures.
 		"telemetry_retention_days": 1,
+		# v0.9.0: AI request timeout. Below 10s breaks the LLM round-trip
+		# entirely; the ceiling 600s is applied in settings.py:_resolve
+		# (we can't enforce it from a floor). Clamping below pairs with
+		# the doc's "start at 180 for local LLMs" guidance.
+		"ai_request_timeout_seconds": 10,
 	}
 
 	def _clamp_numeric_floors(self):

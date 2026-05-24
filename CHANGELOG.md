@@ -8,6 +8,90 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.9.0] — 2026-05-24
+
+**AI privacy hardening — Critical Risk #2 of the architecture review.**
+
+When AI fix suggestions are enabled, Optimus sends source code, normalized
+and raw SQL (including table/column names and EXPLAIN output), and action
+labels to the configured LLM provider. The pre-v0.9.0 controls were the
+master switch (`ai_enabled`), the batch toggle (`ai_auto_suggest`), and the
+per-pathway hard-off toggles — fine-grained enough to disable AI entirely
+but with no opt-out short of that for an operator who wanted to keep
+specific *categories* of finding off the wire.
+
+This release adds three pieces, all additive:
+
+### Added
+
+- **NEW `docs/AI-FIXING.md`** — definitive data-flow documentation. Per-
+  pathway inventory tables (finding-fix, humanize-steps, index-suggestion,
+  connectivity probe) listing every field that crosses the wire with
+  typical and maximum sizes. What does *not* leave the host. Provider
+  matrix. Three local-LLM recipes (ollama, LM Studio, vLLM) with starting
+  timeout recommendations and first-token latency expectations. Threat
+  model + note for dev shops receiving a profile.
+- **`ai_excluded_finding_types`** — new field in `Optimus Settings → AI →
+  Privacy & Operations`. Multi-line, `#` comments, exact-match
+  case-sensitive. Listed types are skipped in both auto-suggest and
+  on-demand calls — the payload is never built and no request leaves the
+  host. Mirrors the parsing pattern of the existing `skip_request_paths` /
+  `sensitive_sql_columns` skip-lists.
+- **`ai_request_timeout_seconds`** — new field with default 60, clamped
+  10–600. Replaces the hardcoded 60-second `_HTTP_TIMEOUT` (which was
+  fatal for local-LLM cold starts: ollama / vLLM first-token latency on a
+  CPU-only host or first model load routinely exceeds 60s). Hosted
+  providers still answer in seconds; the default is behavior-preserving.
+
+### Code
+
+- `optimus/ai_fix.py`: new pure helper `is_finding_type_excluded(type)`;
+  `_http_post` now reads the configured timeout via `_resolve_timeout_seconds`;
+  `suggest_fix` short-circuits with `AiFixError("excluded by
+  ai_excluded_finding_types")` before any payload is built.
+- `optimus/analyze.py:_enrich_findings_with_ai_suggestions` filters
+  excluded types out of the eligible list before the budget loop. Emits a
+  single `ai.auto_suggest_skipped_by_exclusion` telemetry event per run
+  when the filter actually drops findings, so the operator sees the
+  exclusion taking effect in `Optimus Telemetry Event` (when v0.8.0
+  telemetry is enabled).
+- `optimus/api.py:suggest_fix` throws a clear "this type is on the
+  exclusion list" message pointing at the setting; emits
+  `ai.fix_call_refused_by_exclusion` telemetry per refusal.
+
+### Operator notes
+
+- Defaults preserve existing behavior — every operator who isn't on the
+  exclusion list path or doesn't need a longer timeout gets the same
+  outcome as v0.8.0.
+- `bench migrate` applies the v0_9_0 patch automatically.
+- Read `docs/AI-FIXING.md` before deciding what to add to the exclusion
+  list. The doc enumerates exactly what each finding type's payload
+  contains.
+- For data residency, the `OpenAI-compatible` provider already supported
+  local LLMs but the 60s timeout made it impractical; raise
+  `ai_request_timeout_seconds` to 180 for cold-start tolerance.
+
+### Engineering
+
+- 12 new pure-pytest tests in `test_ai_privacy.py`: exclusion parsing,
+  exclusion application, on-demand refusal, timeout resolution + clamp,
+  settings floor, and a doc-staleness check that compares the doc's
+  eligible-types list against `AI_ELIGIBLE_FINDING_TYPES` byte-for-line.
+
+### Deferred
+
+- Per-finding consent dialog (JS modal). The on-demand button click is
+  already explicit consent; a modal layer adds UX surface without
+  changing data flow. Worth revisiting only on customer feedback.
+- Per-row `excluded_from_ai` Check on `Optimus Finding`. Type-level
+  exclusion covers most needs; child-table-grid UI for one checkbox is
+  not a great trade.
+- Per-severity exclusion / per-app exclusion. The existing `ignored_apps`
+  already drops findings entirely before AI sees them.
+
+---
+
 ## [0.8.0] — 2026-05-24
 
 **Opt-in failure telemetry — Critical Risk #4 of the architecture review.**

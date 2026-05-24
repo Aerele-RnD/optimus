@@ -1931,6 +1931,25 @@ def _enrich_findings_with_ai_suggestions(context, *, recordings: list | None = N
 		f for f in findings
 		if (f.get("finding_type") or "") in ai_fix.AI_ELIGIBLE_FINDING_TYPES
 	]
+	# v0.9.0: per-type opt-out (Critical Risk #2). Filter BEFORE the loop so
+	# the operator's exclusion list short-circuits payload-building too, not
+	# just the network send. Visibility is via the v0.8.0 telemetry pipeline
+	# — one event per auto-suggest run when the filter actually drops
+	# findings, so the operator can see in the Optimus Telemetry Event
+	# DocType that exclusion is taking effect.
+	pre_exclusion_count = len(eligible)
+	eligible = [f for f in eligible if not ai_fix.is_finding_type_excluded(f.get("finding_type"))]
+	excluded_count = pre_exclusion_count - len(eligible)
+	if excluded_count > 0:
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"ai.auto_suggest_skipped_by_exclusion",
+				severity="warning",
+				context={"excluded_count": excluded_count},
+			)
+		except Exception:
+			pass
 	if not eligible:
 		return
 	eligible.sort(key=lambda f: (

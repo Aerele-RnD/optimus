@@ -83,6 +83,11 @@
   "ai_auto_suggest",
   "column_break_ai_auto",
   "ai_auto_suggest_max",
+  "ai_privacy_section",
+  "ai_privacy_description",
+  "ai_excluded_finding_types",
+  "column_break_ai_privacy",
+  "ai_request_timeout_seconds",
   "telemetry_tab",
   "telemetry_section",
   "telemetry_description",
@@ -471,7 +476,7 @@
   {
    "fieldname": "ai_description",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">When enabled, a <b>Suggest a fix (AI)</b> button appears on the Optimus Session form. Clicking it sends the selected finding's context — finding type, callsite, a window of surrounding <b>source code</b>, the normalized SQL and EXPLAIN row — to the configured LLM and stores the returned fix on the finding (it also shows up in the regenerated HTML report). <b>This sends code and queries to your chosen provider.</b> Point <code>Base URL</code> at a local model (Ollama / LM Studio / vLLM) to keep everything on-box.</p>"
+   "options": "<p class=\"text-muted small\">When enabled, a <b>Suggest a fix (AI)</b> button appears on the Optimus Session form. Clicking it sends the selected finding's context — finding type, callsite, a window of surrounding <b>source code</b>, the normalized SQL and EXPLAIN row — to the configured LLM and stores the returned fix on the finding (it also shows up in the regenerated HTML report). <b>This sends code and queries to your chosen provider.</b> Point <code>Base URL</code> at a local model (Ollama / LM Studio / vLLM) to keep everything on-box. <a href=\"https://github.com/Aerele-RnD/optimus/blob/main/docs/AI-FIXING.md\" target=\"_blank\">Read the full data-flow documentation</a> — what's sent, what isn't, and step-by-step local-LLM recipes.</p>"
   },
   {
    "default": "0",
@@ -579,6 +584,39 @@
    "non_negative": 1
   },
   {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "ai_privacy_section",
+   "fieldtype": "Section Break",
+   "label": "Privacy & Operations"
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "ai_privacy_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Per-type opt-out and the local-LLM timeout. The exclusion list is the only way (short of disabling AI entirely) to keep a specific finding category from ever being built into a payload — useful when a particular type embeds business logic you don't want shared with a hosted provider. The timeout knob exists for local LLMs: hosted providers usually answer in seconds, but a cold-start ollama / vLLM run can take well over a minute on first call.</p>"
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "description": "One finding type per line — those types are skipped in both auto-suggest and on-demand (the payload is never built). Exact-match, case-sensitive. Lines starting with '#' are comments. Use the canonical names: Filesort, Framework N+1, Full Table Scan, Hot Line, Low Filter Ratio, Missing Index, N+1 Query, Redundant Call, Slow Query, Temporary Table.",
+   "fieldname": "ai_excluded_finding_types",
+   "fieldtype": "Small Text",
+   "label": "Excluded finding types"
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "column_break_ai_privacy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "60",
+   "depends_on": "eval:doc.ai_enabled",
+   "description": "HTTP timeout for outbound LLM calls. The default 60s is right for hosted providers (Anthropic / OpenAI typically reply in 2–10s). For local LLMs (ollama / LM Studio / vLLM) first-token latency on cold start can exceed 60s; start at 180 and tune down once warm-call P99 is known. Clamped to 10–600s.",
+   "fieldname": "ai_request_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Request timeout (seconds)",
+   "non_negative": 1
+  },
+  {
    "fieldname": "telemetry_tab",
    "fieldtype": "Tab Break",
    "label": "Telemetry"
@@ -641,7 +679,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-26 00:00:00.000000",
+ "modified": "2026-05-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Optimus",
  "name": "Optimus Settings",

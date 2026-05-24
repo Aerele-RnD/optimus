@@ -131,6 +131,13 @@ _DEFAULTS = {
 	"telemetry_sink_jsonl_file": False,
 	"telemetry_endpoint_url": "",
 	"telemetry_retention_days": 30,
+	# v0.9.0: AI privacy hardening (closes Critical Risk #2). Exclusion
+	# list is empty by default (no types skipped); the timeout default of
+	# 60s matches the pre-v0.9.0 hardcoded constant so existing setups are
+	# behavior-preserving. See docs/AI-FIXING.md for the per-pathway data
+	# inventory and local-LLM recipes.
+	"ai_excluded_finding_types": (),
+	"ai_request_timeout_seconds": 60,
 }
 
 # v0.7.x: the nine detection-sensitivity knobs the Sensitivity Profile governs.
@@ -275,6 +282,11 @@ class OptimusConfig:
 	telemetry_sink_jsonl_file: bool = False
 	telemetry_endpoint_url: str = ""
 	telemetry_retention_days: int = 30
+	# v0.9.0: AI privacy hardening (Critical Risk #2). Exclusion list is a
+	# tuple (immutable, hashable, safe to cache) of finding-type names.
+	# Timeout default matches the pre-v0.9.0 hardcoded constant.
+	ai_excluded_finding_types: tuple[str, ...] = field(default_factory=tuple)
+	ai_request_timeout_seconds: int = 60
 
 
 _CACHE_KEY = "optimus_settings_cached"
@@ -384,6 +396,12 @@ def _read_doctype_row() -> dict | None:
 		"telemetry_sink_jsonl_file": bool(doc.get("telemetry_sink_jsonl_file")),
 		"telemetry_endpoint_url": (doc.get("telemetry_endpoint_url") or "").strip() or None,
 		"telemetry_retention_days": int(doc.get("telemetry_retention_days") or 0) or None,
+		# v0.9.0: AI privacy. Exclusion list parsed with the same skip-list
+		# semantics as skip_request_paths / sensitive_sql_columns (line-per-
+		# entry, # comments, blanks stripped). Timeout: 0/None falls through
+		# to _DEFAULTS via _int_with_default.
+		"ai_excluded_finding_types": _parse_skip_list(doc.get("ai_excluded_finding_types")),
+		"ai_request_timeout_seconds": int(doc.get("ai_request_timeout_seconds") or 0) or None,
 	}
 
 
@@ -573,6 +591,12 @@ def _resolve() -> OptimusConfig:
 		),
 		telemetry_endpoint_url=row.get("telemetry_endpoint_url") or _DEFAULTS["telemetry_endpoint_url"],
 		telemetry_retention_days=_int_with_default("telemetry_retention_days"),
+		# v0.9.0: AI privacy. Tuple straight through (already parsed in
+		# _read_doctype_row). Timeout clamped to [10, 600] — below 10s
+		# breaks the LLM round-trip; above 600s holds the analyze worker
+		# longer than the time budget is willing to tolerate anyway.
+		ai_excluded_finding_types=tuple(row.get("ai_excluded_finding_types") or ()),
+		ai_request_timeout_seconds=max(10, min(600, _int_with_default("ai_request_timeout_seconds"))),
 	)
 
 

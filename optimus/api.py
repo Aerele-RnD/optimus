@@ -1231,6 +1231,25 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 			f"AI fix suggestions aren't offered for '{child.finding_type}' "
 			"findings — they don't carry enough code/SQL context."
 		)
+	# v0.9.0: per-type opt-out (Critical Risk #2). Refuse on-demand calls
+	# for types listed in ``ai_excluded_finding_types`` with a clear message
+	# pointing the operator at the setting they configured. Also emit one
+	# telemetry event per refusal so the count is observable.
+	if ai_fix.is_finding_type_excluded(child.finding_type or ""):
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"ai.fix_call_refused_by_exclusion",
+				severity="warning",
+				context={"finding_type": child.finding_type or ""},
+			)
+		except Exception:
+			pass
+		frappe.throw(
+			f"'{child.finding_type}' is on the exclusion list in Optimus "
+			"Settings ▸ AI ▸ Privacy & Operations ▸ Excluded finding types. "
+			"Remove the line if you want AI suggestions for this type."
+		)
 
 	# Return the cached suggestion unless the caller asked to regenerate.
 	if not regenerate and (child.llm_fix_json or "").strip():
