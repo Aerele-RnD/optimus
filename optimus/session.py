@@ -316,11 +316,80 @@ def get_pending_jobs(session_uuid: str) -> set[str]:
 # (job_id -> JSON metadata, never pruned until session cleanup). analyze reads
 # the hash to persist one Optimus Background Job row per enqueued job with its
 # terminal status, so failed / timed-out jobs are reported instead of vanishing.
+#
+# Multi-worker safety (v0.7.x+): updates go through ``_atomic_merge_job_meta``,
+# which uses a Redis Lua script to do HGET → decode → merge → encode → HSET in
+# a single server-side step. Without that, two workers updating the same
+# job_id's meta concurrently (e.g. after_job's ``set_job_recording`` racing
+# analyze's ``_finalize_pending_statuses`` at the wait cap) can DROP fields
+# via interleaved read-modify-write. The helper falls back to non-atomic
+# read-modify-write for cache backends without ``.eval()`` (FakeCache in
+# tests, exotic Redis variants) — preserves existing behavior, sheds the
+# multi-worker guarantee in those contexts.
+
+
+# Lua scripts. ``cjson`` ships with Redis's standard Lua sandbox; no extra
+# setup needed. KEYS[1] = jobs hash key (pre-prefixed via make_key), ARGV[1]
+# = job_id field, ARGV[2] = JSON-encoded dict of fields to merge.
+_MERGE_JOB_META_LUA = """
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+local meta = {}
+if current then meta = cjson.decode(current) end
+local new_fields = cjson.decode(ARGV[2])
+for k, v in pairs(new_fields) do meta[k] = v end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(meta))
+return 1
+"""
+
+_SETDEFAULT_JOB_META_LUA = """
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+local meta = {}
+if current then meta = cjson.decode(current) end
+local new_fields = cjson.decode(ARGV[2])
+for k, v in pairs(new_fields) do
+    if meta[k] == nil or meta[k] == '' then meta[k] = v end
+end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(meta))
+return 1
+"""
+
+
+# Frappe's RedisWrapper.hget/hset wrap values in pickle.dumps / pickle.loads.
+# Lua can't do pickle, so the Lua merge script stores plain JSON bytes; we
+# need to read/write the bg-jobs hash on the SAME byte format. ``_raw_redis``
+# returns a redis-py client that shares frappe.cache's connection pool but
+# bypasses the pickle wrapper. Returns None in test contexts where
+# ``frappe.cache`` is a FakeCache stand-in (no connection_pool); _read_job /
+# _write_job then fall back to ``frappe.cache.hget`` / ``.hset`` directly,
+# which is fine because FakeCache stores values as-is (no pickling) — the
+# encoding stays consistent within either environment.
+_RAW_REDIS = None
+
+
+def _raw_redis():
+	global _RAW_REDIS
+	if _RAW_REDIS is not None:
+		return _RAW_REDIS
+	try:
+		import redis
+
+		pool = getattr(frappe.cache, "connection_pool", None)
+		if pool is None:
+			return None
+		_RAW_REDIS = redis.Redis(connection_pool=pool)
+		return _RAW_REDIS
+	except Exception:
+		return None
 
 
 def _read_job(session_uuid: str, job_id: str) -> dict | None:
 	try:
-		raw = frappe.cache.hget(_jobs_key(session_uuid), job_id)
+		r = _raw_redis()
+		if r is not None:
+			prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+			raw = r.hget(prefixed, job_id)
+		else:
+			raw = frappe.cache.hget(_jobs_key(session_uuid), job_id)
 	except Exception:
 		return None
 	if not raw:
@@ -335,27 +404,77 @@ def _read_job(session_uuid: str, job_id: str) -> dict | None:
 
 def _write_job(session_uuid: str, job_id: str, meta: dict) -> None:
 	try:
-		frappe.cache.hset(_jobs_key(session_uuid), job_id, json.dumps(meta))
+		r = _raw_redis()
+		if r is not None:
+			prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+			r.hset(prefixed, job_id, json.dumps(meta))
+		else:
+			frappe.cache.hset(_jobs_key(session_uuid), job_id, json.dumps(meta))
 	except Exception:
 		pass
 
 
-def record_job(session_uuid: str, job_id: str, method: str) -> None:
-	"""Record an enqueued RQ job's identity + method so analyze can report its
-	terminal status later. Idempotent; never overwrites a status already set.
-	Best-effort."""
+def _atomic_merge_job_meta(
+	session_uuid: str, job_id: str, fields: dict, *, setdefault: bool = False
+) -> None:
+	"""Atomic Redis-side merge of fields onto the per-job meta hash field.
+	Closes the multi-worker read-modify-write race that drops fields when
+	two workers update the same job_id's meta concurrently.
+
+	``setdefault=True`` preserves any existing value for each field (used by
+	``record_job`` so before_job's later call doesn't clobber the original
+	enqueue timestamp).
+
+	Filters None values so callers can pass ``error=None`` without nuking a
+	real error already in meta. Falls back to the legacy non-atomic
+	read-modify-write on any backend that rejects ``.eval()`` (FakeCache in
+	tests, exotic Redis variants) — best-effort, never raises."""
 	if not session_uuid or not job_id:
 		return
+	fields = {k: v for k, v in fields.items() if v is not None}
+	if not fields:
+		return
+	script = _SETDEFAULT_JOB_META_LUA if setdefault else _MERGE_JOB_META_LUA
+	try:
+		# Frappe's RedisWrapper prefixes every key with ``<db_name>|`` via
+		# ``make_key`` in its overridden hset / hget methods. ``.eval`` is
+		# inherited from redis-py and does NOT prefix automatically, so the
+		# script would write to an unprefixed key that ``_read_job`` /
+		# ``_write_job`` can never find. Pre-prefix here so Lua and the
+		# fallback path target the same Redis key.
+		prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+		frappe.cache.eval(script, 1, prefixed, job_id, json.dumps(fields))
+		return
+	except Exception:
+		# Fall through to the non-atomic path. Loses the multi-worker safety
+		# guarantee, but preserves existing behavior on backends without Lua
+		# (FakeCache in tests, any Redis variant that rejects scripting).
+		pass
 	meta = _read_job(session_uuid, job_id) or {}
-	meta.setdefault("method", method or "")
-	if "enqueued_at" not in meta:
-		try:
-			from frappe.utils import now_datetime
-
-			meta["enqueued_at"] = str(now_datetime())
-		except Exception:
-			pass
+	if setdefault:
+		for k, v in fields.items():
+			if not meta.get(k):  # treats empty string + None as "absent"
+				meta[k] = v
+	else:
+		meta.update(fields)
 	_write_job(session_uuid, job_id, meta)
+
+
+def record_job(session_uuid: str, job_id: str, method: str) -> None:
+	"""Record an enqueued RQ job's identity + method so analyze can report its
+	terminal status later. Idempotent: a later call (e.g. before_job's
+	defensive re-record after the enqueue patch) won't clobber the original
+	method or enqueued_at. Best-effort."""
+	if not session_uuid or not job_id:
+		return
+	try:
+		from frappe.utils import now_datetime
+
+		enqueued_at = str(now_datetime())
+	except Exception:
+		enqueued_at = None
+	fields = {"method": method or "", "enqueued_at": enqueued_at}
+	_atomic_merge_job_meta(session_uuid, job_id, fields, setdefault=True)
 
 
 def set_job_recording(session_uuid: str, job_id: str, recording_uuid: str) -> None:
@@ -363,19 +482,13 @@ def set_job_recording(session_uuid: str, job_id: str, recording_uuid: str) -> No
 	captured query data). Best-effort."""
 	if not session_uuid or not job_id or not recording_uuid:
 		return
-	meta = _read_job(session_uuid, job_id) or {}
-	meta["recording_uuid"] = recording_uuid
-	_write_job(session_uuid, job_id, meta)
+	_atomic_merge_job_meta(session_uuid, job_id, {"recording_uuid": recording_uuid})
 
 
 def set_job_status(session_uuid: str, job_id: str, **fields) -> None:
 	"""Merge terminal-status fields (status, error, started_at, ended_at,
 	duration_ms, …) onto a tracked job. Best-effort."""
-	if not session_uuid or not job_id:
-		return
-	meta = _read_job(session_uuid, job_id) or {}
-	meta.update({k: v for k, v in fields.items() if v is not None})
-	_write_job(session_uuid, job_id, meta)
+	_atomic_merge_job_meta(session_uuid, job_id, fields)
 
 
 def get_jobs(session_uuid: str) -> list[dict]:
@@ -384,7 +497,12 @@ def get_jobs(session_uuid: str) -> list[dict]:
 	if not session_uuid:
 		return []
 	try:
-		raw = frappe.cache.hgetall(_jobs_key(session_uuid)) or {}
+		r = _raw_redis()
+		if r is not None:
+			prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+			raw = r.hgetall(prefixed) or {}
+		else:
+			raw = frappe.cache.hgetall(_jobs_key(session_uuid)) or {}
 	except Exception:
 		return []
 	jobs: list[dict] = []
