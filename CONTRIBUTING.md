@@ -35,6 +35,34 @@ The `test_pdf_export.py` 3-test module requires a writable
 `--ignore=apps/optimus/optimus/tests/test_pdf_export.py`. Adjust as
 needed for your bench setup.
 
+## Integration tests (real bench)
+
+The unit suite above runs in seconds against a Frappe stub. The
+integration suite at `optimus/tests_integration/` runs against a real
+bench — real MariaDB, real Redis, real RQ — and catches regressions in
+the inter-component handoff the unit stubs can't reach.
+
+In CI: `.github/workflows/integration.yml` provisions a fresh Frappe
+v16 bench via `.github/helper/install.sh`, installs optimus, and runs
+the integration modules. It runs on pull requests to `main`, on push
+to `main`, daily at 04:00 UTC, and on manual dispatch.
+
+Locally:
+
+```bash
+cd <bench-root>
+bench --site <your-site> run-tests --app optimus \
+    --module optimus.tests_integration.test_install_smoke
+
+bench --site <your-site> run-tests --app optimus \
+    --module optimus.tests_integration.test_recording_lifecycle_e2e
+```
+
+Adding a new integration test: read `optimus/tests_integration/README.md`
+for the harness pattern, the deferred-test extraction roadmap, and the
+"no flakiness" rule. Integration tests must justify the bench cost —
+prefer a unit test when feasible.
+
 ## Pre-commit
 
 Install the hook once per clone:

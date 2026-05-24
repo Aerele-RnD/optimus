@@ -8,6 +8,119 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.11.0] — 2026-05-24
+
+**Real-bench integration-test foundation — CI workflow + harness + two
+pilot tests.**
+
+The pre-v0.11.0 CI (`.github/workflows/tests.yml`) is a fast (~6 s)
+pure-pytest pipeline using the Frappe stub in `optimus/tests/conftest.py`
+— great for logic regressions, blind to the integration layer:
+`before_request` / `after_request` / `before_job` / `after_job` hooks,
+`scheduler_events`, the atomic Lua merge for bg-job tracking (the v0.7.x
+trilogy's `TestAtomicMergeJobMetaConcurrent` test is explicitly skipped
+in pure-pytest because it needs a real Redis), the recording lifecycle
+end-to-end, the `bench install-app` path, `bench migrate` idempotence,
+and the line_profiler tool-2 startup probe.
+
+This release stands up the foundation: a parallel CI workflow that
+provisions a real Frappe v16 bench in GitHub Actions and runs an
+integration suite against it. Two pilot tests prove the pattern; the
+five-seven follow-up scenarios identified by the architecture review
+each become a small follow-up PR using this harness.
+
+### Added
+
+- **NEW `.github/workflows/integration.yml`** — provisions a Frappe v16
+  bench against MariaDB 10.6 + two Redis service containers; runs the
+  integration suite via `bench run-tests --app optimus --module …`.
+  Triggers on PRs to `main`, push to `main`, scheduled daily at 04:00
+  UTC, and manual dispatch. Job timeout 25 minutes (expected wall-clock
+  ~10-15 minutes cold, ~6-8 minutes with pip + yarn caches warm). Logs
+  for both the test runs + the bench's own logs are uploaded as the
+  `integration-logs` artifact on failure (14-day retention). No secrets
+  required — a fork's CI runs identically.
+- **NEW `.github/helper/install.sh`** — ~50-line bash script following
+  the established Frappe / ERPNext community pattern. Runs `bench init
+  --frappe-branch version-16`, points it at the runner's service
+  containers, symlinks the optimus checkout as `apps/optimus`, creates
+  a `test_site`, installs optimus, runs `bench migrate`. Idempotent +
+  reusable locally for spinning up a clean test bench.
+- **NEW `optimus/tests_integration/`** — sibling directory to
+  `optimus/tests/`. Tests subclass `frappe.tests.utils.FrappeTestCase`
+  and use real `frappe.db` / `frappe.cache` / `frappe.get_doc` calls.
+  The pure-pytest workflow never traverses this directory; the Frappe
+  test runner never traverses `optimus/tests/`. Clean separation.
+- **NEW `tests_integration/conftest.py`** — bench-aware fixtures:
+  `test_site` (current site name), `cleanup_session` (autouse —
+  hard-deletes leftover Optimus Session rows + clears the per-user
+  Redis active-session pointer; defence-in-depth on top of the per-test
+  transaction rollback), `seeded_session` (start → yield uuid → stop +
+  wait for terminal status).
+- **NEW `test_install_smoke.py`** — 4 tests: `Optimus User` role
+  exists, all 8 Optimus DocTypes registered, Optimus Settings Single
+  doc readable, `bench migrate` idempotent (re-runs without raising +
+  no schema drift).
+- **NEW `test_recording_lifecycle_e2e.py`** — 4 tests covering the
+  canonical capture → analyze → render pipeline: `api.start` creates
+  the DocType row + Redis pointer; `api.stop` clears the pointer +
+  marks the session for analyze; the full lifecycle reaches a terminal
+  state within 60 s + the report file is attached; session totals are
+  populated post-analyze. This is the canonical regression canary for
+  the integration layer.
+- **NEW `tests_integration/README.md`** — harness documentation, the
+  "no flakiness" rule (quarantine in 24 h, never retry-on-failure), and
+  the seven-row extraction roadmap for follow-up PRs.
+
+### Modified
+
+- **`CONTRIBUTING.md`** — added an "Integration tests (real bench)"
+  section with the local + CI commands and a pointer at the
+  tests_integration README.
+
+### Untouched (the point of the two-track design)
+
+- `.github/workflows/tests.yml` — the pure-pytest workflow stays the
+  fast-feedback loop. Both workflows run in parallel on PRs; branch
+  protection gates merge on both.
+- `optimus/tests/` — the 1810-test pure-pytest suite continues
+  unchanged. The Frappe stub in its `conftest.py` doesn't apply to
+  `tests_integration/` (sibling directory, never imported under
+  `pytest optimus/tests/`).
+- `pyproject.toml` — no new pip dependencies. `frappe-bench` is
+  installed inside the bench helper script, not declared as a
+  project dep.
+- The renderer package, the telemetry module, the AI fix path — every
+  v0.7.x → v0.10.0 piece stays exactly as-is. Integration tests
+  exercise them via the live bench, but the code under test doesn't
+  change.
+
+### Engineering
+
+- 8 new integration tests (4 in `test_install_smoke.py`, 4 in
+  `test_recording_lifecycle_e2e.py`). Unit suite stays at 1810
+  passing.
+
+### Deferred (each is a follow-up PR using this harness)
+
+- `test_atomic_lua_merge_concurrent.py` — un-skip the v0.7.x trilogy's
+  concurrent Redis test.
+- `test_telemetry_flush_doctype_sink.py` — emit → flush → assert
+  DocType row.
+- `test_ai_privacy_exclusion_on_api.py` — live `api.suggest_fix` with
+  an excluded type.
+- `test_regenerate_reports_idempotent.py` — render → regenerate → diff.
+- `test_phase2_tool_orphan_recovery.py` — leak `sys.monitoring` tool 2
+  + verify the startup probe reclaims.
+- `test_safe_report_self_contained_on_real_bench.py` — the canary on a
+  real bench's File-served HTML.
+- `test_janitor_sweeps_actually_delete.py` — janitor cron + retention.
+- Cross-version matrix (Frappe v15 + v16), coverage reporting from the
+  integration suite, parallel test sharding — all out of scope for the
+  foundation.
+
+---
+
 ## [0.10.0] — 2026-05-24
 
 **Renderer refactor — foundation PR splitting the 4,958-line monolith
