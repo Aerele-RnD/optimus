@@ -8,6 +8,94 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.12] — 2026-05-25
+
+**Renderer extraction — `line_drilldown` is the seventh submodule out
+of `_internal.py`. Structural snapshot stays byte-identical.**
+
+The line_drilldown cluster was the README's "single biggest remaining
+chunk" (Internal coupling, 840 LOC nominal). The extraction landed at
+416 LOC by scoping NARROWER than the README's original outline:
+`_find_call_line_in_function_body` (AST-walking helper) and the
+finding-enrichment helpers it serves (`_retarget_phase1_callsites_to_drilldown_leaf`,
+`_root_cause_key`, `_group_findings_by_root_cause`) stay in
+`_internal.py` for the still-pending finding_enrichment extraction.
+
+### Moved
+
+- **Semi-public surface** (called by `analyze.py` via the
+  package shim):
+  - `_build_line_drilldown_callsite_index(session_doc)` — builds
+    the `(basename, function_name) → hottest-line` lookup powering
+    the finding-card "Line-Level Drilldown hot line: …" callout.
+- **Public render entry-point**:
+  - `_render_line_drilldown_panel(session_doc)` — the section HTML
+    builder. Empty string when the session has no phase-2 runs.
+- **Internal helpers**:
+  - `_make_line_drilldown_lookup` — Jinja adapter for tuple-keyed
+    lookups.
+  - `_phase2_invoked` — per-function "did it run?" check (delegates
+    to `optimus.line_profile.analyzer._function_invoked`).
+  - `_render_phase2_function_table` — per-function HTML table.
+  - `_render_phase2_diff_table` — cross-run delta HTML table.
+- **Back-compat aliases** (pre-v0.7.x renames):
+  - `_build_phase2_callsite_index = _build_line_drilldown_callsite_index`
+  - `_make_phase2_lookup = _make_line_drilldown_lookup`
+  - `_render_phase2_panel = _render_line_drilldown_panel`
+
+Out of `optimus/renderer/_internal.py` (now ~3,470 LOC; was ~3,886),
+into NEW `optimus/renderer/line_drilldown.py` (~416 LOC).
+
+### Implementation
+
+- The new submodule imports `_highlight_python_snippet` from
+  `optimus.renderer.syntax` (the v0.10.0 extraction) and
+  `_format_duration_ms` from `optimus.renderer.time_format` (also
+  v0.10.0). Lazy imports of `optimus.line_profile.diff` and
+  `optimus.line_profile.analyzer` stay intact.
+- Standard `from optimus.renderer.line_drilldown import …` block at
+  the top of `_internal.py` re-imports every name (public + aliases)
+  so package-level dir-walk re-export still surfaces them under
+  legacy `optimus.renderer.X` paths.
+- Output HTML byte-equivalent: `test_renderer_structure_snapshot.py`
+  (14 tests) stays green without fixture regeneration.
+
+### Why narrower than the README
+
+The README's 840-LOC estimate bundled `_find_call_line_in_function_body`
+(AST-walking helper) and `_retarget_phase1_callsites_to_drilldown_leaf`
+(callsite-rewriting helper) into the line_drilldown cluster. In
+practice, both are called by code that stays in `_internal.py` (the
+`render()` orchestrator's finding-enrichment phase). Moving them now
+would require a back-import that's then immediately re-imported into
+the orchestrator — defeating the goal of a clean cluster boundary.
+The finding_enrichment extraction will own those helpers.
+
+### Docs
+
+- `optimus/renderer/README.md` — current-layout block bumped to 7
+  submodules; roadmap table marks `line_drilldown` as ✓ done.
+  Updated `finding_enrichment` row to note the additional helpers it
+  now owns. 1 cluster remains (plus `render()` orchestrator which is
+  flagged "keep integrated").
+
+### Unchanged
+
+- Behaviour identical — every call site through `_internal.py`'s
+  shim resolves the function the same way.
+- `analyze.py` still calls `renderer._build_line_drilldown_callsite_index`
+  unchanged via the package re-export.
+- All unit tests that resolve via `renderer.X` (test_render_phase2_panel.py,
+  test_line_drilldown_matching.py, test_line_profile_job_capture.py,
+  test_renderer_structure_snapshot.py:test_build_line_drilldown_callsite_index_resolves)
+  stay green without changes.
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1823.
+
+---
+
 ## [0.12.11] — 2026-05-25
 
 **Redis-schema versioning — first value migrated to the `wrap_value`

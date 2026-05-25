@@ -53,9 +53,18 @@ optimus/renderer/
                            #    _attach_action_context,
                            #    _build_doc_event_breakdown,
                            #    _doctype_from_controller_path, ...
+  line_drilldown.py        # Phase-2 Line-Level Drilldown panel +
+                           # per-function tables —
+                           #    _build_line_drilldown_callsite_index
+                           #    (semi-public; analyze.py calls it),
+                           #    _make_line_drilldown_lookup,
+                           #    _phase2_invoked,
+                           #    _render_phase2_function_table,
+                           #    _render_phase2_diff_table,
+                           #    _render_line_drilldown_panel
 ```
 
-All six submodules are imported back into `_internal.py` under their
+All seven submodules are imported back into `_internal.py` under their
 original names so legacy call sites resolve unchanged. The package's
 `__init__.py` walks `dir(_internal)` and re-exports every non-dunder name
 — including underscore-prefixed internals — so external callers
@@ -155,16 +164,16 @@ is a breaking change requiring a major-version bump.
 ## Remaining clusters (the follow-up PR roadmap)
 
 The Plan agent's structural map flagged five clusters in `_internal.py`
-worth extracting. The first two (`call_tree_renderer`,
-`doc_event_renderer`) shipped in v0.12.8 / v0.12.10 respectively.
-Remaining three, listed in recommended order:
+worth extracting. Three have shipped (`call_tree_renderer` v0.12.8,
+`doc_event_renderer` v0.12.10, `line_drilldown` v0.12.12).
+Remaining two:
 
 | Cluster | Approx LOC | Coupling | Notes |
 |---|---|---|---|
 | ✓ `call_tree_renderer` (done in v0.12.8) | 240 | Weak | `_render_call_tree_panel`, `_render_call_tree_node`, `_ct_is_user_frame`, `_ct_is_sql_leaf`, `_ct_is_other_frame`. Self-contained tree rendering. |
-| ✓ `doc_event_renderer` (done in v0.12.10) | 376 | Moderate | `_extract_target_doc`, `_attach_action_context`, `_build_doc_event_breakdown`, plus 6 helpers (`_module_from_filename`, `_doctype_from_controller_path`, `_doc_event_hook_index` family, `_finding_lifecycle_bindings`) + constants (`_LIFECYCLE_EVENTS`, `_KIND_*`, `_SEVERITY_RANK`). Self-contained at module-import time despite "Moderate" coupling at analyze-time. |
-| `line_drilldown` | 840 | Internal | `_render_line_drilldown_panel`, `_build_line_drilldown_callsite_index`, related helpers. Single biggest remaining chunk. Semi-public — `analyze.py` calls `_build_line_drilldown_callsite_index`. |
-| `finding_enrichment` | 380 | HIGH | `_finding_to_dict`, `_attach_drilldown_chains`, `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_normalize_callsite`. Tightly coupled to `analyze.py` callers — defer until the surrounding modules are extracted and the coupling shape is clearer. |
+| ✓ `doc_event_renderer` (done in v0.12.10) | 376 | Moderate | `_extract_target_doc`, `_attach_action_context`, `_build_doc_event_breakdown`, plus 6 helpers + constants. Self-contained at module-import time despite "Moderate" coupling at analyze-time. |
+| ✓ `line_drilldown` (done in v0.12.12) | 416 (scoped) | Internal | `_render_line_drilldown_panel`, `_build_line_drilldown_callsite_index`, `_make_line_drilldown_lookup`, `_phase2_invoked`, `_render_phase2_function_table`, `_render_phase2_diff_table` + 3 back-compat aliases. Semi-public — `analyze.py` calls `_build_line_drilldown_callsite_index` via the package shim. Smaller than the README's 840-LOC estimate because `_find_call_line_in_function_body` (AST-walking helper) + `_retarget_phase1_callsites_to_drilldown_leaf` + `_root_cause_key` / `_group_findings_by_root_cause` stay with the still-pending finding_enrichment cluster. |
+| `finding_enrichment` | ~700 (after line_drilldown scope-back) | HIGH | `_finding_to_dict`, `_attach_drilldown_chains`, `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_normalize_callsite`, `_find_call_line_in_function_body`, `_root_cause_key`, `_group_findings_by_root_cause`. Tightly coupled to `analyze.py` callers; defer until the coupling shape is clearer with the other clusters out. |
 | `render()` orchestrator | 812 | Core | The big function itself. Could be split into per-phase helpers within `_internal.py`, but a per-module split isn't natural — it's an orchestrator, not a section. Keep integrated. |
 
 Each follow-up PR uses the recipe above. The structural snapshot is the
