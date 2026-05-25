@@ -8,6 +8,71 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.10] — 2026-05-25
+
+**Renderer extraction — `doc_event_renderer` is the sixth submodule
+out of `_internal.py`. Structural snapshot stays byte-identical.**
+
+Per the v0.10.0 renderer-package roadmap, the doc-event lifecycle
+cluster was the next target — Moderate coupling per the README
+(touches lifecycle-binding logic) but cleanly module-import-time
+self-contained.
+
+### Moved
+
+- **Public surfaces** (called from the render orchestrator in
+  `_internal.py`):
+  - `_extract_target_doc(form_dict)` — best-effort pull of
+    `{doctype, name}` from a request's form_dict.
+  - `_attach_action_context(actions, findings, recordings_by_uuid)`
+    — in-place enrichment of `target_doc` + `hook_events`.
+  - `_build_doc_event_breakdown(findings)` — pure-function transform
+    that groups findings by DocType → lifecycle event.
+- **Internal helpers** (only called within the cluster):
+  - `_module_from_filename`, `_doctype_from_controller_path`,
+    `_build_doc_event_hook_index`, `_doc_event_hook_index`,
+    `_finding_hook_events`, `_finding_lifecycle_bindings`.
+- **Constants**: `_LIFECYCLE_EVENTS`, `_KIND_DOC_EVENTS_HOOK`,
+  `_KIND_CONTROLLER_OVERRIDE`, `_SEVERITY_RANK`.
+
+Out of `optimus/renderer/_internal.py` (now ~3,869 LOC; was ~4,213),
+into NEW `optimus/renderer/doc_event_renderer.py` (~423 LOC).
+
+### Implementation
+
+- `_SEVERITY_RANK` is a local constant in the new submodule (the
+  same name exists in `_internal.py` as `_GROUPING_SEVERITY_RANK`
+  with different values — unrelated; renamed-in-original avoided
+  collision). The new submodule's `_SEVERITY_RANK` matches the
+  pre-extraction local-scope name + values.
+- Standard `from optimus.renderer.doc_event_renderer import …`
+  shim block at the top of `_internal.py` re-imports every public
+  name + every constant, so package-level dir-walk re-export still
+  surfaces them under legacy `optimus.renderer.X` paths.
+- Output HTML byte-equivalent: `test_renderer_structure_snapshot.py`
+  (14 tests) stays green without fixture regeneration.
+
+### Docs
+
+- `optimus/renderer/README.md` — current-layout block bumped to 6
+  submodules; follow-up roadmap table marks `doc_event_renderer` as
+  ✓ done. 3 clusters remain (`line_drilldown`, `finding_enrichment`,
+  `render()` orchestrator).
+
+### Unchanged
+
+- Behaviour identical — every call site through `_internal.py`'s
+  shim resolves the function the same way.
+- All 57 unit tests across `test_doc_event_lifecycle.py` +
+  `test_action_context.py` (which resolve via `renderer.X`) stay
+  green without test changes.
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1819.
+
+---
+
 ## [0.12.9] — 2026-05-25
 
 **Bug fix — `api.regenerate_reports` now enforces its documented

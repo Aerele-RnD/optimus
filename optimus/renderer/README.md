@@ -48,9 +48,14 @@ optimus/renderer/
                            # — _render_call_tree_panel, _render_call_tree_node,
                            #    _ct_is_user_frame, _ct_is_sql_leaf,
                            #    _ct_is_other_frame
+  doc_event_renderer.py    # doc-event lifecycle binding + per-DocType
+                           # breakdown — _extract_target_doc,
+                           #    _attach_action_context,
+                           #    _build_doc_event_breakdown,
+                           #    _doctype_from_controller_path, ...
 ```
 
-All five submodules are imported back into `_internal.py` under their
+All six submodules are imported back into `_internal.py` under their
 original names so legacy call sites resolve unchanged. The package's
 `__init__.py` walks `dir(_internal)` and re-exports every non-dunder name
 — including underscore-prefixed internals — so external callers
@@ -150,14 +155,15 @@ is a breaking change requiring a major-version bump.
 ## Remaining clusters (the follow-up PR roadmap)
 
 The Plan agent's structural map flagged five clusters in `_internal.py`
-worth extracting. The first (`call_tree_renderer`) shipped in v0.12.8.
-Remaining four, listed in recommended order:
+worth extracting. The first two (`call_tree_renderer`,
+`doc_event_renderer`) shipped in v0.12.8 / v0.12.10 respectively.
+Remaining three, listed in recommended order:
 
 | Cluster | Approx LOC | Coupling | Notes |
 |---|---|---|---|
 | ✓ `call_tree_renderer` (done in v0.12.8) | 240 | Weak | `_render_call_tree_panel`, `_render_call_tree_node`, `_ct_is_user_frame`, `_ct_is_sql_leaf`, `_ct_is_other_frame`. Self-contained tree rendering. |
+| ✓ `doc_event_renderer` (done in v0.12.10) | 376 | Moderate | `_extract_target_doc`, `_attach_action_context`, `_build_doc_event_breakdown`, plus 6 helpers (`_module_from_filename`, `_doctype_from_controller_path`, `_doc_event_hook_index` family, `_finding_lifecycle_bindings`) + constants (`_LIFECYCLE_EVENTS`, `_KIND_*`, `_SEVERITY_RANK`). Self-contained at module-import time despite "Moderate" coupling at analyze-time. |
 | `line_drilldown` | 840 | Internal | `_render_line_drilldown_panel`, `_build_line_drilldown_callsite_index`, related helpers. Single biggest remaining chunk. Semi-public — `analyze.py` calls `_build_line_drilldown_callsite_index`. |
-| `doc_event_renderer` | 300 | Moderate | `_build_doc_event_breakdown`, `_attach_action_context`, `_extract_target_doc`. Touches the lifecycle-binding logic. |
 | `finding_enrichment` | 380 | HIGH | `_finding_to_dict`, `_attach_drilldown_chains`, `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_normalize_callsite`. Tightly coupled to `analyze.py` callers — defer until the surrounding modules are extracted and the coupling shape is clearer. |
 | `render()` orchestrator | 812 | Core | The big function itself. Could be split into per-phase helpers within `_internal.py`, but a per-module split isn't natural — it's an orchestrator, not a section. Keep integrated. |
 
