@@ -8,6 +8,66 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.15] — 2026-05-25
+
+**Workflow cleanup — `.github/workflows/integration.yml`'s 9 hard-coded
+`bench run-tests --module` invocations replaced with a single shell
+loop driven by an `INTEGRATION_MODULES` env list.**
+
+The v0.11.0 → v0.12.7 deferred-tests roadmap grew the integration
+workflow from 3 to 9 modules. Each was a separate ~4-line stanza
+copied + edited from its predecessor. Adding a future module meant
+remembering the boilerplate; reviewers had to verify the per-stanza
+shape stayed consistent.
+
+### Changed
+
+- **`.github/workflows/integration.yml`** — the `Run the integration
+  suite` step now declares its modules in one place:
+  ```yaml
+  env:
+    INTEGRATION_MODULES: |-
+      test_install_smoke
+      test_recording_lifecycle_e2e
+      test_atomic_lua_merge_concurrent
+      test_telemetry_flush_doctype_sink
+      test_ai_privacy_exclusion_on_api
+      test_regenerate_reports_idempotent
+      test_phase2_tool_orphan_recovery
+      test_safe_report_self_contained_on_real_bench
+      test_janitor_sweeps_actually_delete
+  ```
+  A shell `while read` loop iterates the list and invokes `bench
+  run-tests` per module. Adding a future module is a one-line edit
+  to the env list.
+- **Failure accumulation** — the pre-v0.12.15 implementation used
+  `set -e`, which made the FIRST failing module abort all siblings
+  (despite the YAML comment claiming otherwise). The new accumulator
+  pattern runs EVERY module then fails the workflow if any failed —
+  a single push surfaces every failure at once. **Behaviour
+  improvement**: more signal per CI run when a refactor breaks two
+  unrelated test modules.
+
+### Unchanged
+
+- Per-module log artifacts (`integration-<module>.log`) still upload
+  on failure via the existing artifact-upload step. No log path
+  changes.
+- The 9 module names — same set, same order, exact same module paths.
+- All other workflow steps (services, caches, install, summary,
+  artifact upload) — untouched.
+- Frappe v16 bench bootstrap path via `.github/helper/install.sh` —
+  unchanged.
+
+### Compatibility
+
+CI-only change. Local `bench run-tests --app optimus
+--module optimus.tests_integration.<name>` invocations are unaffected.
+
+Unit suite unchanged at 1843. Integration suite unchanged at 39.
+
+---
+
 ## [0.12.14] — 2026-05-25
 
 **HMAC envelope versioning — `sign_blob` / `unsign_blob` now embed a

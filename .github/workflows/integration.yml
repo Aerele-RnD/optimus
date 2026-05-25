@@ -111,50 +111,54 @@ jobs:
       - name: Run the integration suite
         # ``bench run-tests --app optimus`` discovers every test under
         # ``optimus/tests_integration/`` that subclasses
-        # ``frappe.tests.utils.FrappeTestCase``. Pass --module per file
-        # so a single failing module doesn't abort siblings.
+        # ``frappe.tests.utils.FrappeTestCase``. We invoke per-module
+        # so a single failing module doesn't abort siblings. v0.12.15:
+        # the 9 modules now run through a shell loop driven by a single
+        # list — adding a future module is a one-line addition.
         env:
           RUNNER_TEMP: ${{ runner.temp }}
+          INTEGRATION_MODULES: |-
+            test_install_smoke
+            test_recording_lifecycle_e2e
+            test_atomic_lua_merge_concurrent
+            test_telemetry_flush_doctype_sink
+            test_ai_privacy_exclusion_on_api
+            test_regenerate_reports_idempotent
+            test_phase2_tool_orphan_recovery
+            test_safe_report_self_contained_on_real_bench
+            test_janitor_sweeps_actually_delete
         run: |
-          set -eo pipefail
+          set -uo pipefail
           BENCH_DIR="${RUNNER_TEMP}/frappe-bench"
           cd "${BENCH_DIR}"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_install_smoke \
-            2>&1 | tee "${RUNNER_TEMP}/integration-install.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_recording_lifecycle_e2e \
-            2>&1 | tee "${RUNNER_TEMP}/integration-lifecycle.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_atomic_lua_merge_concurrent \
-            2>&1 | tee "${RUNNER_TEMP}/integration-lua-merge.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_telemetry_flush_doctype_sink \
-            2>&1 | tee "${RUNNER_TEMP}/integration-telemetry.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_ai_privacy_exclusion_on_api \
-            2>&1 | tee "${RUNNER_TEMP}/integration-ai-privacy.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_regenerate_reports_idempotent \
-            2>&1 | tee "${RUNNER_TEMP}/integration-regenerate.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_phase2_tool_orphan_recovery \
-            2>&1 | tee "${RUNNER_TEMP}/integration-phase2-orphan.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_safe_report_self_contained_on_real_bench \
-            2>&1 | tee "${RUNNER_TEMP}/integration-self-contained.log"
-          bench --site test_site run-tests \
-            --app optimus \
-            --module optimus.tests_integration.test_janitor_sweeps_actually_delete \
-            2>&1 | tee "${RUNNER_TEMP}/integration-janitor.log"
+          FAILED_MODULES=()
+          # Each module gets its own --module invocation + its own log
+          # artifact ("integration-<module>.log") so the post-run
+          # artifact upload preserves per-module triage detail.
+          # v0.12.15 improvement: the pre-v0.12.15 implementation used
+          # `set -e`, which made the FIRST failing module abort all
+          # siblings (despite a comment claiming otherwise). The
+          # accumulator below runs EVERY module then fails the workflow
+          # if any failed — so a single push surfaces every failure at
+          # once, not just the first.
+          while IFS= read -r module; do
+            [ -z "${module}" ] && continue
+            module="${module## }"
+            module="${module%% }"
+            log="${RUNNER_TEMP}/integration-${module}.log"
+            echo "::group::${module}"
+            if ! bench --site test_site run-tests \
+                --app optimus \
+                --module "optimus.tests_integration.${module}" \
+                2>&1 | tee "${log}"; then
+              FAILED_MODULES+=("${module}")
+            fi
+            echo "::endgroup::"
+          done <<< "${INTEGRATION_MODULES}"
+          if [ "${#FAILED_MODULES[@]}" -gt 0 ]; then
+            echo "::error::Integration modules failed: ${FAILED_MODULES[*]}"
+            exit 1
+          fi
 
       - name: Publish integration summary
         if: always()
