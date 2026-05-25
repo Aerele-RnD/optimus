@@ -113,7 +113,12 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
           chmod +x .github/helper/install.sh
-          bash .github/helper/install.sh
+          # v0.12.27 diagnostic: ``bash -x`` traces every command to
+          # the log. CI was failing with bare ``exit code 167`` and the
+          # per-step group echoes alone weren't enough to pinpoint
+          # which line tripped ``set -e``. Once the failing command is
+          # identified + fixed, drop ``-x`` (keeps the log readable).
+          bash -x .github/helper/install.sh
 
       - name: Run the integration suite
         # ``bench run-tests --app optimus`` discovers every test under
