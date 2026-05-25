@@ -8,6 +8,120 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.4] — 2026-05-25
+
+**Integration test — `api.regenerate_reports` is byte-stable across
+consecutive calls. Fourth row of the v0.11.0 deferred-tests table is
+now ticked.**
+
+`api.regenerate_reports(session_uuid)` (api.py:1121-1241) re-renders
+the safe-report HTML from an already-analyzed session without
+re-running the analyze pipeline. Its purpose is to let an operator
+pick up a renderer / template upgrade on a historical session without
+the cost of re-analysis. That makes it **load-bearing for upgrades**:
+v0.7.0 template polish, v0.10.0 renderer split, every later round of
+finding-card refinement — all shipped on the assumption that
+operators could regenerate old sessions and see the new UI.
+
+The pure-pytest unit test
+(`optimus/tests/test_regenerate_reports_api.py`) does source
+inspection only: whitelisted, takes session_uuid, doesn't enqueue
+analyze, calls clear_cached_pdf, gates on permissions. It says
+nothing about the output. What it can't prove:
+
+* That two consecutive `regenerate_reports` calls produce
+  **byte-identical** HTML. Future non-determinism (a fresh UUID, a
+  dict-iteration order change, a `time.time()` snapshot) would
+  silently start producing diff'd HTML — breaking `regenerate` as a
+  way to roll forward and breaking any safe-report diffing workflow.
+* That the endpoint actually attaches HTML to
+  `Optimus Session.raw_report_file` and the URL resolves.
+* That a session-data change produces a different HTML (the canary's
+  complement; catches silent caching).
+* That the documented "Allowed on Ready OR Failed sessions" claim
+  holds.
+
+This integration test fills that gap.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_regenerate_reports_idempotent.py`**
+  (~260 LOC, 4 tests). Patches
+  `optimus.renderer._internal._now_iso` to a fixed string at the
+  test-class level so the embedded "Generated at" stamp is
+  deterministic (otherwise two consecutive renders would differ by
+  their stamp alone). Each test uses a unique session_uuid +
+  minimal synthetic Optimus Session (reqd fields only) + explicit
+  cleanup of attached File rows in tearDown.
+  - `test_two_consecutive_regenerates_produce_byte_identical_html`
+    — the canary. `api.regenerate_reports(uuid)` twice, no changes
+    in between; the two `file_doc.get_content()` results must be
+    byte-identical. Catches future non-determinism in the renderer.
+  - `test_regenerate_attaches_html_to_raw_report_file_and_url_resolves`
+    — the side-effect contract: `raw_report_file` URL set,
+    File row is private + attached_to_doctype="Optimus Session" +
+    content starts with `<!DOCTYPE` or `<html`.
+  - `test_regenerate_byte_diff_when_session_field_changes` — the
+    canary's complement. Render once, snapshot. Mutate `title` via
+    `frappe.db.set_value`. Render again, snapshot. The two HTMLs
+    must DIFFER, and the new title must appear in HTML 2 but not
+    HTML 1. Catches silent caching.
+  - `test_regenerate_works_on_failed_status_session` — sets
+    `status="Failed"`, calls regenerate, asserts it succeeds +
+    attaches a fresh file. Validates the docstring claim that
+    Failed sessions are explicitly allowed ("unblocks a demo when
+    a render-time bug was fixed" — api.py:1147-1150).
+- Workflow line in `.github/workflows/integration.yml` to run the new
+  module against the bench-bootstrapped `test_site`.
+
+### Per-test isolation
+
+- **Unique `session_uuid` per test** so attached File rows scope
+  cleanly.
+- **`setUpClass` patches `optimus.renderer._internal._now_iso`** to
+  a fixed timestamp via `mock.patch`. Module-attribute lookup at
+  render time means the patch takes effect immediately for every
+  render through the API endpoint.
+- **`tearDown` explicit cleanup** — `frappe.db.delete("File",
+  {attached_to_doctype: "Optimus Session", attached_to_name: name})`
+  to wipe every File row regenerate created (one per call), then
+  `frappe.delete_doc("Optimus Session", name, force=1)`.
+
+### Discovery
+
+- `api.regenerate_reports` has **no `status` gate** — any session
+  status (Ready, Failed, Analyzing, etc.) re-renders. The docstring
+  says "Allowed on Ready OR Failed" but the code doesn't enforce it.
+  Out of scope for this PR; documented in the test that exercises
+  the Failed branch.
+
+### Docs
+
+- `optimus/tests_integration/README.md` — row 4 of the extraction
+  roadmap ticked. 3 rows remain
+  (`test_phase2_tool_orphan_recovery.py`,
+  `test_safe_report_self_contained_on_real_bench.py`,
+  `test_janitor_sweeps_actually_delete.py`).
+
+### Unchanged
+
+- `optimus/api.py` — the endpoint under test stays as-is.
+- `optimus/renderer/_internal.py` — `_now_iso` is patched per-test;
+  production behaviour unchanged.
+- `optimus/analyze.py` — `_render_and_attach_reports` /
+  `_save_report_file` stay as-is.
+- `optimus/report_context.py` — `build_report_context` stays as-is.
+- All v0.7.0 unit-suite regenerate tests
+  (`optimus/tests/test_regenerate_reports_api.py`) — they stay as
+  the pure-pytest source-inspection backstop.
+
+### Compatibility
+
+No behaviour change. Pure test addition. Integration-suite total:
+23 → 27 tests. Unit suite stays at 1818.
+
+---
+
 ## [0.12.3] — 2026-05-25
 
 **Integration test — `api.suggest_fix` honours
