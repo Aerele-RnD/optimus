@@ -231,12 +231,32 @@ def set_session_meta(session_uuid: str, meta: dict) -> None:
 	frappe.local._profiler_active_session_id. When False, the new
 	pyinstrument capture and sidecar wraps stay inert; SQL recording
 	via frappe.recorder proceeds as usual.
+
+	v0.12.21: the cached payload is wrapped in the v0.12.0 versioned
+	envelope so future schema bumps to the meta dict shape can be
+	detected via ``redis_schema.unwrap_value``'s drift branch.
+	Pre-v0.12.21 bare-dict values still resolve through ``unwrap_value``'s
+	legacy-detection branch in ``get_session_meta``.
 	"""
-	frappe.cache.set_value(_meta_key(session_uuid), meta)
+	from optimus import redis_schema
+
+	frappe.cache.set_value(_meta_key(session_uuid), redis_schema.wrap_value(meta))
 
 
 def get_session_meta(session_uuid: str) -> dict | None:
-	return frappe.cache.get_value(_meta_key(session_uuid))
+	"""v0.12.21: unwrap the envelope shape introduced by
+	``set_session_meta``. Handles new (wrapped) and legacy (bare dict)
+	shapes transparently. Returns ``None`` for missing keys."""
+	from optimus import redis_schema
+
+	raw = frappe.cache.get_value(_meta_key(session_uuid))
+	payload, _version = redis_schema.unwrap_value(raw)
+	if payload is None:
+		return None
+	# Defensive: payload should be a dict. A non-dict from a corrupt
+	# write (or a future-version envelope where unwrap returned the
+	# default=None) would crash callers expecting `.get(...)`. Normalize.
+	return payload if isinstance(payload, dict) else None
 
 
 # ----- session → recording UUIDs (set, append-only during recording) ------

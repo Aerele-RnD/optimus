@@ -51,7 +51,7 @@ when you add a new key; the audit test asserts this table matches
 | Pattern | Value | Encoding | TTL | Notes |
 |---|---|---|---|---|
 | `profiler:active:<user>` | string (session UUID) | raw | 10 min (`SESSION_TTL_SECONDS`) | Refreshed on every `register_recording`. Cleared by `api.stop`. |
-| `profiler:session:<session_uuid>:meta` | hash → dict | Frappe pickle | none (explicit delete) | session_uuid, docname, user, label, started_at, capture_python_tree, optional cap_warning, optional draining_until. |
+| `profiler:session:<session_uuid>:meta` | **enveloped** dict (v0.12.21+) | Frappe pickle around `{"_v": 1, "data": {session_uuid, docname, user, label, started_at, capture_python_tree, optional cap_warning, optional draining_until}}` | none (explicit delete) | Migrated to the v0.12.0 envelope in v0.12.21. `get_session_meta` unwraps; pre-v0.12.21 bare-dict writes still resolve via legacy-detection branch. A defensive `isinstance(dict)` check on the unwrapped payload normalises corrupt non-dict values to `None`. |
 | `profiler:session:<session_uuid>:recordings` | set | raw UUIDs | none (explicit delete) | SADD per recording. |
 | `profiler:session:<session_uuid>:pending_jobs` | set | raw RQ job IDs | none (explicit delete) | SADD on enqueue, SREM on completion. |
 | `profiler:session:<session_uuid>:jobs` | hash → JSON | **raw JSON** (Lua-written via `_raw_redis`) | none (explicit delete) | See § 5 "Dual-encoding hazard". |

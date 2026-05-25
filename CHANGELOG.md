@@ -8,6 +8,87 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.21] — 2026-05-25
+
+**Redis-schema rollout continues — `session_meta` is the fifth value
+migrated to the v0.12.0 `wrap_value` / `unwrap_value` envelope.**
+
+The session metadata dict (set by `api.start`, updated through the
+session's life, read on every recording's `before_request` /
+`before_job` hook) is now wrapped on write and unwrapped on read.
+
+Previous phases: `settings_cache` (v0.12.11), `retention_backlog` +
+`onboarding_seen` (v0.12.13), `explain_cache` (v0.12.17).
+
+### Changed
+
+- **`optimus/session.py:set_session_meta`** now wraps the meta dict
+  via `redis_schema.wrap_value` before `frappe.cache.set_value`.
+- **`optimus/session.py:get_session_meta`** now unwraps via
+  `redis_schema.unwrap_value` and returns the payload dict. Also
+  adds a **defensive `isinstance(dict)` normalisation**: if the
+  unwrapped value isn't a dict (corrupt write, future-version
+  envelope where `unwrap_value` returned the `default=None`), the
+  function returns `None` rather than passing through to callers
+  which would crash on `.get(...)`.
+
+### Why session_meta
+
+- **Hot path** — read on every recording's request/job hook;
+  envelope overhead must be invisible. Single Redis GET +
+  isinstance check.
+- **Stable dict shape** — fields documented in the docstring; the
+  shape is the same v0.3.0+ contract, perfect for envelope.
+- **Single writer / single reader pair** — both inside `session.py`,
+  no cross-module coordination needed.
+
+### Added
+
+- **NEW `optimus/tests/test_envelope_rollout_phase4.py`** (~155
+  LOC, 5 tests):
+  - `test_set_session_meta_stores_envelope` — write-path canary.
+  - `test_get_session_meta_unwraps_new_envelope` — happy path.
+  - `test_get_session_meta_handles_legacy_bare_dict` — the
+    migration-safety contract: pre-v0.12.21 bare dicts resolve
+    unchanged.
+  - `test_get_session_meta_returns_none_for_missing_key` — cache
+    miss case.
+  - `test_get_session_meta_returns_none_for_corrupt_non_dict` —
+    defensive non-dict normalisation.
+
+### Docs
+
+- `docs/REDIS-SCHEMA.md` — `profiler:session:<uuid>:meta` row
+  updated to reflect the envelope shape + the defensive
+  normalisation note.
+
+### Compatibility
+
+- **Forward** (new readers, old writers): supported via
+  `unwrap_value`'s legacy-detection branch.
+- **Backward** (old readers, new writers): NOT supported — an old
+  reader would call `.get("session_uuid")` on the envelope dict and
+  get `None` (the envelope dict has `_v` + `data`, not the meta
+  fields), then treat the session as inactive. The session's
+  recording hooks would skip the request; downstream analyze would
+  see fewer recordings than expected. Bench restart cycles workers
+  atomically so the mixed window is bounded; in-flight sessions
+  during the gap would lose some recordings.
+
+### Unchanged
+
+- `optimus/redis_schema.py` — envelope helpers ship as-is.
+- `session_recordings` (the per-session set of recording UUIDs) —
+  stays unmigrated. Sets aren't a natural fit for the value envelope
+  (the envelope wraps a single value; sets are member collections).
+  Per-member wrapping would add overhead per recording without
+  obvious benefit (members are opaque UUIDs).
+
+Unit suite: 1854 → 1859 (+5 from the new phase-4 test module).
+Integration suite unchanged at 39.
+
+---
+
 ## [0.12.20] — 2026-05-25
 
 **LP key-helper unification — Phase-2 line_profile capture now uses
