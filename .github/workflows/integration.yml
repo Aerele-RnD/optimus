@@ -143,6 +143,10 @@ jobs:
             --app optimus \
             --module optimus.tests_integration.test_regenerate_reports_idempotent \
             2>&1 | tee "${RUNNER_TEMP}/integration-regenerate.log"
+          bench --site test_site run-tests \
+            --app optimus \
+            --module optimus.tests_integration.test_phase2_tool_orphan_recovery \
+            2>&1 | tee "${RUNNER_TEMP}/integration-phase2-orphan.log"
 
       - name: Publish integration summary
         if: always()

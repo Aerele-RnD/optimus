@@ -8,6 +8,91 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.5] — 2026-05-25
+
+**Integration test — Phase-2 tool-2 orphan recovery. Fifth row of the
+v0.11.0 deferred-tests table is now ticked.**
+
+On Python 3.12+ line_profiler drives the process-global
+`sys.monitoring` PROFILER_ID (tool 2). A pre-`fbf3179` failure mode
+left tool 2's LINE events registered process-wide after a botched
+teardown → every subsequent request in that worker line-traced → CPU
+peg + frozen UI. The `fbf3179` fix added the worker-respawn recovery
+path: `optimus._startup_probe_tool2()` reclaims tool 2 at app-import
+if it's owned by `line_profiler` (i.e. a prior worker died
+mid-Phase-2 and its state survived). The unit suite
+(`test_line_profile_monitoring.py`) covers `release_monitoring_tool()`
+at the function-call boundary. It can't cover the startup probe in a
+real bench with `frappe.logger()` reachable and the v0.8.0 telemetry
+path live.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_phase2_tool_orphan_recovery.py`**
+  (~210 LOC, 4 tests). Each test manipulates `sys.monitoring` tool 2
+  state directly (via `use_tool_id` / `set_events` / `free_tool_id`),
+  invokes `optimus._startup_probe_tool2()`, and asserts the
+  post-probe state. `setUp` + `tearDown` hard-reset tool 2 to free
+  so a leak from one test cannot poison the rest of the suite.
+  - `test_probe_reclaims_leaked_line_profiler_tool_2_on_simulated_worker_respawn`
+    — the canary. Register tool 2 as `"line_profiler"` with LINE
+    events on, call probe, assert tool 2 is now unowned + events
+    cleared. Without the probe, this leak would line-trace every
+    later request → CPU peg + freeze.
+  - `test_probe_is_noop_when_tool_2_is_already_free` — happy path.
+    Probe does NOT grab the tool slot itself (catches a regression
+    where the probe might accidentally register as owner).
+  - `test_probe_warns_but_does_not_reclaim_non_line_profiler_owner`
+    — boundary contract. Register tool 2 as
+    `"third-party-debugger"`, call probe, assert ownership is
+    PRESERVED. Without this constraint, the probe would silently
+    break a third-party profiler / IDE debugger.
+  - `test_probe_emits_no_telemetry_on_happy_path` — quiet-on-success
+    contract. The probe runs at every worker import; emitting
+    telemetry on the no-op path would flood
+    `Optimus Telemetry Event` with worker-restart noise. Confirms
+    `emit_failure` only fires when the probe itself raises (the
+    error branch).
+- Workflow line in `.github/workflows/integration.yml`.
+
+### Per-test isolation
+
+- **`setUp` + `tearDown` hard-reset tool 2** via
+  `sys.monitoring.set_events(PID, 0)` + `free_tool_id(PID)` — same
+  pattern as the unit suite's `_guarantee_no_leak_escapes` autouse
+  fixture. A leaked tool from one test silently slows every later
+  test in the suite, so this guard is non-negotiable.
+- **`setUp` + `tearDown` wipe `Optimus Telemetry Event` rows for
+  `event_name="startup_probe_tool2"`** so the no-telemetry happy-path
+  assertion is tight.
+- **Skips on Python < 3.12** via `pytest.mark.skipif(not _HAS_MON)`
+  — `sys.monitoring` is the 3.12+ entry point that drives the whole
+  pathway under test.
+
+### Docs
+
+- `optimus/tests_integration/README.md` — row 5 of the extraction
+  roadmap ticked. 2 rows remain
+  (`test_safe_report_self_contained_on_real_bench.py`,
+  `test_janitor_sweeps_actually_delete.py`).
+
+### Unchanged
+
+- `optimus/__init__.py` `_startup_probe_tool2` — the function under
+  test stays as-is.
+- `optimus/line_profile/capture.py` `release_monitoring_tool` —
+  unchanged.
+- All v0.7.x unit-suite tool-2 tests
+  (`optimus/tests/test_line_profile_monitoring.py`) — they stay as
+  the pure-pytest backstop.
+
+### Compatibility
+
+No behaviour change. Pure test addition. Integration-suite total:
+27 → 31 tests. Unit suite stays at 1818.
+
+---
+
 ## [0.12.4] — 2026-05-25
 
 **Integration test — `api.regenerate_reports` is byte-stable across
