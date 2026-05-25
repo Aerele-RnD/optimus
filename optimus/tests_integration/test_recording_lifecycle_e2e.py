@@ -165,27 +165,39 @@ class TestRecordingLifecycleE2E(FrappeTestCase):
 			f"integration-logs artifact on failure)."
 		)
 
+		# v0.12.35: force a render via the regenerate endpoint to
+		# guarantee the renderer + attach path runs end-to-end. The
+		# zero-traffic ``stop() immediately after start()`` flow takes
+		# a code path in ``analyze.run`` that DOESN'T attach a report
+		# (the empty-recordings session reaches Ready via early-
+		# return paths inside analyze, leaving ``raw_report_file``
+		# unset — observed in CI runs of this test). The production
+		# answer for that case is exactly what ``regenerate_reports``
+		# does: re-render from persisted DocType fields without
+		# requiring recordings. v0.12.4's regenerate-tests prove this
+		# works on minimal sessions (4 tests, all green). Calling it
+		# here lifts the lifecycle smoke from "did analyze finish" to
+		# "did the whole pipeline including render produce an
+		# attachable artifact".
+		api.regenerate_reports(session_uuid)
+
 		# Report URL is persisted on the session's ``raw_report_file``
 		# field — that's the authoritative side-effect contract
 		# (same one the v0.12.4 regenerate-tests assert against).
-		# v0.12.34: switched from a File-row LIKE query
-		# (``file_name LIKE '%optimus_raw_report%.html'``) to a
-		# direct ``raw_report_file`` field read because (a) the
-		# session-field path is what production callers use
-		# (``download_pdf`` reads the field, not the File row),
-		# (b) it sidesteps any LIKE-pattern brittleness across
-		# MariaDB versions, (c) ``analyze._render_and_attach_reports``
-		# sets ``raw_report_file`` via ``frappe.db.set_value`` as its
-		# last step — so a populated field is the definitive
-		# "render succeeded + attached" signal.
+		# ``analyze._render_and_attach_reports`` sets ``raw_report_file``
+		# via ``frappe.db.set_value`` as its last step; same field is
+		# updated by the regenerate path on every call. A populated
+		# field is the definitive "render succeeded + attached" signal.
 		raw_report_file = frappe.db.get_value(
 			"Optimus Session", docname, "raw_report_file"
 		)
 		assert raw_report_file, (
-			f"no Optimus report HTML attached to session {docname!r} — "
-			f"``raw_report_file`` field is empty, meaning the render or "
-			f"the attach step failed silently. Bench logs may show why "
-			f"(uploaded as integration-logs artifact on failure)."
+			f"no Optimus report HTML attached to session {docname!r} "
+			f"after regenerate_reports — ``raw_report_file`` field is "
+			f"empty, meaning the render or the attach step failed "
+			f"silently inside ``analyze._render_and_attach_reports``. "
+			f"Bench logs may show why (uploaded as integration-logs "
+			f"artifact on failure)."
 		)
 
 	# --- 5: sanity-floor — totals are populated ---------------------------
