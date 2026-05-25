@@ -111,10 +111,25 @@ echo "apps.txt contents:"
 cat sites/apps.txt
 _end
 
-_step "pip install -e apps/optimus"
+_step "pip install -e apps/optimus + test deps"
 # Install optimus's runtime deps into the bench's Python env. ``bench
 # get-app`` would normally do this; with a symlink we run pip directly.
 ./env/bin/pip install --quiet -e apps/optimus
+
+# v0.12.32: install the pure-pytest suite's test-only deps into the
+# bench venv. Frappe's ``bench run-tests`` does test DISCOVERY by
+# importing every file under ``apps/<app>/<app>/tests/`` (looking
+# for ``FrappeTestCase`` subclasses) BEFORE running the
+# ``--module`` we asked for. The unit-suite files at
+# ``optimus/tests/`` import ``pytest`` / ``hypothesis`` / etc. at
+# module top for fixtures + parametrize; without these in the bench
+# venv the discovery import crashes with ``ModuleNotFoundError: No
+# module named 'pytest'`` and bench never reaches the integration
+# module. Mirror the install line ``tests.yml`` uses for the
+# pure-pytest workflow.
+./env/bin/pip install --quiet \
+	pytest pytest-github-actions-annotate-failures \
+	hypothesis Faker pdfplumber pypdf sql_metadata jsonschema
 _end
 
 _step "bench new-site ${TEST_SITE}"
