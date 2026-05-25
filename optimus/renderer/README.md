@@ -62,7 +62,7 @@ optimus/renderer/
                            #    _render_phase2_function_table,
                            #    _render_phase2_diff_table,
                            #    _render_line_drilldown_panel
-  finding_enrichment.py    # Finding-enrichment helpers (phases 1+2
+  finding_enrichment.py    # Finding-enrichment helpers (phases 1+2+3
                            # of the larger finding_enrichment family).
                            # Phase 1 (v0.12.16): _root_cause_key,
                            #    _group_findings_by_root_cause,
@@ -71,6 +71,14 @@ optimus/renderer/
                            # Phase 2 (v0.12.19): _find_node_in_tree,
                            #    _walk_drilldown_chain,
                            #    _attach_drilldown_chains
+                           # Phase 3 (v0.12.26): _finding_to_dict,
+                           #    _attach_representative_callsites,
+                           #    _expand_self_time_snippets,
+                           #    _retarget_phase1_callsites_to_drilldown_leaf,
+                           #    _find_call_line_in_function_body,
+                           #    _markdown_to_safe_html,
+                           #    _read_function_body_snippet,
+                           #    _SQL_REDFLAG_FINDING_TYPES
   source_resolution.py     # Dotted-path → (abs_file, lineno, func_name)
                            # + display helpers. v0.12.23 prep work
                            # for finding_enrichment phase 3:
@@ -191,7 +199,7 @@ Remaining two:
 | ✓ `call_tree_renderer` (done in v0.12.8) | 240 | Weak | `_render_call_tree_panel`, `_render_call_tree_node`, `_ct_is_user_frame`, `_ct_is_sql_leaf`, `_ct_is_other_frame`. Self-contained tree rendering. |
 | ✓ `doc_event_renderer` (done in v0.12.10) | 376 | Moderate | `_extract_target_doc`, `_attach_action_context`, `_build_doc_event_breakdown`, plus 6 helpers + constants. Self-contained at module-import time despite "Moderate" coupling at analyze-time. |
 | ✓ `line_drilldown` (done in v0.12.12) | 416 (scoped) | Internal | `_render_line_drilldown_panel`, `_build_line_drilldown_callsite_index`, `_make_line_drilldown_lookup`, `_phase2_invoked`, `_render_phase2_function_table`, `_render_phase2_diff_table` + 3 back-compat aliases. Semi-public — `analyze.py` calls `_build_line_drilldown_callsite_index` via the package shim. Smaller than the README's 840-LOC estimate because `_find_call_line_in_function_body` (AST-walking helper) + `_retarget_phase1_callsites_to_drilldown_leaf` + `_root_cause_key` / `_group_findings_by_root_cause` stay with the still-pending finding_enrichment cluster. |
-| ◐ `finding_enrichment` (phases 1+2 done, ~365 LOC remaining) | ~365 LOC remaining (was ~700 total) | HIGH | Phase 1 (v0.12.16): `_root_cause_key`, `_group_findings_by_root_cause`, `_normalize_callsite` + `_GROUPING_SEVERITY_RANK`. Phase 2 (v0.12.19): `_find_node_in_tree`, `_walk_drilldown_chain`, `_attach_drilldown_chains`. Remaining (the source-resolution-dependent subset; needs a sibling `source_resolution.py` extraction first): `_finding_to_dict` (~200 LOC), `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_find_call_line_in_function_body`. |
+| ✓ `finding_enrichment` (done in v0.12.16 + v0.12.19 + v0.12.26) | ~700 LOC total, now fully extracted | HIGH (resolved via v0.12.23's `source_resolution.py` prep) | Phase 1 (v0.12.16): `_root_cause_key`, `_group_findings_by_root_cause`, `_normalize_callsite` + `_GROUPING_SEVERITY_RANK`. Phase 2 (v0.12.19): `_find_node_in_tree`, `_walk_drilldown_chain`, `_attach_drilldown_chains`. Phase 3 (v0.12.26): `_finding_to_dict` (~200 LOC), `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_find_call_line_in_function_body`, `_markdown_to_safe_html`, `_read_function_body_snippet`, `_SQL_REDFLAG_FINDING_TYPES`. |
 | `render()` orchestrator | 812 | Core | The big function itself. Could be split into per-phase helpers within `_internal.py`, but a per-module split isn't natural — it's an orchestrator, not a section. Keep integrated. |
 
 Each follow-up PR uses the recipe above. The structural snapshot is the

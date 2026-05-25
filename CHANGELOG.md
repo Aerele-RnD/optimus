@@ -8,6 +8,118 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.26] — 2026-05-25
+
+**Renderer extraction COMPLETE — `finding_enrichment` phase 3 is the
+final extraction. The renderer-package roadmap is fully closed.**
+
+The HIGH-coupling subset that v0.12.16 documented as "deferred until
+a proper coupling-graph design" and v0.12.19 further deferred
+("needs a sibling `source_resolution.py` extraction first") now
+ships, completing the v0.10.0 renderer extraction roadmap.
+
+The path that unblocked this: **v0.12.23's `source_resolution.py`
+extraction**. Before that, the 5 phase-3 functions depended on 6
+helpers (`_action_dotted_entry`, `_skip_decorators_to_def`,
+`_resolve_dotted_to_code`, `_action_entry_callsite`,
+`_resolve_frame_key_to_callsite`, `_bench_relative_display`) that
+lived in `_internal.py`. Moving them out together would have been an
+11-function PR, hard to review. v0.12.23 moved the 6 helpers first as
+a clean independent extraction; today's PR moves the remaining 5 +
+3 sibling helpers as the final phase.
+
+### Moved
+
+8 functions + 1 constant from `_internal.py` →
+`optimus/renderer/finding_enrichment.py`:
+
+- `_find_call_line_in_function_body` — AST-walker for finding a
+  callee's call line inside a parent function. Uses `_resolve_source_path`
+  (lazy from `source.py`).
+- `_retarget_phase1_callsites_to_drilldown_leaf` — re-aim phase-1
+  finding callsites at the call site of the deepest user-code frame
+  in their drill-down chain. Uses `_find_call_line_in_function_body`
+  + `_read_source_snippet` + `_bench_relative_display`.
+- `_finding_to_dict` (~200 LOC) — the main render-dict builder.
+  Flattens a `Optimus Finding` child row, parses the JSON detail
+  blob, synthesises a unified `callsite` shape, lazily attaches
+  source snippets, handles Server Script Desk-link rewriting,
+  builds the LLM-fix block.
+- `_attach_representative_callsites` — attach a representative
+  callsite (+ `is_representative` flag) to SQL red-flag findings
+  by matching their normalized query against the recording calls.
+  Uses `walk_callsite` (lazy from `optimus.analyzers.base`),
+  `_resolve_source_path`, `_bench_relative_display`,
+  `_read_source_snippet`.
+- `_markdown_to_safe_html` — render Markdown → sanitised HTML for
+  embedding in the report. Lazy `frappe.utils.markdown` /
+  `sanitize_html` + `_highlight_diff_html` (from `syntax.py`).
+- `_read_function_body_snippet` — read a whole function body
+  starting from its `def` line. Used for self-time hot-path
+  findings. Lazy `_resolve_source_path` + `_SNIPPET_TRUNCATE_CHARS`
+  (from `source.py`) + `optimus.server_script_source` lazy import.
+- `_expand_self_time_snippets` — for Slow Hot Path findings with
+  empty `drilldown_chain`, narrow the smoking-gun snippet to the
+  function's signature line and flag `self_time_no_pinpoint`.
+  Uses `_read_function_body_snippet`.
+- `_SQL_REDFLAG_FINDING_TYPES` constant — used by
+  `_attach_representative_callsites`.
+
+Out of `optimus/renderer/_internal.py` (now ~2,265 LOC; was ~2,928),
+into existing `optimus/renderer/finding_enrichment.py` (extended
+from ~375 LOC → ~995 LOC).
+
+### Implementation
+
+- **Lazy imports of sibling submodules** inside each function body
+  rather than at module-top. Same pattern as phase 2 — keeps the
+  submodule free of circular import risk (`_internal.py` re-imports
+  ALL phase-1/2/3 names from `finding_enrichment.py`).
+- **Standard back-import block** at the top of `_internal.py`
+  re-imports all 8 new names + the constant so call sites
+  (including `analyze.py:_finding_to_dict` + `:_markdown_to_safe_html`
+  via `renderer.X` package shim) resolve unchanged.
+- **Structural-snapshot canary stays byte-identical** — no fixture
+  regeneration needed. Confirmed by 14 tests in
+  `test_renderer_structure_snapshot.py`.
+- **Public-API contract preserved** — the
+  `test_renderer_structure_snapshot.py:TestPublicAPIPreserved` block
+  tests `_finding_to_dict`, `_markdown_to_safe_html`,
+  `_read_function_body_snippet`, all still resolve via `renderer.X`
+  through the package `__init__.py` dir-walk.
+
+### Renderer extraction is now complete
+
+| Submodule | Origin | Status |
+|---|---|---|
+| `source.py` | v0.10.0 | ✓ |
+| `syntax.py` | v0.10.0 | ✓ |
+| `time_format.py` | v0.10.0 | ✓ |
+| `visualization.py` | v0.10.0 | ✓ |
+| `call_tree_renderer.py` | v0.12.8 | ✓ |
+| `doc_event_renderer.py` | v0.12.10 | ✓ |
+| `line_drilldown.py` | v0.12.12 | ✓ |
+| `finding_enrichment.py` | v0.12.16 + v0.12.19 + v0.12.26 | ✓ |
+| `source_resolution.py` | v0.12.23 | ✓ |
+
+The only thing left in `_internal.py` is the `render()` orchestrator
+itself + its immediate inline helpers. The README's "keep integrated"
+guidance for that final 800-LOC function still holds — splitting
+it across submodules would create circular dependencies.
+
+### Unchanged
+
+- Behaviour identical — every call site resolves the same function
+  through the back-import shim.
+- `analyze.py` callers of `renderer._finding_to_dict` and
+  `renderer._markdown_to_safe_html` stay green without changes.
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1870.
+
+---
+
 ## [0.12.25] — 2026-05-25
 
 **Janitor proactive envelope-version census — per-key visibility
