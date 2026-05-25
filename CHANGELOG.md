@@ -8,6 +8,103 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.14] — 2026-05-25
+
+**HMAC envelope versioning — `sign_blob` / `unsign_blob` now embed a
+1-byte scheme version between the signature and the payload.**
+
+The v0.12.0 `wrap_value` rollout addressed value-shape versioning at
+the cache-value boundary. The HMAC envelope at the bytes-on-the-wire
+boundary (`optimus/session.py:sign_blob` / `unsign_blob`, signing the
+pickled pyinstrument trees that recordings stash in Redis) had no
+equivalent versioning hook. A future signing-scheme bump (HMAC-SHA512,
+AES-SIV, key-rotation tag) would have required a hard cutover; this
+release adds the extension point so future bumps land cleanly.
+
+### Changed
+
+- **`optimus/session.py:sign_blob`** now inserts a 1-byte scheme
+  marker (`_HMAC_SCHEME_V1 = 0x01`) between the 32-byte HMAC and the
+  payload. The HMAC covers the version-tagged body
+  (`HMAC(\\x01 + payload)`), so tampering with the marker is detected
+  on read.
+- **`optimus/session.py:unsign_blob`** handles two body shapes after
+  the 32-byte signature:
+  - **v1 (current, v0.12.14+)** — body starts with
+    `_HMAC_SCHEME_V1`; strip the marker, return `body[1:]`.
+  - **v0 (legacy, pre-v0.12.14)** — body is the raw payload; return
+    `body` as-is.
+
+  The single HMAC verification step handles both cases — for v1 the
+  HMAC was computed over `\\x01 + payload` AND that's exactly what the
+  body is; for v0 the HMAC was computed over the payload AND the body
+  is just the payload. Post-verify, the body's first byte
+  disambiguates.
+
+### Why `\x01` as the marker
+
+Pickle (the only producer of payloads for `sign_blob` today) never
+uses `\x01` as a leading opcode:
+
+- Pickle protocols 2-5 start with `\x80` (PROTO opcode).
+- Pickle protocol 0 starts with printable ASCII opcodes (`(`, `c`,
+  `[`, etc.).
+
+So a legacy pre-v0.12.14 pickle payload's first byte can never
+accidentally trigger the v1 strip branch in `unsign_blob`. Future
+producers (msgpack, JSON, raw binary) just need to avoid `\x01` as a
+leading byte — or write through the v1 path so the marker is
+explicit.
+
+### Added
+
+- **NEW `optimus/tests/test_hmac_envelope_versioning.py`** (~220
+  LOC, 13 tests):
+  - **`TestSignUnsignRoundTrip`** (3 tests): v1 round-trip for
+    typical payload, empty payload, pickle-shaped payload.
+  - **`TestLegacyShapeBackwardCompat`** (2 tests): hand-crafted
+    pre-v0.12.14 v0 blobs (no version marker) still verify and
+    return the original payload; pickle-shaped legacy blobs work
+    too (the `\x80` first byte stays as-is, no incorrect strip).
+  - **`TestNewShapeByteLayout`** (1 test): canary on the byte
+    layout — `[32-byte HMAC] + \\x01 + payload`, length =
+    `32 + 1 + len(payload)`.
+  - **`TestTamperingDetection`** (3 tests): tampered signature →
+    None; tampered version byte → None (HMAC covers it); tampered
+    payload → None.
+  - **`TestEdgeCases`** (4 tests): too-short input → None; non-bytes
+    input → None; `sign_blob` rejects non-bytes; the
+    no-stable-secret path passes through unsigned (preserves Phase
+    K behaviour when `frappe.conf.encryption_key` is absent).
+
+### Compatibility
+
+- **Forward** (new readers, old writers): supported. The v0 branch
+  in `unsign_blob` handles pre-v0.12.14 blobs cleanly.
+- **Backward** (old readers, new writers): NOT supported. A
+  pre-v0.12.14 reader computes HMAC over the body bytes (which now
+  include the version marker) and gets a verification mismatch →
+  returns None → the recording / pyinstrument tree is silently
+  dropped on that worker. Bench restart cycles all workers
+  atomically, so the mixed window is small. On a multi-day rollout
+  where workers don't all restart together, in-flight recordings
+  during the gap would be lost (same constraint as the
+  `wrap_value` rollout in v0.12.11+).
+
+### Unchanged
+
+- `_has_stable_hmac_secret()` and `_hmac_secret()` — secret
+  resolution unchanged.
+- `_SIG_LEN = 32` — signature length unchanged (still SHA-256).
+- The Phase K no-secret pass-through path (returns raw blob when
+  `frappe.conf.encryption_key` is absent) — unchanged. The version
+  marker is only inserted when the HMAC actually fires.
+
+Unit suite: 1830 → 1843 (+13 from the new envelope-versioning test
+module). Integration suite unchanged at 39.
+
+---
+
 ## [0.12.13] — 2026-05-25
 
 **Redis-schema rollout continues — `retention_backlog` and

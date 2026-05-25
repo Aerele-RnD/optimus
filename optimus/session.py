@@ -39,6 +39,19 @@ MAX_RECORDINGS_PER_SESSION = 200
 # a malicious pickle in and trigger a deserialization RCE.
 _SIG_LEN = 32  # SHA-256 digest size in bytes.
 
+# v0.12.14: a 1-byte scheme version marker is inserted between the
+# HMAC and the payload at sign time, so future signing-scheme bumps
+# (HMAC-SHA512, AES-SIV, key-rotation tag, …) have an extension point
+# without breaking blobs in flight. The version byte is COVERED BY
+# THE HMAC — tampering with it is detected. Backward compatibility on
+# read is automatic: if the post-signature body's first byte is the
+# current version marker, strip it; otherwise the body is a legacy
+# pre-v0.12.14 payload. Pickle never uses ``\x01`` as a leading
+# opcode (protocols 2-5 start with ``\x80``; protocol 0 with printable
+# ASCII opcodes), so the marker can't collide with a legacy pickle
+# payload's first byte.
+_HMAC_SCHEME_V1 = 0x01
+
 
 def _has_stable_hmac_secret() -> bool:
 	"""Phase K v0.7 GA: True only when ``frappe.conf.encryption_key``
@@ -91,27 +104,57 @@ def sign_blob(blob: bytes) -> bytes:
 	per-process random key would produce blobs that fail HMAC
 	verification in any other process and break the recorder →
 	analyze handoff.
+
+	v0.12.14: inserts a 1-byte scheme version (``_HMAC_SCHEME_V1``)
+	between the signature and the payload. The signature covers the
+	version-tagged body, so tampering with the version is detected.
+	Legacy pre-v0.12.14 blobs (no version byte) still verify on read
+	via the backward-compat branch in ``unsign_blob``.
 	"""
 	if not isinstance(blob, (bytes, bytearray)):
 		raise TypeError(f"sign_blob expects bytes, got {type(blob).__name__}")
 	if not _has_stable_hmac_secret():
 		return bytes(blob)
-	sig = hmac.new(_hmac_secret(), bytes(blob), hashlib.sha256).digest()
-	return sig + bytes(blob)
+	versioned = bytes([_HMAC_SCHEME_V1]) + bytes(blob)
+	sig = hmac.new(_hmac_secret(), versioned, hashlib.sha256).digest()
+	return sig + versioned
 
 
 def unsign_blob(signed: bytes) -> bytes | None:
 	"""Verify the HMAC-SHA256 prefix and return the payload, or
 	``None`` if the signature is missing / mismatched. Constant-time
 	comparison via ``hmac.compare_digest`` so signature-stripping
-	attacks don't leak timing info."""
+	attacks don't leak timing info.
+
+	v0.12.14: handles two body shapes after the 32-byte signature:
+
+	  * **v1 (current, v0.12.14+)** — body starts with
+	    ``_HMAC_SCHEME_V1``. The signature covers the version-tagged
+	    body. Returns ``body[1:]`` (the payload, with the version
+	    byte stripped).
+	  * **v0 (legacy, pre-v0.12.14)** — body is the raw payload. The
+	    signature covers the body directly. Returns ``body``.
+
+	The single HMAC verification step handles both cases — for v1 the
+	HMAC was computed over ``\\x01 + payload`` AND that's exactly what
+	the body is; for v0 the HMAC was computed over the payload AND
+	the body is just the payload. The post-verify branch inspects the
+	body's first byte to disambiguate.
+	"""
 	if not isinstance(signed, (bytes, bytearray)) or len(signed) < _SIG_LEN:
 		return None
-	sig, blob = bytes(signed[:_SIG_LEN]), bytes(signed[_SIG_LEN:])
-	expected = hmac.new(_hmac_secret(), blob, hashlib.sha256).digest()
+	sig, body = bytes(signed[:_SIG_LEN]), bytes(signed[_SIG_LEN:])
+	expected = hmac.new(_hmac_secret(), body, hashlib.sha256).digest()
 	if not hmac.compare_digest(sig, expected):
 		return None
-	return blob
+	# v0.12.14 disambiguation: a body starting with _HMAC_SCHEME_V1
+	# is a versioned payload; strip the marker. A body starting with
+	# anything else is a legacy pre-v0.12.14 raw payload. Pickle never
+	# uses 0x01 as a leading opcode, so a legacy pickle payload's
+	# first byte can never accidentally trigger the v1 branch.
+	if body and body[0] == _HMAC_SCHEME_V1:
+		return body[1:]
+	return body
 
 
 def _active_key(user: str) -> str:
