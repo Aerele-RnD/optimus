@@ -8,6 +8,80 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.17] — 2026-05-25
+
+**Redis-schema rollout continues — `explain_cache` is the fourth
+value migrated to the v0.12.0 `wrap_value` / `unwrap_value` envelope.**
+
+Previous phases covered `settings_cache` (v0.12.11),
+`retention_backlog` + `onboarding_seen` (v0.12.13). This release adds
+`explain_cache` — the cross-session cache of EXPLAIN query results
+that powers the analyzer's slow-query / missing-index detection.
+
+### Changed
+
+- **`optimus/analyze.py`** — the EXPLAIN cache write/read pair around
+  line 1352-1380 now uses the envelope:
+  - WRITE: `frappe.cache.set_value(shared_key,
+    _redis_schema.wrap_value(result), expires_in_sec=cache_ttl)`.
+  - READ: `raw_cached = frappe.cache.get_value(shared_key);
+    cached, _version = _redis_schema.unwrap_value(raw_cached)`.
+
+  Top-of-module `from optimus import redis_schema as _redis_schema`
+  added alongside the existing `redis_keys as _redis_keys` import.
+
+### Why explain_cache
+
+- **Highest-frequency cache by call count** — every analyze run that
+  touches a slow query checks here; the hit rate determines whether
+  re-analyze is fast (~5s) or slow (~30s, runs EXPLAIN again).
+- **Most complex shape rolled out so far** — payload is
+  `list[dict]` (EXPLAIN row results from MariaDB); validates that
+  the envelope preserves nested structure cleanly.
+- **TTL-bounded** — pre-v0.12.17 cached entries fall off the cache
+  naturally within `optimus_explain_cache_ttl_seconds` (default
+  3600s); the legacy-shape backward-compat branch covers the brief
+  window after deploy.
+
+### Added
+
+- **NEW `optimus/tests/test_envelope_rollout_phase3.py`** (~110
+  LOC, 5 tests):
+  - `TestExplainCacheEnvelopeRoundTrip` (3 tests) —
+    list-of-dicts round-trip, empty-list round-trip, legacy
+    bare-list pass-through (the migration-safety contract).
+  - `TestAnalyzeSourceUsesEnvelope` (2 tests) — source-grep canaries
+    on the write + read sites.
+
+### Docs
+
+- `docs/REDIS-SCHEMA.md` — `profiler:explain:<cache_key>` row updated
+  to reflect the new envelope shape + legacy-compat note.
+
+### Compatibility
+
+- **Forward** (new readers, old writers): supported via
+  `unwrap_value`'s legacy-detection branch. Pre-v0.12.17 cached
+  EXPLAIN results stored as bare list[dict] still resolve cleanly.
+- **Backward** (old readers, new writers): NOT supported. An old
+  worker reading a new envelope would try to use the dict as the
+  EXPLAIN result, likely crashing downstream when an analyzer
+  accesses `result[0]["select_type"]`. Bench restart cycles workers
+  atomically; the TTL on the cache (default 1h) means stale-new
+  values age out within an hour anyway.
+
+### Unchanged
+
+- `optimus/redis_schema.py` — envelope helpers ship as-is.
+- The remaining bare-shaped values (`analyze_inflight`, LP
+  `picks`/`source`/`samples`/`active`, the session hash family, the
+  Frontend buckets) — future PRs roll out one at a time.
+
+Unit suite: 1843 → 1848 (+5 from the new phase-3 test module).
+Integration suite unchanged at 39.
+
+---
+
 ## [0.12.16] — 2026-05-25
 
 **Renderer extraction — `finding_enrichment` phase 1 (the low-coupling

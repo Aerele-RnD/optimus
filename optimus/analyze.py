@@ -242,6 +242,7 @@ _BG_WAIT_THROTTLE_SECONDS = 2.0
 # for code-local readability — every internal use that references the
 # key still does so via this module-level alias.
 from optimus import redis_keys as _redis_keys
+from optimus import redis_schema as _redis_schema
 
 _SINGLEFLIGHT_KEY = _redis_keys.analyze_inflight()
 # Flag TTL. Heartbeated at each progress milestone in run(); if a worker dies
@@ -1351,9 +1352,14 @@ def _enrich_recordings(recordings: list[dict]) -> list[str]:
 
 			# Second tier: cross-session frappe.cache with TTL. Two
 			# analyze runs on a stable schema will hit this cache.
+			# v0.12.17: explain_cache is the fourth value migrated to
+			# the v0.12.0 versioned envelope. Reads handle both new
+			# (wrapped) and legacy (bare-list) shapes via
+			# ``unwrap_value``'s legacy-detection branch.
 			shared_key = _redis_keys.explain_cache(cache_key)
 			if use_shared_cache:
-				cached = frappe.cache.get_value(shared_key)
+				raw_cached = frappe.cache.get_value(shared_key)
+				cached, _version = _redis_schema.unwrap_value(raw_cached)
 				if cached is not None:
 					call["explain_result"] = cached
 					_cap_explain_cache(explain_cache, cache_key, cached)
@@ -1368,7 +1374,9 @@ def _enrich_recordings(recordings: list[dict]) -> list[str]:
 				if use_shared_cache:
 					try:
 						frappe.cache.set_value(
-							shared_key, result, expires_in_sec=cache_ttl
+							shared_key,
+							_redis_schema.wrap_value(result),
+							expires_in_sec=cache_ttl,
 						)
 					except Exception:
 						pass  # shared cache is best-effort
