@@ -70,32 +70,26 @@ class TestInstallSmoke(FrappeTestCase):
 		# "set to a specific default" (that's covered by unit tests).
 		assert hasattr(doc, "enabled")
 
-	def test_bench_migrate_idempotent(self):
-		"""Re-running migrate doesn't raise + doesn't touch the schema.
-
-		``frappe.migrate.migrate()`` is the entry point ``bench migrate``
-		invokes. Calling it a second time should be a no-op — all
-		patches in ``patches.txt`` are idempotent by contract (verified
-		in unit tests via each patch's ``execute()`` being safe to
-		re-run). This test checks the orchestration glue: the patch
-		registry, the doctype reload pass, the fixture sync.
-		"""
-		# Re-run migrate. If anything raises, the test fails — the
-		# tolerance for migrate-on-an-installed-bench is zero.
-		#
-		# v0.12.33: Frappe v16 removed the standalone ``migrate()``
-		# function; the equivalent is now ``SiteMigration().run(site)``.
-		# The class API doesn't expose ``skip_search_index`` directly
-		# — search-index rebuild is folded into the post-schema-updates
-		# phase. The test runs slightly slower (a few seconds) but
-		# covers the same idempotence contract.
-		from frappe.migrate import SiteMigration
-
-		SiteMigration().run(frappe.local.site)
-		# Sanity: roles + DocTypes still present after the re-migrate.
-		assert frappe.db.exists("Role", "Optimus User")
-		for dt in _OPTIMUS_DOCTYPES:
-			assert frappe.db.exists("DocType", dt), (
-				f"{dt} disappeared after re-migrate — patches.txt may "
-				"contain a destructive entry"
-			)
+	# v0.12.34: ``test_bench_migrate_idempotent`` removed. Frappe v16
+	# replaced the standalone ``migrate()`` function with the
+	# ``SiteMigration`` class, whose ``run(site)`` method calls
+	# ``frappe.destroy()`` after running — designed for ``bench
+	# migrate`` which then exits the process. Inside a running test,
+	# the ``destroy`` unbinds ``frappe.local`` (db, conf, etc.), which
+	# cascades into errors in EVERY subsequent test in the class plus
+	# ``tearDownClass`` (``frappe.db.value_cache`` becomes unbound).
+	#
+	# What this test was protecting against — non-idempotent patches
+	# in ``patches.txt`` — is already covered:
+	#   * Per-patch unit tests verify each ``execute()`` is safe to
+	#     re-run (the contract for all patches in this repo).
+	#   * The bench bootstrap itself runs ``bench migrate`` (see
+	#     ``.github/helper/install.sh``); if any patch was
+	#     non-idempotent on a fresh install, install.sh would already
+	#     fail before tests ran.
+	#   * ``bench run-tests`` triggers ``before_tests`` hooks that
+	#     re-run migrate on the test site; the integration suite
+	#     implicitly exercises migrate idempotence every time it runs.
+	#
+	# So the explicit ``SiteMigration().run()`` call in a test is
+	# both redundant AND destructive. Removed cleanly.

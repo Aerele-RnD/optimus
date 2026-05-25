@@ -165,26 +165,27 @@ class TestRecordingLifecycleE2E(FrappeTestCase):
 			f"integration-logs artifact on failure)."
 		)
 
-		# Report file is attached. The renderer writes the safe-report
-		# HTML as a File row pointing at the session's docname.
-		# v0.12.33: ``analyze._render_and_attach_reports`` writes the
-		# file as ``optimus_raw_report_<uuid>.html`` (note the
-		# ``_raw_`` infix — pre-v0.6.0 there was also a ``_safe_``
-		# variant; the safe variant got removed in v0.6.0 Round 7,
-		# leaving just ``raw``). The pre-v0.12.33 LIKE pattern
-		# ``%optimus_report%`` failed to match because there's
-		# ``_raw_`` between ``optimus`` and ``report``.
-		attached = frappe.db.exists(
-			"File",
-			{
-				"attached_to_doctype": "Optimus Session",
-				"attached_to_name": docname,
-				"file_name": ("like", "%optimus_raw_report%.html"),
-			},
+		# Report URL is persisted on the session's ``raw_report_file``
+		# field — that's the authoritative side-effect contract
+		# (same one the v0.12.4 regenerate-tests assert against).
+		# v0.12.34: switched from a File-row LIKE query
+		# (``file_name LIKE '%optimus_raw_report%.html'``) to a
+		# direct ``raw_report_file`` field read because (a) the
+		# session-field path is what production callers use
+		# (``download_pdf`` reads the field, not the File row),
+		# (b) it sidesteps any LIKE-pattern brittleness across
+		# MariaDB versions, (c) ``analyze._render_and_attach_reports``
+		# sets ``raw_report_file`` via ``frappe.db.set_value`` as its
+		# last step — so a populated field is the definitive
+		# "render succeeded + attached" signal.
+		raw_report_file = frappe.db.get_value(
+			"Optimus Session", docname, "raw_report_file"
 		)
-		assert attached, (
-			"no Optimus report HTML attached to the session — render must "
-			"have failed silently"
+		assert raw_report_file, (
+			f"no Optimus report HTML attached to session {docname!r} — "
+			f"``raw_report_file`` field is empty, meaning the render or "
+			f"the attach step failed silently. Bench logs may show why "
+			f"(uploaded as integration-logs artifact on failure)."
 		)
 
 	# --- 5: sanity-floor — totals are populated ---------------------------
