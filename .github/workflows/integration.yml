@@ -82,10 +82,17 @@ jobs:
         # Frappe's asset pipeline needs Node even with --skip-assets;
         # ``bench init`` shells out to ``yarn install`` for the Frappe
         # framework's own JS deps before building the bench skeleton.
+        #
+        # NB: no ``cache: 'yarn'`` here — that directive requires a
+        # ``yarn.lock`` in the optimus repo at setup-node time, but
+        # optimus is a Frappe app, not a Node project; the yarn.lock
+        # we care about ships inside ``apps/frappe`` which only exists
+        # AFTER the install.sh step below clones it. The dedicated
+        # ``actions/cache@v4`` step right after this one still caches
+        # ``~/.cache/yarn``, so Frappe's repeat installs stay fast.
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'yarn'
 
       - name: Cache the Frappe checkout across runs
         # Bench provisioning's dominant cost is the Frappe clone (~150 MB)
