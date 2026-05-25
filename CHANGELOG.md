@@ -8,6 +8,69 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.24] — 2026-05-25
+
+**`session.py` local key helpers retired in favour of
+`optimus.redis_keys.session_*` aliases.**
+
+`optimus/session.py` was the last module still defining inline
+`profiler:*` f-string key helpers. The v0.12.0 release centralised
+every Redis key in `optimus/redis_keys.py` and added
+`test_redis_audit.py` to catch new inline f-strings; the session
+helpers were exempted from the audit and stayed inline as deferred
+cleanup. This release closes that gap. Same pattern as v0.12.20 for
+LP capture.
+
+### Changed
+
+- **`optimus/session.py`** — 5 local key helpers (`_active_key`,
+  `_meta_key`, `_recordings_key`, `_pending_jobs_key`, `_jobs_key`)
+  replaced with module-level aliases to the v0.12.0 redis_keys
+  equivalents:
+  ```python
+  from optimus import redis_keys as _redis_keys
+
+  _active_key = _redis_keys.session_active
+  _meta_key = _redis_keys.session_meta
+  _recordings_key = _redis_keys.session_recordings
+  _pending_jobs_key = _redis_keys.session_pending_jobs
+  _jobs_key = _redis_keys.session_jobs
+  ```
+
+### Why aliases (not call-site rewrites)
+
+Unlike v0.12.20's LP cleanup which migrated every call site to
+`_redis_keys.lp_*(...)`, session.py has 27 internal call sites + 7
+test references via `session._meta_key(uuid)` / `session._jobs_key(sid)`.
+Replacing 34 call sites would be churn-heavy; aliasing preserves
+the existing API surface. The end result is identical (every key
+string is built via `redis_keys.session_*`); the difference is
+zero call-site churn and zero test churn.
+
+### Byte-identical keys
+
+- `_active_key(user)` → `f"profiler:active:{user}"` ✓ matches `redis_keys.session_active`.
+- `_meta_key(sid)` → `f"profiler:session:{sid}:meta"` ✓.
+- `_recordings_key(sid)` → `f"profiler:session:{sid}:recordings"` ✓.
+- `_pending_jobs_key(sid)` → `f"profiler:session:{sid}:pending_jobs"` ✓.
+- `_jobs_key(sid)` → `f"profiler:session:{sid}:jobs"` ✓.
+
+On-disk Redis values from pre-v0.12.24 benches resolve unchanged.
+
+### Unchanged
+
+- The v0.12.0 `test_redis_audit.py` drift checker — keys built via
+  the alias are reached through `redis_keys.session_*`, which the
+  audit's allow-list already covers.
+- Behaviour identical — every cache write/read produces the same
+  key, just resolved through the centralized module.
+
+### Compatibility
+
+Pure cleanup. No behaviour change. Unit suite stays at 1859.
+
+---
+
 ## [0.12.23] — 2026-05-25
 
 **Renderer extraction — NEW `source_resolution.py` submodule. Prep work

@@ -157,29 +157,20 @@ def unsign_blob(signed: bytes) -> bytes | None:
 	return body
 
 
-def _active_key(user: str) -> str:
-	return f"profiler:active:{user}"
+# v0.12.24: the 5 session-key helpers are aliases for the v0.12.0
+# centralized ``optimus.redis_keys.session_*`` functions. Same byte-
+# identical key strings as the pre-v0.12.24 local helpers (which were
+# the last surviving inline f-strings outside ``redis_keys.py``).
+# Existing call sites — both inside this module and from tests
+# (``session._meta_key(uuid)`` / ``session._jobs_key(sid)``) — keep
+# working unchanged through the module-level aliases.
+from optimus import redis_keys as _redis_keys
 
-
-def _meta_key(session_uuid: str) -> str:
-	return f"profiler:session:{session_uuid}:meta"
-
-
-def _recordings_key(session_uuid: str) -> str:
-	return f"profiler:session:{session_uuid}:recordings"
-
-
-def _pending_jobs_key(session_uuid: str) -> str:
-	return f"profiler:session:{session_uuid}:pending_jobs"
-
-
-def _jobs_key(session_uuid: str) -> str:
-	# v0.7.x: per-job metadata hash (job_id -> JSON). Distinct from the
-	# pending-jobs SET, which is pruned as jobs go inactive to drive the wait;
-	# this hash is the NEVER-pruned full record so analyze can report every
-	# enqueued job's terminal status (completed / failed / timeout / running),
-	# including jobs that failed or timed out and produced no recording.
-	return f"profiler:session:{session_uuid}:jobs"
+_active_key = _redis_keys.session_active
+_meta_key = _redis_keys.session_meta
+_recordings_key = _redis_keys.session_recordings
+_pending_jobs_key = _redis_keys.session_pending_jobs
+_jobs_key = _redis_keys.session_jobs
 
 
 # ----- active session pointer (per-user) -----------------------------------
