@@ -8,6 +8,70 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.8] — 2026-05-25
+
+**Renderer extraction — `call_tree_renderer` is the fifth submodule
+out of `_internal.py`. Structural snapshot stays byte-identical.**
+
+Per the v0.10.0 renderer-package roadmap
+(`optimus/renderer/README.md`), the call-tree panel cluster was the
+next lowest-coupling target. Moves:
+
+* `_CALL_TREE_MAX_DEPTH`, `_CALL_TREE_HARD_CAP` — depth constants.
+* `_CT_OTHER_RE` — synthetic-placeholder regex.
+* `_ct_is_other_frame`, `_ct_is_sql_leaf`, `_ct_is_user_frame` — node
+  classifiers.
+* `_render_call_tree_node`, `_render_call_tree_panel` — the rendering
+  pair.
+
+Out of `optimus/renderer/_internal.py` (now ~4,213 LOC; was ~4,420),
+into NEW `optimus/renderer/call_tree_renderer.py` (~225 LOC). The 4
+extracted functions only call each other plus a lazy
+`optimus.analyzers.base.FRAMEWORK_APPS` import inside `_ct_is_user_frame`
+— self-contained cluster as flagged in the README's coupling table.
+
+### Implementation
+
+- The new submodule carries a local copy of the tiny `_e` HTML-escape
+  helper (4 lines) rather than importing `_internal._e`. Avoids a
+  circular import: `_internal.py` re-imports the call-tree names so
+  call sites resolve unchanged, and importing back from `_internal`
+  would close the cycle.
+- The standard `from optimus.renderer.call_tree_renderer import …`
+  block lives at the top of `_internal.py` (right after the
+  v0.10.0 visualization-module import block). Every name in the
+  extracted cluster is re-imported — including the constants and
+  the regex — so package-level `__init__.py`'s dir-walk re-export
+  still surfaces them under the legacy `optimus.renderer.X` paths
+  the unit suite uses (`test_call_tree_render.py`).
+- Output HTML is byte-equivalent: the structural-snapshot canary
+  (`test_renderer_structure_snapshot.py`) stays green without
+  regenerating the golden fixture.
+
+### Docs
+
+- `optimus/renderer/README.md` — current-layout block updated;
+  follow-up roadmap table marks `call_tree_renderer` as ✓ done in
+  v0.12.8; 4 clusters remain (`line_drilldown`, `doc_event_renderer`,
+  `finding_enrichment`, `render()` orchestrator).
+
+### Unchanged
+
+- The render path itself — every caller of `_render_call_tree_panel`
+  / `_render_call_tree_node` (test code + the one call site in
+  `_internal.py`'s `render` function) keeps working through the
+  re-import shim.
+- `optimus/tests/test_call_tree_render.py` — pure-pytest unit tests
+  resolve the names via `renderer._render_call_tree_panel` etc.
+  through the package `__init__.py` re-export; no change needed.
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1818.
+Structural snapshot stays byte-identical (no fixture update).
+
+---
+
 ## [0.12.7] — 2026-05-25
 
 **Integration test — `janitor.sweep_old_sessions` actually deletes.
