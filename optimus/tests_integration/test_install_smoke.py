@@ -82,13 +82,16 @@ class TestInstallSmoke(FrappeTestCase):
 		"""
 		# Re-run migrate. If anything raises, the test fails — the
 		# tolerance for migrate-on-an-installed-bench is zero.
-		from frappe.migrate import migrate
+		#
+		# v0.12.33: Frappe v16 removed the standalone ``migrate()``
+		# function; the equivalent is now ``SiteMigration().run(site)``.
+		# The class API doesn't expose ``skip_search_index`` directly
+		# — search-index rebuild is folded into the post-schema-updates
+		# phase. The test runs slightly slower (a few seconds) but
+		# covers the same idempotence contract.
+		from frappe.migrate import SiteMigration
 
-		# ``rebuild_global_search`` is the noisiest step (touches every
-		# searchable doc) and isn't relevant to the schema-stability
-		# assertion. Skip it to keep the test fast (< 10 s) without
-		# changing the path under test.
-		migrate(skip_search_index=True)
+		SiteMigration().run(frappe.local.site)
 		# Sanity: roles + DocTypes still present after the re-migrate.
 		assert frappe.db.exists("Role", "Optimus User")
 		for dt in _OPTIMUS_DOCTYPES:

@@ -194,7 +194,7 @@ class TestAiPrivacyExclusionOnApi(FrappeTestCase):
 					{
 						"doctype": _FINDING_DOCTYPE,
 						"finding_type": finding_type,
-						"severity": "high",
+						"severity": "High",
 						"title": f"test finding ({finding_type})",
 						# Explicitly empty so the cache-bypass at
 						# api.py:1350 doesn't short-circuit the AI

@@ -220,15 +220,25 @@ class TestTelemetryFlushDocTypeSink(FrappeTestCase):
 		assert len(rows) == 1, f"expected 1 row, got {len(rows)}"
 		tb = rows[0]["last_traceback"] or ""
 		assert tb, "last_traceback is empty — scrub or persistence dropped it"
-		# The scrubbed marker should appear for the optimus frame
-		# (this test file lives under optimus/tests_integration/, which
-		# the scrubber treats as a non-optimus user_code path — so the
-		# trace's optimus.telemetry frame is what carries the
-		# <bench>/apps/optimus/ marker).
-		assert "<bench>/apps/optimus/" in tb, (
-			f"expected '<bench>/apps/optimus/' scrubbed marker in traceback; got: {tb!r}"
+		# v0.12.33: the scrubbed marker should be ONE of the two
+		# expected forms — `<bench>/apps/optimus/` (when optimus is
+		# installed under a real ``apps/optimus`` path the
+		# ``_APPS_PATH_RE`` regex matches) OR `<external>` (when
+		# optimus is symlinked into the bench from outside, so
+		# Python's resolved file path doesn't contain ``/apps/``).
+		# Both indicate the scrubber did its job. On the CI runner
+		# the optimus checkout lives at
+		# ``/home/runner/work/optimus/optimus/`` and is symlinked to
+		# ``bench/apps/optimus``; Python imports via the resolved
+		# real path, so frames in test files get the `<external>`
+		# label rather than `<bench>/apps/optimus/`.
+		assert ("<bench>/apps/optimus/" in tb) or ("<external>" in tb), (
+			f"expected EITHER '<bench>/apps/optimus/' OR '<external>' "
+			f"scrubbed marker in traceback; got: {tb!r}"
 		)
 		# Hard-pin: absolute install-prefix paths MUST NOT leak through.
+		# This is the load-bearing PII-scrub guarantee — both branches of
+		# the OR above MUST satisfy it.
 		for raw_prefix in ("/Users/", "/home/", "/private/"):
 			assert raw_prefix not in tb, (
 				f"raw absolute prefix {raw_prefix!r} leaked into persisted traceback: {tb!r}"

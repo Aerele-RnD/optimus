@@ -167,12 +167,19 @@ class TestRecordingLifecycleE2E(FrappeTestCase):
 
 		# Report file is attached. The renderer writes the safe-report
 		# HTML as a File row pointing at the session's docname.
+		# v0.12.33: ``analyze._render_and_attach_reports`` writes the
+		# file as ``optimus_raw_report_<uuid>.html`` (note the
+		# ``_raw_`` infix — pre-v0.6.0 there was also a ``_safe_``
+		# variant; the safe variant got removed in v0.6.0 Round 7,
+		# leaving just ``raw``). The pre-v0.12.33 LIKE pattern
+		# ``%optimus_report%`` failed to match because there's
+		# ``_raw_`` between ``optimus`` and ``report``.
 		attached = frappe.db.exists(
 			"File",
 			{
 				"attached_to_doctype": "Optimus Session",
 				"attached_to_name": docname,
-				"file_name": ("like", "%optimus_report%.html"),
+				"file_name": ("like", "%optimus_raw_report%.html"),
 			},
 		)
 		assert attached, (
