@@ -131,7 +131,13 @@ _end
 _step "bench install-app optimus + set-config + migrate"
 bench --site "${TEST_SITE}" install-app optimus
 bench --site "${TEST_SITE}" set-config developer_mode 1
-bench --site "${TEST_SITE}" set-config -p in_test true
+# v0.12.31: ``bench set-config -p in_test true`` failed with
+# ValueError("malformed node or string ... Name(id='true', ...)") —
+# the ``-p`` flag runs ``ast.literal_eval`` on the value, which
+# accepts Python literals (``True`` / ``False`` / ``None`` /
+# numbers / strings / lists / dicts) but NOT lowercase ``true``.
+# Capital T is required for the Python bool literal.
+bench --site "${TEST_SITE}" set-config -p in_test True
 
 # Optimus's startup probes + monkey-patches run at app import; restart
 # isn't required for ``bench run-tests``, but doing it once flushes any
