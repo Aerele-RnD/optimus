@@ -154,6 +154,23 @@ def sweep_old_sessions():
 		except Exception:
 			pass
 
+	# v0.12.25: per-value envelope-version census across the
+	# session_meta cache. Complements _sweep_schema_drift (sentinel
+	# signal) with per-key counts (value signal): an operator who
+	# just upgraded sees "5 of 12 session_meta values are still at
+	# envelope v0" instead of just "schema bumped". Pure visibility;
+	# the v0.12.21 unwrap_value legacy-detection branch handles the
+	# actual reading correctly.
+	try:
+		_sweep_envelope_versions()
+	except Exception as exc:
+		frappe.log_error(title="optimus janitor sweep_envelope_versions")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_envelope_versions", exc)
+		except Exception:
+			pass
+
 
 def _sweep_orphan_redis_state():
 	"""Delete profiler:session:*:* Redis keys with no matching DocType row.
@@ -309,6 +326,117 @@ def _sweep_schema_drift():
 			context={
 				"persisted_version": str(persisted),
 				"current_version": str(SCHEMA_VERSION),
+			},
+			severity="warning",
+		)
+	except Exception:
+		pass
+
+
+def _sweep_envelope_versions():
+	"""v0.12.25: census of envelope versions across the session_meta
+	cache. Emits one ``janitor.envelope_version_census`` telemetry
+	event per sweep with the per-version counts in context.
+
+	The sentinel sweep (:func:`_sweep_schema_drift`) tells operators
+	"schema version on disk differs from the code's"; this sweep
+	answers the follow-up question "OK, how many cached values are
+	actually stale?". Useful right after a schema bump to plan
+	cleanup vs. let-them-age-out.
+
+	Only sweeps ``session_meta`` for now (the v0.12.21 rollout
+	target). Future per-value rollouts can add their own keys to the
+	scan pattern below.
+
+	Pure visibility — does NOT delete or rewrite values. The
+	:func:`optimus.redis_schema.unwrap_value` legacy-detection branch
+	handles the actual reading correctly; this sweep is a one-per-day
+	count for operator dashboards.
+	"""
+	try:
+		from optimus.redis_schema import SCHEMA_VERSION, unwrap_value
+	except Exception:
+		return
+
+	try:
+		redis_conn = frappe.cache.get_redis_connection()
+	except Exception:
+		return
+
+	# Same site-prefix scoping as _sweep_orphan_redis_state.
+	try:
+		site_prefix_bytes = frappe.cache.make_key("")
+		site_prefix = (
+			site_prefix_bytes.decode()
+			if isinstance(site_prefix_bytes, bytes)
+			else site_prefix_bytes
+		)
+	except Exception:
+		site_prefix = ""
+
+	pattern = f"{site_prefix}profiler:session:*:meta"
+
+	# Count per envelope version: current, legacy (None), drift (other).
+	current = 0
+	legacy = 0
+	drift = 0
+	total = 0
+
+	try:
+		cursor = 0
+		while True:
+			cursor, keys = redis_conn.scan(cursor, match=pattern, count=100)
+			for key in keys:
+				key_str = key.decode() if isinstance(key, bytes) else key
+				# Read via frappe.cache so pickle unwrapping happens.
+				# The prefix returned by redis_conn.scan includes the
+				# site_prefix; strip it because frappe.cache.get_value
+				# re-prefixes via make_key internally.
+				if site_prefix and key_str.startswith(site_prefix):
+					app_key = key_str[len(site_prefix):]
+				else:
+					app_key = key_str
+				try:
+					raw = frappe.cache.get_value(app_key)
+				except Exception:
+					continue
+				if raw is None:
+					continue
+				total += 1
+				_payload, observed = unwrap_value(raw)
+				if observed == SCHEMA_VERSION:
+					current += 1
+				elif observed is None:
+					legacy += 1
+				else:
+					drift += 1
+			if cursor == 0:
+				break
+	except Exception:
+		return
+
+	# Skip emitting telemetry on an empty bench (the sweep ran fine,
+	# there's just nothing to report). Also skip on the all-current
+	# happy path — no need to flood Optimus Telemetry Event with
+	# daily clean-bench checkpoints. Only emit when the operator
+	# needs to know (legacy + drift > 0). The telemetry severity
+	# system only supports "error" / "warning" (anything else gets
+	# coerced to "error" — see telemetry.py:128); use "warning" for
+	# this informational-but-actionable signal.
+	if total == 0 or (legacy + drift) == 0:
+		return
+
+	try:
+		from optimus import telemetry
+		telemetry.emit_failure(
+			"janitor.envelope_version_census",
+			context={
+				"target": "session_meta",
+				"total": str(total),
+				"current_version": str(current),
+				"legacy_unversioned": str(legacy),
+				"drift_other": str(drift),
+				"schema_version": str(SCHEMA_VERSION),
 			},
 			severity="warning",
 		)

@@ -8,6 +8,70 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.25] — 2026-05-25
+
+**Janitor proactive envelope-version census — per-key visibility
+complement to v0.12.18's sentinel sweep.**
+
+The v0.12.18 release shipped `_sweep_schema_drift` (sentinel-level
+signal: "schema version on disk differs from the code's"). This
+release adds the follow-up signal: "OK how many cached values are
+actually stale?". Useful immediately after a schema bump — operators
+see "5 of 12 session_meta values are still at envelope v0" and can
+plan cleanup vs. let-them-age-out without waiting for per-read
+`redis.schema_drift` events to accumulate one-by-one.
+
+### Added
+
+- **NEW `janitor._sweep_envelope_versions()`** — per-key census
+  across the `session_meta` cache (the v0.12.21 rollout target).
+  Scans `profiler:session:*:meta`, reads each value via
+  `frappe.cache.get_value`, unwraps via `redis_schema.unwrap_value`,
+  counts per envelope version (current / legacy-unversioned /
+  drift-other). Emits one `janitor.envelope_version_census`
+  telemetry event with the breakdown in context, severity
+  `warning`.
+- **Emit gates**: skips telemetry on empty bench (`total == 0`)
+  AND on the all-current happy path (`legacy + drift == 0`). Daily
+  clean-bench runs stay silent.
+- **Wired into `sweep_old_sessions`** as the fifth try/except'd
+  inner sweep (after retention, orphan-redis, schema-drift,
+  old-telemetry sweeps). Wrapped in its own try/except that emits
+  `janitor.sweep_envelope_versions` on its own failure (matching
+  the sibling-sweep pattern).
+- **NEW `optimus/tests/test_janitor_envelope_census.py`** (~150
+  LOC, 11 tests across 3 classes):
+  - `TestEmitDecisionMatrix` (6 tests) — the emit-or-skip decision
+    distilled to a pure function (`_emit_decision`). Empty bench,
+    all-current, legacy-only, drift-only, mixed, only-legacy.
+  - `TestSweepSourceMatchesDecisionMatrix` (3 tests) — source-grep
+    canaries: `total == 0` guard present, `(legacy + drift) == 0`
+    gate present, event name is `janitor.envelope_version_census`.
+  - `TestSweepWiringInDailyCron` (2 tests) — source-grep canaries
+    on the wiring and the scan pattern.
+
+### Why source-inspection tests (no in-process mocking)
+
+The sweep depends on a live `frappe.cache.get_redis_connection` +
+`frappe.cache.scan` + per-key `frappe.cache.get_value` pipeline.
+Mocking that pipeline in pure-pytest is fragile (the conftest's
+`SimpleNamespace` stub lacks `get_redis_connection`, and
+`mock.patch.object` replacements don't survive cross-test isolation
+in the full suite when other tests have left state behind). The
+integration suite (`tests_integration/`) is the right place for the
+end-to-end execution test against real Redis — out of scope today.
+
+The pure-function `_emit_decision` covers the logic-level contract;
+the source-grep canaries cover the wiring contract. Together they
+catch any regression in either the emit gate or the cron wiring.
+
+### Compatibility
+
+Pure additive change. No reads of any pre-existing value shape; only
+adds a new daily-cron pass. Unit suite stays at 1859 + 11 new = 1870.
+
+---
+
 ## [0.12.24] — 2026-05-25
 
 **`session.py` local key helpers retired in favour of
