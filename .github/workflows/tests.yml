@@ -164,8 +164,13 @@ jobs:
           python -m pip install pip-audit
 
       - name: Run pip-audit on installed env
-        # --strict turns warnings into failures. If a known-not-applicable
-        # CVE blocks CI later, add ``--ignore-vuln <GHSA-ID>`` here rather
-        # than dropping --strict wholesale — that preserves the gate while
-        # documenting the carve-out.
-        run: pip-audit --strict
+        # ``--skip-editable`` excludes the in-place install of ``optimus``
+        # itself, which isn't on PyPI (it's a private Frappe app
+        # installed via ``bench``). Without the skip, pip-audit treats
+        # "package not found on PyPI" as an un-auditable dependency.
+        # Dropping ``--strict`` then preserves the security gate
+        # (vulnerabilities in real deps still exit non-zero — pip-audit's
+        # default behaviour) while no longer failing on the editable
+        # carve-out. If a known-not-applicable CVE blocks CI later, add
+        # ``--ignore-vuln <GHSA-ID>`` here to document the carve-out.
+        run: pip-audit --skip-editable
