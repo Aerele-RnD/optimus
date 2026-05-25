@@ -865,21 +865,28 @@ def check_onboarding_seen() -> dict:
 			return {"seen": True}
 	except Exception:
 		pass
-	from optimus import redis_keys
+	# v0.12.13: onboarding_seen is the second value migrated to the
+	# v0.12.0 versioned envelope. ``unwrap_value`` returns either the
+	# wrapped payload (new-shape writers, v0.12.13+) or the legacy bare
+	# value (pre-v0.12.13 writers — strings like "1"). Both shapes
+	# are truthy, so ``bool(payload)`` resolves the dismissed flag
+	# regardless of which writer set it.
+	from optimus import redis_keys, redis_schema
 
-	flag = frappe.cache.get_value(redis_keys.onboarding_seen(user))
-	return {"seen": bool(flag)}
+	raw = frappe.cache.get_value(redis_keys.onboarding_seen(user))
+	payload, _version = redis_schema.unwrap_value(raw)
+	return {"seen": bool(payload)}
 
 
 @frappe.whitelist()
 def mark_onboarding_seen() -> dict:
 	"""Mark the onboarding toast as dismissed for the current user."""
 	user = _require_user()
-	from optimus import redis_keys
+	from optimus import redis_keys, redis_schema
 
 	frappe.cache.set_value(
 		redis_keys.onboarding_seen(user),
-		"1",
+		redis_schema.wrap_value("1"),
 		expires_in_sec=ONBOARDING_CACHE_TTL_SECONDS,
 	)
 	return {"seen": True}

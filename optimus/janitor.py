@@ -304,10 +304,10 @@ def _sweep_old_sessions():
 			remaining = None
 		backlog = max(0, (remaining or 0) - len(old))
 		try:
-			from optimus import redis_keys
+			from optimus import redis_keys, redis_schema
 			frappe.cache.set_value(
 				redis_keys.retention_backlog(),
-				backlog,
+				redis_schema.wrap_value(backlog),
 				expires_in_sec=3600,
 			)
 		except Exception:
@@ -323,10 +323,10 @@ def _sweep_old_sessions():
 		# Backlog cleared - reset the counter so monitoring sees the
 		# recovery on the next pass.
 		try:
-			from optimus import redis_keys
+			from optimus import redis_keys, redis_schema
 			frappe.cache.set_value(
 				redis_keys.retention_backlog(),
-				0,
+				redis_schema.wrap_value(0),
 				expires_in_sec=3600,
 			)
 		except Exception:

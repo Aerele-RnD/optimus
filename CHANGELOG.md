@@ -8,6 +8,77 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.13] — 2026-05-25
+
+**Redis-schema rollout continues — `retention_backlog` and
+`onboarding_seen` are the second and third values migrated to the
+v0.12.0 `wrap_value` / `unwrap_value` envelope.**
+
+v0.12.11 shipped the first migration (`settings_cache`). This release
+continues the rollout to two more values, both simple-shape (int +
+string) — which exercises the legacy-detection branch in
+`unwrap_value` more thoroughly than the dict-shaped `settings_cache`
+did.
+
+### Changed
+
+- **`optimus/janitor.py`** — both `retention_backlog` write sites
+  (after-cap + after-clear) now wrap their int payload via
+  `redis_schema.wrap_value(backlog)` / `redis_schema.wrap_value(0)`.
+  No in-app reader exists yet (operator-facing metric only), so the
+  rollout is write-only for now; the future-safety value is that any
+  consumer reading directly from Redis gets the envelope shape.
+- **`optimus/api.py`** — `mark_onboarding_seen` writes via
+  `wrap_value("1")` and `check_onboarding_seen` reads via
+  `unwrap_value(...)`. Both shapes (new envelope + legacy bare string)
+  resolve to a truthy `bool(payload)` so the toast-dismissed semantics
+  are unchanged.
+
+### Added
+
+- **NEW `optimus/tests/test_envelope_rollout_phase2.py`** (~200 LOC,
+  7 tests):
+  - `TestRetentionBacklogEnvelope` (2 tests): write-shape assertion
+    + source-grep canary against a regression that reverts the wrap.
+  - `TestOnboardingSeenEnvelopeReadCompat` (3 tests): unwrap of new
+    envelope → truthy; unwrap of legacy bare string `"1"` → truthy
+    (the migration-safety contract); unwrap of missing key → falsy.
+  - `TestOnboardingSeenEnvelopeWriteShape` (2 tests): source-grep
+    canaries on `mark_onboarding_seen` (writes via `wrap_value`)
+    and `check_onboarding_seen` (reads via `unwrap_value`).
+
+### Docs
+
+- `docs/REDIS-SCHEMA.md` — `optimus:retention_backlog` and
+  `profiler:onboarding_seen:<user>` rows updated to reflect the new
+  envelope shape + legacy-compat note.
+
+### Compatibility
+
+- **Forward** (new readers, old writers): supported for
+  `onboarding_seen` via `unwrap_value`'s legacy-detection branch.
+  Not relevant for `retention_backlog` (write-only).
+- **Backward** (old readers, new writers): NOT supported for
+  `onboarding_seen` — an old reader would do `bool(envelope_dict)`
+  which is always truthy (dicts are truthy in Python). The
+  practical effect on a mid-deploy bench is that some users might
+  see "onboarding already dismissed" even when the underlying value
+  was just set; the toast stays hidden either way, so no user
+  visible issue. For `retention_backlog`, old code reading via
+  `int(envelope_dict)` would crash — but there's no in-app reader.
+
+### Unchanged
+
+- `optimus/redis_schema.py` — envelope helpers ship as-is.
+- All other Redis values — the session hash family, the LP pick
+  keys, `explain_cache`, `analyze_inflight` — all still bare-shaped.
+  Future PRs roll out one at a time as the cost/benefit warrants.
+
+Unit suite: 1823 → 1830 (+7 from the new envelope-rollout-phase-2
+test module). Integration suite unchanged at 39.
+
+---
+
 ## [0.12.12] — 2026-05-25
 
 **Renderer extraction — `line_drilldown` is the seventh submodule out
