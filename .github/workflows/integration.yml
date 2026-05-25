@@ -70,12 +70,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        # 3.12 is the broad-compat baseline; the bench bootstrap is fast
-        # enough that a matrix isn't worth the cost yet (see plan §F).
+      - name: Set up Python 3.14
+        # v0.12.28: Frappe v16.18.3 (current head of ``version-16``)
+        # requires Python >=3.14,<3.15. Pinning 3.12 here was the
+        # immediate cause of exit 167 (uv's "resolution failed" code)
+        # during ``bench init``: uv refused to install Frappe v16 into
+        # a 3.12 venv. 3.14 matches the upstream-mandated minimum and
+        # the dev bench's interpreter (Python 3.14.2 locally).
+        #
+        # NB: the pure-pytest ``tests.yml`` workflow runs against 3.12
+        # + 3.13 + 3.14 unchanged — it doesn't install Frappe (the
+        # conftest stubs it), so the 3.12 baseline there is still
+        # valid. Only the integration workflow needs the upstream-
+        # mandated 3.14 because it actually runs ``bench init`` →
+        # ``uv pip install frappe``.
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: 'pip'
 
       - name: Set up Node 20
@@ -113,12 +124,7 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
           chmod +x .github/helper/install.sh
-          # v0.12.27 diagnostic: ``bash -x`` traces every command to
-          # the log. CI was failing with bare ``exit code 167`` and the
-          # per-step group echoes alone weren't enough to pinpoint
-          # which line tripped ``set -e``. Once the failing command is
-          # identified + fixed, drop ``-x`` (keeps the log readable).
-          bash -x .github/helper/install.sh
+          bash .github/helper/install.sh
 
       - name: Run the integration suite
         # ``bench run-tests --app optimus`` discovers every test under
