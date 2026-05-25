@@ -8,6 +8,86 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.18] — 2026-05-25
+
+**Janitor proactive schema-drift sweep — the daily cron now compares
+the persisted `optimus:schema_version` sentinel against the current
+`SCHEMA_VERSION` and emits one telemetry event per drift detection.**
+
+The v0.12.0 release introduced the `optimus:schema_version` sentinel
+written at app-import as the foundation for future migration paths.
+The sentinel was deliberately not READ by anything except the test —
+"reactive cleanup-on-read is sufficient for the foundation. A future
+release can add a janitor pass that enumerates `profiler:*` keys and
+migrates / purges those with mismatched versions" (v0.12.0 docstring
+in `redis_schema.py`). This release ships the **visibility** half of
+that future-release plan; **migration** stays deferred (per-value
+shape would need per-value migrators).
+
+### Added
+
+- **NEW `janitor._sweep_schema_drift()`** — pure-function sweep that
+  reads the sentinel via `read_schema_sentinel`, compares against
+  `SCHEMA_VERSION`, and on real drift:
+  - Writes the current sentinel via `write_schema_sentinel` so the
+    NEXT sweep sees the new value (single emit per drift).
+  - Emits one `janitor.schema_sentinel_drift` telemetry event with
+    severity `warning` and context `{persisted_version,
+    current_version}`.
+  - No-ops on the happy path (sentinel == current).
+  - No-ops with sentinel-write only (no telemetry) on the fresh-
+    install path (sentinel is None) — that's the normal startup
+    transition, not interesting enough to alert on.
+- **`sweep_old_sessions` wired** to call `_sweep_schema_drift` after
+  the existing `_sweep_old_telemetry`. Wrapped in its own try/except
+  that emits `janitor.sweep_schema_drift` on its own failure
+  (matching the sibling-sweep pattern).
+- **NEW `optimus/tests/test_janitor_schema_drift.py`** (~200 LOC,
+  6 tests):
+  - `test_no_op_when_sentinel_matches_current` — happy path.
+  - `test_fresh_install_writes_sentinel_no_telemetry` — fresh
+    install transition silently writes the sentinel.
+  - `test_post_upgrade_drift_emits_telemetry` — sentinel < current
+    fires the telemetry warning.
+  - `test_post_downgrade_drift_emits_telemetry` — sentinel >
+    current fires symmetrically (catches operator downgrade).
+  - `test_sentinel_write_failure_swallowed` — Redis hiccup during
+    sentinel write doesn't propagate; telemetry still fires.
+  - `test_sweep_old_sessions_calls_sweep_schema_drift` — wiring
+    canary on the cron entry point.
+
+### Why visibility (not migration)
+
+Per-value migration would need a per-value migrator since each value
+shape has its own evolution semantics. The reactive cleanup-on-read
+(via `unwrap_value`'s legacy-detection branch + per-read
+`redis.schema_drift` telemetry) already handles the data-correctness
+path. The proactive sweep's job is **operator visibility**: one
+per-day high-confidence notification when the schema actually shifts,
+so operators can plan migrations / rollbacks before per-read drift
+events flood the telemetry table.
+
+### Unchanged
+
+- `optimus/redis_schema.py` — `read_schema_sentinel` /
+  `write_schema_sentinel` / `SCHEMA_VERSION` / `wrap_value` /
+  `unwrap_value` all ship as-is.
+- `_sweep_orphan_redis_state`, `_sweep_old_telemetry` — the existing
+  daily sweeps stay unchanged.
+
+### Compatibility
+
+No behaviour change at the cache-value layer. Pure visibility
+addition. On the first daily-cron run after deploying v0.12.18, sites
+that have been on the v0.12.0 schema (SCHEMA_VERSION=1) see no drift;
+sites that were on an older version (sentinel missing) silently write
+the sentinel.
+
+Unit suite: 1848 → 1854 (+6 from the new schema-drift test module).
+Integration suite unchanged at 39.
+
+---
+
 ## [0.12.17] — 2026-05-25
 
 **Redis-schema rollout continues — `explain_cache` is the fourth

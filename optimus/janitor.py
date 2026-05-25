@@ -138,6 +138,22 @@ def sweep_old_sessions():
 		except Exception:
 			pass
 
+	# v0.12.18: proactive schema-version drift detection. Compares the
+	# persisted ``optimus:schema_version`` sentinel against the current
+	# ``SCHEMA_VERSION`` constant and emits ONE telemetry event per
+	# drift detection so operators see the schema mismatch in the
+	# Optimus Telemetry Event DocType before per-value
+	# ``redis.schema_drift`` events accumulate on every read.
+	try:
+		_sweep_schema_drift()
+	except Exception as exc:
+		frappe.log_error(title="optimus janitor sweep_schema_drift")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("janitor.sweep_schema_drift", exc)
+		except Exception:
+			pass
+
 
 def _sweep_orphan_redis_state():
 	"""Delete profiler:session:*:* Redis keys with no matching DocType row.
@@ -227,6 +243,77 @@ def _sweep_orphan_redis_state():
 			)
 		except Exception:
 			pass
+
+
+def _sweep_schema_drift():
+	"""v0.12.18: proactive sentinel-based schema-drift detection.
+
+	Compares the persisted ``optimus:schema_version`` sentinel against
+	the current ``optimus.redis_schema.SCHEMA_VERSION``. On mismatch:
+
+	  * Writes the current sentinel via ``write_schema_sentinel`` so
+	    subsequent sweeps see the new value (single emit per drift).
+	  * Emits ONE ``janitor.schema_sentinel_drift`` telemetry event
+	    with both versions in the context so operators see the
+	    transition in ``Optimus Telemetry Event``.
+
+	Does NOT migrate or purge any cache values — the per-value
+	``unwrap_value`` helper handles legacy shapes via its
+	legacy-detection branch (returns the bare value as-is), and
+	future-shape mismatches emit per-read ``redis.schema_drift``
+	events. This sweep is the **visibility** complement to those
+	reactive paths.
+
+	No-op on the happy path (sentinel matches current). No-op on a
+	fresh install where the sentinel hasn't been written yet AND
+	the bench's prior version was also at the current schema — in
+	that case ``read_schema_sentinel`` returns None, which we treat
+	as "drift from no version → current" and write the sentinel
+	without emitting telemetry (this is the normal startup path,
+	not a drift event).
+	"""
+	try:
+		from optimus.redis_schema import (
+			SCHEMA_VERSION,
+			read_schema_sentinel,
+			write_schema_sentinel,
+		)
+	except Exception:
+		return
+
+	persisted = read_schema_sentinel()
+	if persisted == SCHEMA_VERSION:
+		return  # no drift
+
+	# Persisted is missing (fresh install or pre-v0.12.0 bench) or
+	# different from the current. Either way, write the current
+	# sentinel so subsequent sweeps see the new value. The startup
+	# probe in optimus/__init__.py also writes it on every worker
+	# boot; this sweep is the "ops-cron-driven" backstop for cases
+	# where worker boots got skipped.
+	try:
+		write_schema_sentinel()
+	except Exception:
+		pass
+
+	# Only emit telemetry on a REAL drift (sentinel was present but
+	# != current). A missing sentinel is the fresh-install path —
+	# not interesting enough to fire telemetry every time.
+	if persisted is None:
+		return
+
+	try:
+		from optimus import telemetry
+		telemetry.emit_failure(
+			"janitor.schema_sentinel_drift",
+			context={
+				"persisted_version": str(persisted),
+				"current_version": str(SCHEMA_VERSION),
+			},
+			severity="warning",
+		)
+	except Exception:
+		pass
 
 
 def _sweep_old_telemetry():
