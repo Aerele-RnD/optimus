@@ -130,3 +130,41 @@ class TestBgFlag:
 		out = renderer._build_waterfall(actions, findings)
 		assert out[0]["hot"] is True
 		assert out[0]["bg"] is True
+
+
+class TestLayout:
+	"""Template-side waterfall layout invariants. The waterfall uses a CSS grid
+	with three columns: label / bar-track / duration. The label column has a
+	fixed pixel width — too narrow and typical 40-50 char action labels
+	(``POST /api/method/erpnext.accounts.utils.recompute`` ≈ 49 chars) ellipsize
+	even though the bar track has unused empty space."""
+
+	def test_waterfall_label_column_fits_typical_action_label(self):
+		"""The first track of ``.waterfall-row``'s ``grid-template-columns``
+		must be ≥ 320px so typical 47-49 char action labels render fully.
+		At 11.5px monospace each char is ~6.5px, so 320px ≈ 49 chars —
+		just covers the longest observed labels."""
+		import os
+		import re
+
+		here = os.path.dirname(__file__)
+		tpath = os.path.join(here, "..", "templates", "report.html")
+		with open(tpath) as f:
+			tpl = f.read()
+		# Match the .waterfall-row rule's grid-template-columns declaration.
+		m = re.search(
+			r"\.waterfall-row\s*\{[^}]*grid-template-columns:\s*(\d+)px\s+1fr\s+(\d+)px",
+			tpl,
+			re.DOTALL,
+		)
+		assert m, (
+			".waterfall-row must define grid-template-columns as "
+			"`<label_px> 1fr <duration_px>` — could not locate the rule"
+		)
+		label_px = int(m.group(1))
+		assert label_px >= 320, (
+			f".waterfall-row label column is {label_px}px; must be ≥ 320px "
+			"so typical 47-49 char action labels (e.g. "
+			"`POST /api/method/erpnext.accounts.utils.recompute`) don't "
+			"truncate with ellipsis. The bar track absorbs the diff via 1fr."
+		)

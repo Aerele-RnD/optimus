@@ -28,6 +28,7 @@ import json
 import sys
 import threading
 
+from optimus import redis_keys as _redis_keys
 from optimus.line_profile import diff
 
 # ---------------------------------------------------------------------------
@@ -73,26 +74,14 @@ def _require_line_profiler() -> None:
 # Redis key shapes (mirroring the phase-1 conventions in session.py)
 # ---------------------------------------------------------------------------
 
-# Per-user active flag → run_uuid (TTL = SESSION_TTL_SECONDS)
-def _active_key(user: str) -> str:
-	return f"profiler:lp:active:{user}"
-
-
-# Per-run picks metadata (no TTL; cleaned up at stop)
-def _picks_key(run_uuid: str) -> str:
-	return f"profiler:lp:{run_uuid}:picks"
-
-
-# Per-run source-line snapshot captured at start time
-def _source_key(run_uuid: str) -> str:
-	return f"profiler:lp:{run_uuid}:source"
-
-
-# Per-run list of per-request sample batches (RPUSH from after_request,
-# LRANGE in run_analyze)
-def _samples_key(run_uuid: str) -> str:
-	return f"profiler:lp:{run_uuid}:samples"
-
+# v0.12.20: the per-user active flag + per-run picks/source/samples/
+# budget_hit keys are now built via ``optimus.redis_keys`` (the v0.12.0
+# centralized source-of-truth). The local ``_active_key`` /
+# ``_picks_key`` / ``_source_key`` / ``_samples_key`` /
+# ``_budget_hit_key`` helpers below have been retired — call sites use
+# ``_redis_keys.lp_active(user)`` etc. directly. Key strings are
+# byte-identical to the pre-v0.12.20 local helpers, so on-disk Redis
+# values from older bench versions resolve unchanged.
 
 SESSION_TTL_SECONDS = 10 * 60  # match phase-1's session TTL
 
@@ -288,9 +277,9 @@ def start_line_profile_pass(
 	# Persist to Redis. The picks + source keys persist for the run's full
 	# lifetime so any worker can resolve them; samples list grows during the
 	# run; the active flag scopes the user.
-	frappe.cache.set_value(_picks_key(run_uuid), json.dumps(picks_meta))
-	frappe.cache.set_value(_source_key(run_uuid), json.dumps(source_snapshot))
-	frappe.cache.set_value(_active_key(user), run_uuid, expires_in_sec=SESSION_TTL_SECONDS)
+	frappe.cache.set_value(_redis_keys.lp_picks(run_uuid), json.dumps(picks_meta))
+	frappe.cache.set_value(_redis_keys.lp_source(run_uuid), json.dumps(source_snapshot))
+	frappe.cache.set_value(_redis_keys.lp_active(user), run_uuid, expires_in_sec=SESSION_TTL_SECONDS)
 
 	return resolved
 
@@ -306,7 +295,7 @@ def stop_line_profile_pass(run_uuid: str, user: str) -> None:
 	whether to propagate ``_lp_session_id`` into job kwargs.
 	"""
 	_require_frappe()
-	frappe.cache.delete_value(_active_key(user))
+	frappe.cache.delete_value(_redis_keys.lp_active(user))
 	# Force-invalidate the per-request is_active cache. Without this,
 	# any code path later in this request (e.g. the enqueue patch) sees
 	# the stale truthy value and treats phase 2 as still active, leaking
@@ -330,7 +319,7 @@ def is_active(user: str) -> str | None:
 	cached = getattr(frappe.local, "_lp_active", None)
 	if cached is not None:
 		return cached if cached != "" else None
-	value = frappe.cache.get_value(_active_key(user))
+	value = frappe.cache.get_value(_redis_keys.lp_active(user))
 	if isinstance(value, bytes):
 		value = value.decode()
 	frappe.local._lp_active = value or ""  # cache empty string for misses
@@ -350,7 +339,7 @@ def _get_or_resolve_picks(run_uuid: str) -> list:
 	if cached is not None:
 		return cached
 
-	raw = frappe.cache.get_value(_picks_key(run_uuid))
+	raw = frappe.cache.get_value(_redis_keys.lp_picks(run_uuid))
 	if not raw:
 		_resolved_fns_by_run[run_uuid] = []
 		return []
@@ -433,17 +422,13 @@ def disengage_monitoring() -> None:
 # data still pinpoints the hot line. See feedback_observe_dont_spoil_flow.
 
 
-def _budget_hit_key(run_uuid: str) -> str:
-	return f"profiler:lp:budget_hit:{run_uuid}"
-
-
 def mark_budget_hit(run_uuid: str) -> None:
 	"""Record that this run's profiling was cut short by the overhead budget,
 	so analyze can flag the line data as partial. Best-effort."""
 	if not _FRAPPE_AVAILABLE or not run_uuid:
 		return
 	try:
-		frappe.cache.set_value(_budget_hit_key(run_uuid), "1", expires_in_sec=3600)
+		frappe.cache.set_value(_redis_keys.lp_budget_hit(run_uuid), "1", expires_in_sec=3600)
 	except Exception:
 		pass
 
@@ -452,7 +437,7 @@ def budget_was_hit(run_uuid: str) -> bool:
 	if not _FRAPPE_AVAILABLE or not run_uuid:
 		return False
 	try:
-		return bool(frappe.cache.get_value(_budget_hit_key(run_uuid)))
+		return bool(frappe.cache.get_value(_redis_keys.lp_budget_hit(run_uuid)))
 	except Exception:
 		return False
 
@@ -461,7 +446,7 @@ def clear_budget_hit(run_uuid: str) -> None:
 	if not _FRAPPE_AVAILABLE or not run_uuid:
 		return
 	try:
-		frappe.cache.delete_value(_budget_hit_key(run_uuid))
+		frappe.cache.delete_value(_redis_keys.lp_budget_hit(run_uuid))
 	except Exception:
 		pass
 
@@ -559,11 +544,11 @@ def flush_samples(run_uuid: str, samples: list[dict]) -> None:
 	# frappe.cache delegates to the underlying Redis client for list ops.
 	# We use rpush via the redis client when available.
 	try:
-		frappe.cache.rpush(_samples_key(run_uuid), json.dumps(samples))
+		frappe.cache.rpush(_redis_keys.lp_samples(run_uuid), json.dumps(samples))
 	except AttributeError:
 		# Fallback: keep batches as a JSON-list-of-batches under one key.
 		# Less efficient but works without rpush.
-		key = _samples_key(run_uuid)
+		key = _redis_keys.lp_samples(run_uuid)
 		raw = frappe.cache.get_value(key) or "[]"
 		if isinstance(raw, bytes):
 			raw = raw.decode()
@@ -581,7 +566,7 @@ def read_all_samples(run_uuid: str) -> list[list[dict]]:
 	"""Drain the per-run samples list. Each element is one per-request batch."""
 	_require_frappe()
 	try:
-		raw_list = frappe.cache.lrange(_samples_key(run_uuid), 0, -1) or []
+		raw_list = frappe.cache.lrange(_redis_keys.lp_samples(run_uuid), 0, -1) or []
 		batches = []
 		for raw in raw_list:
 			if isinstance(raw, bytes):
@@ -590,7 +575,7 @@ def read_all_samples(run_uuid: str) -> list[list[dict]]:
 		return batches
 	except AttributeError:
 		# Fallback to the JSON-list-of-batches stored by flush_samples.
-		raw = frappe.cache.get_value(_samples_key(run_uuid)) or "[]"
+		raw = frappe.cache.get_value(_redis_keys.lp_samples(run_uuid)) or "[]"
 		if isinstance(raw, bytes):
 			raw = raw.decode()
 		return json.loads(raw)
@@ -600,12 +585,12 @@ def read_picks_meta(run_uuid: str) -> list[dict]:
 	"""Return the picks list with source_lines populated from the snapshot.
 	Shape matches what ``aggregate_samples`` expects."""
 	_require_frappe()
-	picks_raw = frappe.cache.get_value(_picks_key(run_uuid)) or "[]"
+	picks_raw = frappe.cache.get_value(_redis_keys.lp_picks(run_uuid)) or "[]"
 	if isinstance(picks_raw, bytes):
 		picks_raw = picks_raw.decode()
 	picks_meta = json.loads(picks_raw)
 
-	source_raw = frappe.cache.get_value(_source_key(run_uuid)) or "{}"
+	source_raw = frappe.cache.get_value(_redis_keys.lp_source(run_uuid)) or "{}"
 	if isinstance(source_raw, bytes):
 		source_raw = source_raw.decode()
 	source_snapshot = json.loads(source_raw)
@@ -621,7 +606,12 @@ def cleanup_run(run_uuid: str) -> None:
 	Called at the end of analyze.run_analyze (success or failure) and from
 	the janitor for stale runs."""
 	_require_frappe()
-	for key_fn in (_picks_key, _source_key, _samples_key, _budget_hit_key):
+	for key_fn in (
+		_redis_keys.lp_picks,
+		_redis_keys.lp_source,
+		_redis_keys.lp_samples,
+		_redis_keys.lp_budget_hit,
+	):
 		try:
 			frappe.cache.delete_value(key_fn(run_uuid))
 		except Exception:

@@ -302,8 +302,16 @@ def _stop_session(user: str, session_uuid: str) -> tuple[str | None, bool]:
 		wait_seconds = int(getattr(get_config(), "background_job_wait_seconds", 0) or 0)
 		if wait_seconds > 0 and session.get_pending_jobs(session_uuid):
 			session.set_draining(session_uuid, time.time() + wait_seconds + 60)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus set draining window")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"api.set_draining_window", exc,
+				context={"session_uuid": session_uuid or "", "docname": docname or ""},
+			)
+		except Exception:
+			pass
 
 	# v0.5.0: inline safety cap + scheduler fallback are both inside
 	# _enqueue_analyze now, so every inline-path caller (stop,
@@ -431,8 +439,16 @@ def _enqueue_analyze(session_uuid: str, docname: str | None = None) -> bool:
 	run_inline = False
 	try:
 		run_inline = bool(is_scheduler_disabled())
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus scheduler check")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"api.scheduler_check", exc,
+				context={"session_uuid": session_uuid or "", "docname": docname or ""},
+			)
+		except Exception:
+			pass
 
 	if run_inline:
 		# Inline cap check — refuse huge sessions that would exceed
@@ -469,10 +485,18 @@ def _enqueue_analyze(session_uuid: str, docname: str | None = None) -> bool:
 						},
 					)
 					safe_commit()
-				except Exception:
+				except Exception as exc:
 					frappe.log_error(
 						title="optimus inline cap mark Failed"
 					)
+					try:
+						from optimus import telemetry
+						telemetry.emit_failure(
+							"api.inline_analyze.mark_failed", exc,
+							context={"session_uuid": session_uuid or "", "docname": docname or ""},
+						)
+					except Exception:
+						pass
 				# The session is finalized (Failed). Return True so
 				# the caller treats it like any other inline result.
 				return True
@@ -489,7 +513,7 @@ def _enqueue_analyze(session_uuid: str, docname: str | None = None) -> bool:
 				session_uuid=session_uuid,
 				now=True,
 			)
-		except Exception:
+		except Exception as exc:
 			# analyze.run already marked the session Failed and
 			# re-raised. Swallow here so the caller returns 200 — the
 			# caller reads the final status off the doc and reports
@@ -497,6 +521,14 @@ def _enqueue_analyze(session_uuid: str, docname: str | None = None) -> bool:
 			frappe.log_error(
 				title=f"optimus inline analyze {session_uuid}"
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"api.inline_analyze.run", exc,
+					context={"session_uuid": session_uuid or ""},
+				)
+			except Exception:
+				pass
 		return True
 
 	# Enqueue analyze on the async "long" queue. NOTE (v0.7.x): we deliberately
@@ -553,12 +585,20 @@ SOFT_CAP_FRONTEND_XHR = 1000
 SOFT_CAP_FRONTEND_VITALS = 200
 
 
+# v0.12.0: keys centralized in optimus.redis_keys. The two local helpers
+# kept their original names + signatures so call sites don't churn, but
+# now delegate to the canonical builders. Future PRs can inline the
+# calls; for now this keeps the api.py diff localized.
 def _frontend_xhr_key(session_uuid: str) -> str:
-	return f"profiler:frontend:{session_uuid}:xhr"
+	from optimus import redis_keys
+
+	return redis_keys.frontend_xhr(session_uuid)
 
 
 def _frontend_vitals_key(session_uuid: str) -> str:
-	return f"profiler:frontend:{session_uuid}:vitals"
+	from optimus import redis_keys
+
+	return redis_keys.frontend_vitals(session_uuid)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -628,26 +668,58 @@ def submit_frontend_metrics(payload: str) -> dict:
 		for entry in xhr:
 			try:
 				frappe.cache.rpush(xhr_key, _json.dumps(entry, default=str))
-			except Exception:
+			except Exception as exc:
 				frappe.log_error(title="optimus frontend rpush (xhr)")
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"api.frontend_metrics.xhr_rpush", exc,
+						context={"session_uuid": session_uuid or ""},
+					)
+				except Exception:
+					pass
 		# Tail-preferring trim: keep the last N entries.
 		try:
 			frappe.cache.ltrim(xhr_key, -SOFT_CAP_FRONTEND_XHR, -1)
 			frappe.cache.expire_key(xhr_key, session.SESSION_TTL_SECONDS)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus frontend ltrim (xhr)")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"api.frontend_metrics.xhr_ltrim", exc,
+					context={"session_uuid": session_uuid or ""},
+				)
+			except Exception:
+				pass
 
 	if vitals:
 		for entry in vitals:
 			try:
 				frappe.cache.rpush(vitals_key, _json.dumps(entry, default=str))
-			except Exception:
+			except Exception as exc:
 				frappe.log_error(title="optimus frontend rpush (vitals)")
+				try:
+					from optimus import telemetry
+					telemetry.emit_failure(
+						"api.frontend_metrics.vitals_rpush", exc,
+						context={"session_uuid": session_uuid or ""},
+					)
+				except Exception:
+					pass
 		try:
 			frappe.cache.ltrim(vitals_key, -SOFT_CAP_FRONTEND_VITALS, -1)
 			frappe.cache.expire_key(vitals_key, session.SESSION_TTL_SECONDS)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title="optimus frontend ltrim (vitals)")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"api.frontend_metrics.vitals_ltrim", exc,
+					context={"session_uuid": session_uuid or ""},
+				)
+			except Exception:
+				pass
 
 	# Report the current post-merge sizes so the client can confirm.
 	try:
@@ -768,7 +840,10 @@ def health() -> dict:
 
 # v0.4.0: onboarding toast state endpoints. Used by floating_widget.js
 # to decide whether to render the one-time onboarding toast.
-ONBOARDING_CACHE_PREFIX = "profiler:onboarding_seen:"
+# v0.12.0: key construction moved to optimus.redis_keys.onboarding_seen.
+# The TTL constant stays here as the policy lever — bump from the 1-year
+# default if a real complaint surfaces. The PREFIX constant is gone; the
+# read/write sites below call redis_keys.onboarding_seen(user) directly.
 ONBOARDING_CACHE_TTL_SECONDS = 365 * 24 * 60 * 60  # 1 year
 
 
@@ -790,17 +865,28 @@ def check_onboarding_seen() -> dict:
 			return {"seen": True}
 	except Exception:
 		pass
-	flag = frappe.cache.get_value(f"{ONBOARDING_CACHE_PREFIX}{user}")
-	return {"seen": bool(flag)}
+	# v0.12.13: onboarding_seen is the second value migrated to the
+	# v0.12.0 versioned envelope. ``unwrap_value`` returns either the
+	# wrapped payload (new-shape writers, v0.12.13+) or the legacy bare
+	# value (pre-v0.12.13 writers — strings like "1"). Both shapes
+	# are truthy, so ``bool(payload)`` resolves the dismissed flag
+	# regardless of which writer set it.
+	from optimus import redis_keys, redis_schema
+
+	raw = frappe.cache.get_value(redis_keys.onboarding_seen(user))
+	payload, _version = redis_schema.unwrap_value(raw)
+	return {"seen": bool(payload)}
 
 
 @frappe.whitelist()
 def mark_onboarding_seen() -> dict:
 	"""Mark the onboarding toast as dismissed for the current user."""
 	user = _require_user()
+	from optimus import redis_keys, redis_schema
+
 	frappe.cache.set_value(
-		f"{ONBOARDING_CACHE_PREFIX}{user}",
-		"1",
+		redis_keys.onboarding_seen(user),
+		redis_schema.wrap_value("1"),
 		expires_in_sec=ONBOARDING_CACHE_TTL_SECONDS,
 	)
 	return {"seen": True}
@@ -1086,6 +1172,20 @@ def regenerate_reports(session_uuid: str) -> dict:
 	if not row:
 		frappe.throw(f"No Optimus Session found for uuid {session_uuid}")
 
+	# v0.12.9: enforce the docstring's "Allowed on Ready OR Failed
+	# sessions" contract. The pre-v0.12.9 code accepted any status,
+	# which would attach an incomplete report to a still-running
+	# analyze (Recording / Stopping / Analyzing) that the pipeline
+	# would then overwrite — confusing for operators, and surfaced
+	# in v0.12.4 by the integration test that exercised this gap.
+	if row["status"] not in ("Ready", "Failed"):
+		frappe.throw(
+			f"regenerate_reports requires the session to be in a terminal "
+			f"state (Ready or Failed); this one is '{row['status']}'. "
+			f"Wait for analyze to finish, or use retry_analyze to restart "
+			f"a stuck pipeline."
+		)
+
 	roles = set(frappe.get_roles(user))
 	if (
 		row["user"] != user
@@ -1111,8 +1211,16 @@ def regenerate_reports(session_uuid: str) -> dict:
 	]
 	try:
 		recordings = list(_analyze_mod._fetch_recordings(recording_uuids))
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus regenerate_reports fetch")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"api.regenerate_reports.fetch", exc,
+				context={"session_uuid": session_uuid or ""},
+			)
+		except Exception:
+			pass
 		recordings = []
 
 	# v0.6.0: if "Suggest AI fixes in the report by default" is on, backfill
@@ -1123,8 +1231,16 @@ def regenerate_reports(session_uuid: str) -> dict:
 	# below reads to draw the "Suggested fix (AI)" block under each finding.
 	try:
 		_analyze_mod._backfill_ai_suggestions(doc)
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus regenerate ai backfill")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"api.regenerate_reports.ai_backfill", exc,
+				context={"session_uuid": session_uuid or ""},
+			)
+		except Exception:
+			pass
 
 	# Invalidate the cached PDF — next /api/method/download_pdf call
 	# will regenerate it from the freshly-rendered HTML.
@@ -1231,6 +1347,25 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 			f"AI fix suggestions aren't offered for '{child.finding_type}' "
 			"findings — they don't carry enough code/SQL context."
 		)
+	# v0.9.0: per-type opt-out (Critical Risk #2). Refuse on-demand calls
+	# for types listed in ``ai_excluded_finding_types`` with a clear message
+	# pointing the operator at the setting they configured. Also emit one
+	# telemetry event per refusal so the count is observable.
+	if ai_fix.is_finding_type_excluded(child.finding_type or ""):
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"ai.fix_call_refused_by_exclusion",
+				severity="warning",
+				context={"finding_type": child.finding_type or ""},
+			)
+		except Exception:
+			pass
+		frappe.throw(
+			f"'{child.finding_type}' is on the exclusion list in Optimus "
+			"Settings ▸ AI ▸ Privacy & Operations ▸ Excluded finding types. "
+			"Remove the line if you want AI suggestions for this type."
+		)
 
 	# Return the cached suggestion unless the caller asked to regenerate.
 	if not regenerate and (child.llm_fix_json or "").strip():
@@ -1290,10 +1425,18 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 			"Optimus Finding", child.name, "llm_fix_json", json.dumps(result),
 		)
 		safe_commit()
-	except Exception:
+	except Exception as exc:
 		# Failing to persist isn't fatal — the operator still gets the
 		# suggestion in the dialog, just not cached / in the report.
 		frappe.log_error(title="optimus suggest_fix persist")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"api.suggest_fix.persist", exc,
+				context={"session_uuid": session_uuid or "", "finding": child.name},
+			)
+		except Exception:
+			pass
 
 	return {"ok": True, "finding": child.name, "cached": False, **result}
 
@@ -1510,8 +1653,16 @@ def _humanize_steps_core(doc, *, title: str | None = None) -> dict:
 	]
 	try:
 		recordings = list(_analyze_mod._fetch_recordings(recording_uuids))
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus humanize_steps fetch")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure(
+				"api.humanize_steps.fetch", exc,
+				context={"session_uuid": getattr(doc, "session_uuid", "") or ""},
+			)
+		except Exception:
+			pass
 		recordings = []
 
 	actions = _analyze_mod._actions_for_humanizer(recordings)
@@ -1641,8 +1792,16 @@ def _refill_indexes_for_doc(doc) -> dict:
 			continue
 		try:
 			out = _analyze_mod._run_table_index_ai_backfill(doc, table_name=table_name)
-		except Exception:
+		except Exception as exc:
 			frappe.log_error(title=f"optimus refill_indexes {table_name}")
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"api.refill_indexes.per_table", exc,
+					context={"table": table_name or ""},
+				)
+			except Exception:
+				pass
 			failed += 1
 			continue
 		if out.get("ok"):
@@ -2172,11 +2331,19 @@ def force_stop_phase2() -> dict:
 					child.ended_at = now_datetime()
 					try:
 						_lp_capture.cleanup_run(child.run_uuid)
-					except Exception:
+					except Exception as exc:
 						frappe.log_error(
 							title="force_stop_phase2 redis cleanup",
 							message=f"{parent_name}/{child.run_uuid}",
 						)
+						try:
+							from optimus import telemetry
+							telemetry.emit_failure(
+								"api.phase2.force_stop_redis_cleanup", exc,
+								context={"docname": parent_name or "", "run_uuid": child.run_uuid or ""},
+							)
+						except Exception:
+							pass
 					matched_in_parent += 1
 			if matched_in_parent:
 				parent.flags.ignore_validate_update_after_submit = True
@@ -2187,6 +2354,14 @@ def force_stop_phase2() -> dict:
 				title="force_stop_phase2 parent save",
 				message=f"{parent_name}: {exc}",
 			)
+			try:
+				from optimus import telemetry
+				telemetry.emit_failure(
+					"api.phase2.force_stop_parent_save", exc,
+					context={"docname": parent_name or ""},
+				)
+			except Exception:
+				pass
 	safe_commit()
 
 	return {
@@ -2253,8 +2428,13 @@ def stop_line_profile_pass(run_uuid: str) -> dict:
 	run_inline = False
 	try:
 		run_inline = bool(is_scheduler_disabled())
-	except Exception:
+	except Exception as exc:
 		frappe.log_error(title="optimus phase-2 scheduler check")
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("api.phase2.scheduler_check", exc)
+		except Exception:
+			pass
 
 	if run_inline:
 		frappe.logger().warning(

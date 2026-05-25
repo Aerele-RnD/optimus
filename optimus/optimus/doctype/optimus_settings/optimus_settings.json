@@ -22,6 +22,11 @@
   "skip_request_paths",
   "column_break_skip",
   "skip_users",
+  "redaction_section",
+  "redaction_description",
+  "sensitive_sql_columns",
+  "column_break_redaction",
+  "sensitive_form_keys",
   "capacity_section",
   "capacity_description",
   "max_queries_per_recording",
@@ -77,7 +82,21 @@
   "ai_auto_section",
   "ai_auto_suggest",
   "column_break_ai_auto",
-  "ai_auto_suggest_max"
+  "ai_auto_suggest_max",
+  "ai_privacy_section",
+  "ai_privacy_description",
+  "ai_excluded_finding_types",
+  "column_break_ai_privacy",
+  "ai_request_timeout_seconds",
+  "telemetry_tab",
+  "telemetry_section",
+  "telemetry_description",
+  "telemetry_enabled",
+  "telemetry_sink_doctype",
+  "telemetry_sink_jsonl_file",
+  "column_break_telemetry",
+  "telemetry_endpoint_url",
+  "telemetry_retention_days"
  ],
  "fields": [
   {
@@ -165,6 +184,32 @@
    "fieldname": "skip_users",
    "fieldtype": "Small Text",
    "label": "Skip Users"
+  },
+  {
+   "fieldname": "redaction_section",
+   "fieldtype": "Section Break",
+   "label": "Redaction"
+  },
+  {
+   "fieldname": "redaction_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Optimus redacts <b>sensitive values at capture time</b> — passwords, API keys, tokens, CSRF, cookies, and authorization headers never reach Redis or the persisted report. Defaults cover 12 canonical patterns. Add domain-specific names below (one per line) to extend redaction; defaults are <b>never removed</b>. Substring match, case-insensitive. Lines starting with <code>#</code> are comments.</p>"
+  },
+  {
+   "fieldname": "sensitive_sql_columns",
+   "fieldtype": "Small Text",
+   "label": "Sensitive SQL Columns",
+   "description": "Extra column names whose literal values in WHERE / LIKE / IN clauses are redacted to '<REDACTED>'. One per line. Example: recovery_code, bank_account, otp_seed."
+  },
+  {
+   "fieldname": "column_break_redaction",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sensitive_form_keys",
+   "fieldtype": "Small Text",
+   "label": "Sensitive Form / Header Keys",
+   "description": "Extra key names (form_dict / headers) whose values are replaced with '<REDACTED:keyname>'. One per line. Example: x-customer-id, recovery_code."
   },
   {
    "fieldname": "capacity_section",
@@ -431,7 +476,7 @@
   {
    "fieldname": "ai_description",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">When enabled, a <b>Suggest a fix (AI)</b> button appears on the Optimus Session form. Clicking it sends the selected finding's context — finding type, callsite, a window of surrounding <b>source code</b>, the normalized SQL and EXPLAIN row — to the configured LLM and stores the returned fix on the finding (it also shows up in the regenerated HTML report). <b>This sends code and queries to your chosen provider.</b> Point <code>Base URL</code> at a local model (Ollama / LM Studio / vLLM) to keep everything on-box.</p>"
+   "options": "<p class=\"text-muted small\">When enabled, a <b>Suggest a fix (AI)</b> button appears on the Optimus Session form. Clicking it sends the selected finding's context — finding type, callsite, a window of surrounding <b>source code</b>, the normalized SQL and EXPLAIN row — to the configured LLM and stores the returned fix on the finding (it also shows up in the regenerated HTML report). <b>This sends code and queries to your chosen provider.</b> Point <code>Base URL</code> at a local model (Ollama / LM Studio / vLLM) to keep everything on-box. <a href=\"https://github.com/Aerele-RnD/optimus/blob/main/docs/AI-FIXING.md\" target=\"_blank\">Read the full data-flow documentation</a> — what's sent, what isn't, and step-by-step local-LLM recipes.</p>"
   },
   {
    "default": "0",
@@ -537,12 +582,104 @@
    "fieldtype": "Int",
    "label": "Max auto-suggested findings per session",
    "non_negative": 1
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "ai_privacy_section",
+   "fieldtype": "Section Break",
+   "label": "Privacy & Operations"
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "ai_privacy_description",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Per-type opt-out and the local-LLM timeout. The exclusion list is the only way (short of disabling AI entirely) to keep a specific finding category from ever being built into a payload — useful when a particular type embeds business logic you don't want shared with a hosted provider. The timeout knob exists for local LLMs: hosted providers usually answer in seconds, but a cold-start ollama / vLLM run can take well over a minute on first call.</p>"
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "description": "One finding type per line — those types are skipped in both auto-suggest and on-demand (the payload is never built). Exact-match, case-sensitive. Lines starting with '#' are comments. Use the canonical names: Filesort, Framework N+1, Full Table Scan, Hot Line, Low Filter Ratio, Missing Index, N+1 Query, Redundant Call, Slow Query, Temporary Table.",
+   "fieldname": "ai_excluded_finding_types",
+   "fieldtype": "Small Text",
+   "label": "Excluded finding types"
+  },
+  {
+   "depends_on": "eval:doc.ai_enabled",
+   "fieldname": "column_break_ai_privacy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "60",
+   "depends_on": "eval:doc.ai_enabled",
+   "description": "HTTP timeout for outbound LLM calls. The default 60s is right for hosted providers (Anthropic / OpenAI typically reply in 2–10s). For local LLMs (ollama / LM Studio / vLLM) first-token latency on cold start can exceed 60s; start at 180 and tune down once warm-call P99 is known. Clamped to 10–600s.",
+   "fieldname": "ai_request_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Request timeout (seconds)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "telemetry_tab",
+   "fieldtype": "Tab Break",
+   "label": "Telemetry"
+  },
+  {
+   "fieldname": "telemetry_section",
+   "fieldtype": "Section Break",
+   "label": "Failure Telemetry"
+  },
+  {
+   "fieldname": "telemetry_description",
+   "fieldtype": "HTML",
+   "options": "<div class='form-message'><b>Opt-in failure aggregation.</b> When enabled, Optimus counts its own internal failures (hooks, line-profiler teardown, analyze pipeline, LLM transport) by signature so you can tell <i>'fails 4000×/day from THIS code path'</i> from <i>'happened once and never again'</i>. Default sink is the <b>Optimus Telemetry Event</b> DocType you can browse in your own Desk — no data leaves this server. Hot-path emit is lock-free and reads no settings; the scheduled flush runs every 10 minutes.<br><br><b>What gets recorded:</b> exception class, traceback with file paths scrubbed to <code>&lt;bench&gt;/apps/optimus/...</code> (frames in your own apps collapse to <code>&lt;user_code&gt;:LINE</code>), and a small Optimus-internal context dict. No queries, no user code, no user data.</div>"
+  },
+  {
+   "default": "0",
+   "description": "Master gate. OFF by default. When enabled, failures are appended to an in-process bounded buffer (no DB / Redis I/O on the hot path) and flushed to the configured sinks every 10 minutes by the scheduler.",
+   "fieldname": "telemetry_enabled",
+   "fieldtype": "Check",
+   "label": "Enable failure telemetry"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.telemetry_enabled",
+   "description": "Write aggregated rows to the Optimus Telemetry Event DocType. Browseable from Desk; retained for the duration set below.",
+   "fieldname": "telemetry_sink_doctype",
+   "fieldtype": "Check",
+   "label": "Local DocType sink"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.telemetry_enabled",
+   "description": "Append one JSON line per signature per flush to <code>&lt;bench&gt;/logs/optimus_telemetry.jsonl</code> — for ingestion by log aggregators (Loki, Datadog, etc.). Rotation is your responsibility; the file is owned by your bench's normal log rotation.",
+   "fieldname": "telemetry_sink_jsonl_file",
+   "fieldtype": "Check",
+   "label": "JSONL log file sink"
+  },
+  {
+   "depends_on": "eval:doc.telemetry_enabled",
+   "fieldname": "column_break_telemetry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.telemetry_enabled",
+   "description": "Phase B — HTTPS transport is not yet implemented. The field is accepted now so a future Optimus release can ship it as a purely additive change, but anything you save here is currently unused.",
+   "fieldname": "telemetry_endpoint_url",
+   "fieldtype": "Data",
+   "label": "Remote HTTPS endpoint (Phase B — not yet active)"
+  },
+  {
+   "default": "30",
+   "depends_on": "eval:doc.telemetry_enabled",
+   "description": "Daily janitor deletes Optimus Telemetry Event rows whose Last Seen is older than this many days. Capped at 100 deletions per run to keep the sweep bounded.",
+   "fieldname": "telemetry_retention_days",
+   "fieldtype": "Int",
+   "label": "Retention (days)",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-04-16 18:30:00.000000",
+ "modified": "2026-05-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Optimus",
  "name": "Optimus Settings",

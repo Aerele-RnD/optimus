@@ -249,8 +249,15 @@ class TestTopQueriesSplit:
 			{"callsite": "apps/myapp/myapp/handlers.py:88",
 			 "duration_ms": 80.0, "normalized_query": "SELECT * FROM tabSales Invoice"},
 		])
+		# v0.10.0: ``renderer`` is now a package whose ``__init__.py``
+		# re-exports names from ``_internal``. Patching ``renderer.X``
+		# would only swap the package's attribute — the call site inside
+		# ``_internal.py`` resolves the name through ``_internal``'s own
+		# globals and would see the unpatched original. Patch the actual
+		# location.
+		from optimus.renderer import _internal as _renderer_internal
 		with patch.object(
-			renderer, "_filter_top_queries_for_display",
+			_renderer_internal, "_filter_top_queries_for_display",
 			side_effect=lambda qs: qs,
 		):
 			html = renderer.render_raw(doc, recordings=[])

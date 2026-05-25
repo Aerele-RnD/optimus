@@ -37,17 +37,20 @@ def test_builtin_analyzers_list_includes_v5():
 
 def test_run_loads_frontend_data_into_context():
 	src = inspect.getsource(analyze.run)
-	# The load line must reference both the Redis key family and the
-	# context attribute.
-	assert "profiler:frontend:" in src
+	# v0.12.0+: the Redis key is built via optimus.redis_keys (the inline
+	# f-string ``"profiler:frontend:<uuid>"`` was migrated). Assert the
+	# wiring still calls the canonical builder + assigns to the context.
+	assert "frontend_legacy(" in src or "frontend_xhr(" in src
 	assert "context.frontend_data" in src
 
 
 def test_run_attaches_infra_to_recordings():
 	src = inspect.getsource(analyze.run)
-	# Per-recording infra dicts must be read from profiler:infra: keys
-	# and attached as rec["infra"] before the analyzer loop runs.
-	assert "profiler:infra:" in src
+	# v0.12.0+: Per-recording infra dicts are read through
+	# ``redis_keys.infra(uuid)`` (the literal ``profiler:infra:`` f-string
+	# was migrated). Assert the wiring still calls the builder + attaches
+	# the value as ``rec["infra"]`` before the analyzer loop runs.
+	assert "redis_keys.infra(" in src or "_redis_keys.infra(" in src
 	# The assignment can be spelled rec["infra"] or rec['infra']; accept either.
 	assert 'rec["infra"]' in src or "rec['infra']" in src
 

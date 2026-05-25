@@ -1,0 +1,215 @@
+name: Integration
+
+# Real-bench integration tests. Slower than the pure-pytest workflow
+# (``tests.yml``), so the trigger surface is narrower:
+#   * pull requests targeting main — gate merges on real-Frappe behaviour
+#   * push to main                  — catch regressions on the trunk
+#   * scheduled daily               — catch Frappe v16 upstream drift
+#   * manual dispatch                — replay a flake / debug a CI bug
+#
+# This workflow does NOT replace ``tests.yml``; the two run in parallel.
+# Branch protection enforces both green for merge.
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+  schedule:
+    # 04:00 UTC daily — outside the typical European / Indian working day,
+    # before North American developers wake up. A failed scheduled run
+    # surfaces on the repo's notifications + the Actions badge in the
+    # README turns red for the morning.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: real-bench integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis-cache:
+        image: redis:7-alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:7-alpine
+        ports:
+          - 11000:6379
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        # v0.12.28: Frappe v16.18.3 (current head of ``version-16``)
+        # requires Python >=3.14,<3.15. Pinning 3.12 here was the
+        # immediate cause of exit 167 (uv's "resolution failed" code)
+        # during ``bench init``: uv refused to install Frappe v16 into
+        # a 3.12 venv. 3.14 matches the upstream-mandated minimum and
+        # the dev bench's interpreter (Python 3.14.2 locally).
+        #
+        # NB: the pure-pytest ``tests.yml`` workflow runs against 3.12
+        # + 3.13 + 3.14 unchanged — it doesn't install Frappe (the
+        # conftest stubs it), so the 3.12 baseline there is still
+        # valid. Only the integration workflow needs the upstream-
+        # mandated 3.14 because it actually runs ``bench init`` →
+        # ``uv pip install frappe``.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Set up Node 24
+        # v0.12.29: Frappe v16's package.json declares
+        # ``"engines": { "node": ">=24" }``. Node 20 (the previous pin)
+        # tripped a yarn-install warning ("Node 24") and would
+        # subsequently fail Frappe's own ``yarn run`` build steps that
+        # check engines strictly. Pinning 24 matches the upstream-
+        # mandated minimum — same pattern as the Python 3.12 → 3.14
+        # bump in the sibling commit. Frappe's asset pipeline needs
+        # Node even with --skip-assets; ``bench init`` shells out to
+        # ``yarn install`` for the Frappe framework's own JS deps
+        # before building the bench skeleton.
+        #
+        # NB: no ``cache: 'yarn'`` here — that directive requires a
+        # ``yarn.lock`` in the optimus repo at setup-node time, but
+        # optimus is a Frappe app, not a Node project; the yarn.lock
+        # we care about ships inside ``apps/frappe`` which only exists
+        # AFTER the install.sh step below clones it. The dedicated
+        # ``actions/cache@v4`` step right after this one still caches
+        # ``~/.cache/yarn``, so Frappe's repeat installs stay fast.
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Cache the Frappe checkout across runs
+        # Bench provisioning's dominant cost is the Frappe clone (~150 MB)
+        # + its pip + yarn deps. Cache the whole apps/frappe directory
+        # keyed on the workflow file's hash so any infrastructure change
+        # invalidates cleanly.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/yarn
+          key: integration-${{ runner.os }}-${{ hashFiles('.github/workflows/integration.yml', '.github/helper/install.sh', 'pyproject.toml') }}
+          restore-keys: |
+            integration-${{ runner.os }}-
+
+      - name: Provision a Frappe v16 bench with optimus installed
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          chmod +x .github/helper/install.sh
+          bash .github/helper/install.sh
+
+      - name: Run the integration suite
+        # ``bench run-tests --app optimus`` discovers every test under
+        # ``optimus/tests_integration/`` that subclasses
+        # ``frappe.tests.utils.FrappeTestCase``. We invoke per-module
+        # so a single failing module doesn't abort siblings. v0.12.15:
+        # the 9 modules now run through a shell loop driven by a single
+        # list — adding a future module is a one-line addition.
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+          INTEGRATION_MODULES: |-
+            test_install_smoke
+            test_recording_lifecycle_e2e
+            test_atomic_lua_merge_concurrent
+            test_telemetry_flush_doctype_sink
+            test_ai_privacy_exclusion_on_api
+            test_regenerate_reports_idempotent
+            test_phase2_tool_orphan_recovery
+            test_safe_report_self_contained_on_real_bench
+            test_janitor_sweeps_actually_delete
+        run: |
+          set -uo pipefail
+          BENCH_DIR="${RUNNER_TEMP}/frappe-bench"
+          cd "${BENCH_DIR}"
+          FAILED_MODULES=()
+          # Each module gets its own --module invocation + its own log
+          # artifact ("integration-<module>.log") so the post-run
+          # artifact upload preserves per-module triage detail.
+          # v0.12.15 improvement: the pre-v0.12.15 implementation used
+          # `set -e`, which made the FIRST failing module abort all
+          # siblings (despite a comment claiming otherwise). The
+          # accumulator below runs EVERY module then fails the workflow
+          # if any failed — so a single push surfaces every failure at
+          # once, not just the first.
+          while IFS= read -r module; do
+            [ -z "${module}" ] && continue
+            module="${module## }"
+            module="${module%% }"
+            log="${RUNNER_TEMP}/integration-${module}.log"
+            echo "::group::${module}"
+            if ! bench --site test_site run-tests \
+                --app optimus \
+                --module "optimus.tests_integration.${module}" \
+                2>&1 | tee "${log}"; then
+              FAILED_MODULES+=("${module}")
+            fi
+            echo "::endgroup::"
+          done <<< "${INTEGRATION_MODULES}"
+          if [ "${#FAILED_MODULES[@]}" -gt 0 ]; then
+            echo "::error::Integration modules failed: ${FAILED_MODULES[*]}"
+            exit 1
+          fi
+
+      - name: Publish integration summary
+        if: always()
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          {
+            echo "## Integration test summary"
+            for log in "${RUNNER_TEMP}/integration-install.log" "${RUNNER_TEMP}/integration-lifecycle.log"; do
+              if [ -f "$log" ]; then
+                echo "### $(basename "$log")"
+                echo '```'
+                grep -E '^(PASSED|FAILED|ERROR|OK|FAIL|test_|=+ )' "$log" | tail -40 || true
+                echo '```'
+              fi
+            done
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload bench + test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: |
+            ${{ runner.temp }}/integration-*.log
+            ${{ runner.temp }}/frappe-bench/logs/*.log
+            ${{ runner.temp }}/frappe-bench/sites/test_site/logs/*.log
+          if-no-files-found: warn
+          retention-days: 14

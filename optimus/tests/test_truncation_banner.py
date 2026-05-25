@@ -204,9 +204,11 @@ class TestBannerMarkerPrefix:
 		with open(analyze_path) as f:
 			analyze_src = f.read()
 
-		# Read the renderer that looks for the prefix.
+		# Read the renderer that looks for the prefix. v0.10.0 split the
+		# monolithic renderer.py into a package; the truncation-check still
+		# lives inside the legacy bulk content at renderer/_internal.py.
 		renderer_path = os.path.join(
-			os.path.dirname(__file__), "..", "renderer.py",
+			os.path.dirname(__file__), "..", "renderer", "_internal.py",
 		)
 		with open(renderer_path) as f:
 			renderer_src = f.read()

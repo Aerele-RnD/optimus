@@ -85,6 +85,14 @@ _DEFAULTS = {
 	"auto_expand_min_ms": 50.0,
 	"skip_request_paths": (),  # tuple of stripped, comment-free lines
 	"skip_users": (),
+	# v0.7.x+: additive lists for capture-time redaction (see
+	# optimus/redaction.py). The defaults already cover the 12
+	# canonical patterns (password, api_key, token, …); these extend
+	# them with customer-specific names (recovery_code, bank_account,
+	# otp_seed, …). Parsed the same way as skip_request_paths: one
+	# entry per line, # comments, blank lines dropped.
+	"sensitive_sql_columns": (),
+	"sensitive_form_keys": (),
 	# v0.6.0: opt-in LLM "suggest a fix" feature. The API key is NOT here —
 	# it's secret, stored in a Password field, and read on demand by
 	# ai_fix.py via frappe.utils.password.get_decrypted_password.
@@ -113,6 +121,23 @@ _DEFAULTS = {
 	# pre-profile Single (no config_profile key) keeps its stored thresholds —
 	# see _read_doctype_row's coalesce and the back-compat note in _resolve.
 	"config_profile": "Custom",
+	# v0.8.0: opt-in failure telemetry. Master gate defaults OFF — telemetry
+	# is per [[product_thesis_self_hosted]] a visibility feature, not a
+	# phone-home. The DocType sink is enabled by default once the master is
+	# flipped on (it's local, no transport). JSONL + endpoint URL stay off
+	# by default. See ``optimus.telemetry`` for the emit / flush pipeline.
+	"telemetry_enabled": False,
+	"telemetry_sink_doctype": True,
+	"telemetry_sink_jsonl_file": False,
+	"telemetry_endpoint_url": "",
+	"telemetry_retention_days": 30,
+	# v0.9.0: AI privacy hardening (closes Critical Risk #2). Exclusion
+	# list is empty by default (no types skipped); the timeout default of
+	# 60s matches the pre-v0.9.0 hardcoded constant so existing setups are
+	# behavior-preserving. See docs/AI-FIXING.md for the per-pathway data
+	# inventory and local-LLM recipes.
+	"ai_excluded_finding_types": (),
+	"ai_request_timeout_seconds": 60,
 }
 
 # v0.7.x: the nine detection-sensitivity knobs the Sensitivity Profile governs.
@@ -225,6 +250,12 @@ class OptimusConfig:
 	# Small Text fields by splitting on newlines and dropping comments.
 	skip_request_paths: tuple[str, ...] = field(default_factory=tuple)
 	skip_users: tuple[str, ...] = field(default_factory=tuple)
+	# v0.7.x+ — additive lists for capture-time redaction. Defaults
+	# carry the 12 canonical patterns inside optimus.redaction; these
+	# extend them. Never replace — a config typo can't disable
+	# redaction of a known-sensitive key.
+	sensitive_sql_columns: tuple[str, ...] = field(default_factory=tuple)
+	sensitive_form_keys: tuple[str, ...] = field(default_factory=tuple)
 	# v0.6.0: AI "suggest a fix" config. Non-secret only — the API key is
 	# never cached here (see _DEFAULTS note + ai_fix._resolve_provider).
 	ai_enabled: bool = False
@@ -243,9 +274,31 @@ class OptimusConfig:
 	# "Custom" so the no-frappe / pre-bench path uses the dataclass threshold
 	# defaults (= Recommended numbers) as-is.
 	config_profile: str = "Custom"
+	# v0.8.0: opt-in failure telemetry. See _DEFAULTS comment above. The
+	# defaults here match _DEFAULTS so the no-frappe pure-pytest path
+	# resolves correctly (and Critical Risk #4 stays OFF by default).
+	telemetry_enabled: bool = False
+	telemetry_sink_doctype: bool = True
+	telemetry_sink_jsonl_file: bool = False
+	telemetry_endpoint_url: str = ""
+	telemetry_retention_days: int = 30
+	# v0.9.0: AI privacy hardening (Critical Risk #2). Exclusion list is a
+	# tuple (immutable, hashable, safe to cache) of finding-type names.
+	# Timeout default matches the pre-v0.9.0 hardcoded constant.
+	ai_excluded_finding_types: tuple[str, ...] = field(default_factory=tuple)
+	ai_request_timeout_seconds: int = 60
 
 
-_CACHE_KEY = "optimus_settings_cached"
+# v0.12.0: key centralized in optimus.redis_keys. The module-level
+# constant alias is kept so existing internal references resolve without
+# touching every call site.
+def _settings_cache_key() -> str:
+	from optimus import redis_keys
+
+	return redis_keys.settings_cache()
+
+
+_CACHE_KEY = _settings_cache_key()
 
 
 def _read_doctype_row() -> dict | None:
@@ -323,6 +376,8 @@ def _read_doctype_row() -> dict | None:
 		"auto_expand_min_ms": float(doc.get("auto_expand_min_ms") or 0) or None,
 		"skip_request_paths": _parse_skip_list(doc.get("skip_request_paths")),
 		"skip_users": _parse_skip_list(doc.get("skip_users")),
+		"sensitive_sql_columns": _parse_skip_list(doc.get("sensitive_sql_columns")),
+		"sensitive_form_keys": _parse_skip_list(doc.get("sensitive_form_keys")),
 		# v0.6.0 AI fix config (non-secret). ``ai_enabled`` /
 		# ``ai_auto_suggest`` are Checks — can't use ``or None`` because
 		# False is legitimate. ``ai_auto_suggest_max`` allows 0 (= all).
@@ -342,6 +397,20 @@ def _read_doctype_row() -> dict | None:
 		# "Custom" so existing stored thresholds keep driving analysis — no
 		# migration patch, no silent reset to Recommended.
 		"config_profile": (doc.get("config_profile") or "Custom"),
+		# v0.8.0: opt-in failure telemetry. Checks: can't use ``or None``
+		# because False is legitimate. ``telemetry_retention_days`` allows
+		# the controller-clamped floor (1) through; defaults to 30 when unset.
+		"telemetry_enabled": bool(doc.get("telemetry_enabled")),
+		"telemetry_sink_doctype": bool(doc.get("telemetry_sink_doctype", 1)),
+		"telemetry_sink_jsonl_file": bool(doc.get("telemetry_sink_jsonl_file")),
+		"telemetry_endpoint_url": (doc.get("telemetry_endpoint_url") or "").strip() or None,
+		"telemetry_retention_days": int(doc.get("telemetry_retention_days") or 0) or None,
+		# v0.9.0: AI privacy. Exclusion list parsed with the same skip-list
+		# semantics as skip_request_paths / sensitive_sql_columns (line-per-
+		# entry, # comments, blanks stripped). Timeout: 0/None falls through
+		# to _DEFAULTS via _int_with_default.
+		"ai_excluded_finding_types": _parse_skip_list(doc.get("ai_excluded_finding_types")),
+		"ai_request_timeout_seconds": int(doc.get("ai_request_timeout_seconds") or 0) or None,
 	}
 
 
@@ -473,6 +542,8 @@ def _resolve() -> OptimusConfig:
 		auto_expand_min_ms=_float("auto_expand_min_ms"),
 		skip_request_paths=tuple(row.get("skip_request_paths") or ()),
 		skip_users=tuple(row.get("skip_users") or ()),
+		sensitive_sql_columns=tuple(row.get("sensitive_sql_columns") or ()),
+		sensitive_form_keys=tuple(row.get("sensitive_form_keys") or ()),
 		ai_enabled=bool(
 			row.get("ai_enabled")
 			if "ai_enabled" in row
@@ -509,6 +580,32 @@ def _resolve() -> OptimusConfig:
 			else _DEFAULTS["ai_suggest_indexes"]
 		),
 		config_profile=profile,
+		# v0.8.0: opt-in failure telemetry. Checks: presence-test, not
+		# truthy-test, because False is legitimate. Endpoint URL coalesces
+		# the empty/None case to the default ("").
+		telemetry_enabled=bool(
+			row.get("telemetry_enabled")
+			if "telemetry_enabled" in row
+			else _DEFAULTS["telemetry_enabled"]
+		),
+		telemetry_sink_doctype=bool(
+			row.get("telemetry_sink_doctype")
+			if "telemetry_sink_doctype" in row
+			else _DEFAULTS["telemetry_sink_doctype"]
+		),
+		telemetry_sink_jsonl_file=bool(
+			row.get("telemetry_sink_jsonl_file")
+			if "telemetry_sink_jsonl_file" in row
+			else _DEFAULTS["telemetry_sink_jsonl_file"]
+		),
+		telemetry_endpoint_url=row.get("telemetry_endpoint_url") or _DEFAULTS["telemetry_endpoint_url"],
+		telemetry_retention_days=_int_with_default("telemetry_retention_days"),
+		# v0.9.0: AI privacy. Tuple straight through (already parsed in
+		# _read_doctype_row). Timeout clamped to [10, 600] — below 10s
+		# breaks the LLM round-trip; above 600s holds the analyze worker
+		# longer than the time budget is willing to tolerate anyway.
+		ai_excluded_finding_types=tuple(row.get("ai_excluded_finding_types") or ()),
+		ai_request_timeout_seconds=max(10, min(600, _int_with_default("ai_request_timeout_seconds"))),
 	)
 
 
@@ -528,9 +625,22 @@ def get_config() -> OptimusConfig:
 		return OptimusConfig()
 
 	try:
-		cached = frappe.cache.get_value(_CACHE_KEY)
-		if cached is not None:
-			return OptimusConfig(**cached)
+		# v0.12.11: ``settings_cache`` is the first value to migrate to the
+		# v0.12.0 versioned envelope. ``unwrap_value`` returns ``(payload,
+		# version)``; the payload is the OptimusConfig field dict in either
+		# the new-shape envelope (``{"_v": 1, "data": {...}}``) or the
+		# legacy bare-dict shape (pre-v0.12.11 writes still flow through
+		# unchanged via the legacy-detection branch). On a schema-version
+		# bump WITHOUT a migration, ``unwrap_value`` returns ``(default=
+		# None, observed_version)`` AND emits a ``redis.schema_drift``
+		# telemetry event — the request falls through to the slow path
+		# (``_resolve``) and re-writes a fresh envelope.
+		from optimus import redis_schema
+
+		cached_raw = frappe.cache.get_value(_CACHE_KEY)
+		payload, _version = redis_schema.unwrap_value(cached_raw)
+		if isinstance(payload, dict) and payload:
+			return OptimusConfig(**payload)
 	except Exception:
 		pass
 
@@ -540,7 +650,11 @@ def get_config() -> OptimusConfig:
 		return OptimusConfig()
 
 	try:
-		frappe.cache.set_value(_CACHE_KEY, cfg.__dict__)
+		from optimus import redis_schema
+
+		frappe.cache.set_value(
+			_CACHE_KEY, redis_schema.wrap_value(cfg.__dict__)
+		)
 	except Exception:
 		pass
 

@@ -12,3 +12,5 @@ optimus.patches.v0_6_0.drop_safe_report_fields
 optimus.patches.v0_6_0.drop_comparison_fields
 optimus.patches.v0_6_0.add_ai_fix_fields
 optimus.patches.v0_6_0.set_hide_framework_tables_default
+optimus.patches.v0_8_0.add_telemetry_fields
+optimus.patches.v0_9_0.add_ai_privacy_fields

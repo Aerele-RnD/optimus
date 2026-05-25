@@ -39,6 +39,19 @@ MAX_RECORDINGS_PER_SESSION = 200
 # a malicious pickle in and trigger a deserialization RCE.
 _SIG_LEN = 32  # SHA-256 digest size in bytes.
 
+# v0.12.14: a 1-byte scheme version marker is inserted between the
+# HMAC and the payload at sign time, so future signing-scheme bumps
+# (HMAC-SHA512, AES-SIV, key-rotation tag, …) have an extension point
+# without breaking blobs in flight. The version byte is COVERED BY
+# THE HMAC — tampering with it is detected. Backward compatibility on
+# read is automatic: if the post-signature body's first byte is the
+# current version marker, strip it; otherwise the body is a legacy
+# pre-v0.12.14 payload. Pickle never uses ``\x01`` as a leading
+# opcode (protocols 2-5 start with ``\x80``; protocol 0 with printable
+# ASCII opcodes), so the marker can't collide with a legacy pickle
+# payload's first byte.
+_HMAC_SCHEME_V1 = 0x01
+
 
 def _has_stable_hmac_secret() -> bool:
 	"""Phase K v0.7 GA: True only when ``frappe.conf.encryption_key``
@@ -91,52 +104,73 @@ def sign_blob(blob: bytes) -> bytes:
 	per-process random key would produce blobs that fail HMAC
 	verification in any other process and break the recorder →
 	analyze handoff.
+
+	v0.12.14: inserts a 1-byte scheme version (``_HMAC_SCHEME_V1``)
+	between the signature and the payload. The signature covers the
+	version-tagged body, so tampering with the version is detected.
+	Legacy pre-v0.12.14 blobs (no version byte) still verify on read
+	via the backward-compat branch in ``unsign_blob``.
 	"""
 	if not isinstance(blob, (bytes, bytearray)):
 		raise TypeError(f"sign_blob expects bytes, got {type(blob).__name__}")
 	if not _has_stable_hmac_secret():
 		return bytes(blob)
-	sig = hmac.new(_hmac_secret(), bytes(blob), hashlib.sha256).digest()
-	return sig + bytes(blob)
+	versioned = bytes([_HMAC_SCHEME_V1]) + bytes(blob)
+	sig = hmac.new(_hmac_secret(), versioned, hashlib.sha256).digest()
+	return sig + versioned
 
 
 def unsign_blob(signed: bytes) -> bytes | None:
 	"""Verify the HMAC-SHA256 prefix and return the payload, or
 	``None`` if the signature is missing / mismatched. Constant-time
 	comparison via ``hmac.compare_digest`` so signature-stripping
-	attacks don't leak timing info."""
+	attacks don't leak timing info.
+
+	v0.12.14: handles two body shapes after the 32-byte signature:
+
+	  * **v1 (current, v0.12.14+)** — body starts with
+	    ``_HMAC_SCHEME_V1``. The signature covers the version-tagged
+	    body. Returns ``body[1:]`` (the payload, with the version
+	    byte stripped).
+	  * **v0 (legacy, pre-v0.12.14)** — body is the raw payload. The
+	    signature covers the body directly. Returns ``body``.
+
+	The single HMAC verification step handles both cases — for v1 the
+	HMAC was computed over ``\\x01 + payload`` AND that's exactly what
+	the body is; for v0 the HMAC was computed over the payload AND
+	the body is just the payload. The post-verify branch inspects the
+	body's first byte to disambiguate.
+	"""
 	if not isinstance(signed, (bytes, bytearray)) or len(signed) < _SIG_LEN:
 		return None
-	sig, blob = bytes(signed[:_SIG_LEN]), bytes(signed[_SIG_LEN:])
-	expected = hmac.new(_hmac_secret(), blob, hashlib.sha256).digest()
+	sig, body = bytes(signed[:_SIG_LEN]), bytes(signed[_SIG_LEN:])
+	expected = hmac.new(_hmac_secret(), body, hashlib.sha256).digest()
 	if not hmac.compare_digest(sig, expected):
 		return None
-	return blob
+	# v0.12.14 disambiguation: a body starting with _HMAC_SCHEME_V1
+	# is a versioned payload; strip the marker. A body starting with
+	# anything else is a legacy pre-v0.12.14 raw payload. Pickle never
+	# uses 0x01 as a leading opcode, so a legacy pickle payload's
+	# first byte can never accidentally trigger the v1 branch.
+	if body and body[0] == _HMAC_SCHEME_V1:
+		return body[1:]
+	return body
 
 
-def _active_key(user: str) -> str:
-	return f"profiler:active:{user}"
+# v0.12.24: the 5 session-key helpers are aliases for the v0.12.0
+# centralized ``optimus.redis_keys.session_*`` functions. Same byte-
+# identical key strings as the pre-v0.12.24 local helpers (which were
+# the last surviving inline f-strings outside ``redis_keys.py``).
+# Existing call sites — both inside this module and from tests
+# (``session._meta_key(uuid)`` / ``session._jobs_key(sid)``) — keep
+# working unchanged through the module-level aliases.
+from optimus import redis_keys as _redis_keys
 
-
-def _meta_key(session_uuid: str) -> str:
-	return f"profiler:session:{session_uuid}:meta"
-
-
-def _recordings_key(session_uuid: str) -> str:
-	return f"profiler:session:{session_uuid}:recordings"
-
-
-def _pending_jobs_key(session_uuid: str) -> str:
-	return f"profiler:session:{session_uuid}:pending_jobs"
-
-
-def _jobs_key(session_uuid: str) -> str:
-	# v0.7.x: per-job metadata hash (job_id -> JSON). Distinct from the
-	# pending-jobs SET, which is pruned as jobs go inactive to drive the wait;
-	# this hash is the NEVER-pruned full record so analyze can report every
-	# enqueued job's terminal status (completed / failed / timeout / running),
-	# including jobs that failed or timed out and produced no recording.
-	return f"profiler:session:{session_uuid}:jobs"
+_active_key = _redis_keys.session_active
+_meta_key = _redis_keys.session_meta
+_recordings_key = _redis_keys.session_recordings
+_pending_jobs_key = _redis_keys.session_pending_jobs
+_jobs_key = _redis_keys.session_jobs
 
 
 # ----- active session pointer (per-user) -----------------------------------
@@ -188,12 +222,32 @@ def set_session_meta(session_uuid: str, meta: dict) -> None:
 	frappe.local._profiler_active_session_id. When False, the new
 	pyinstrument capture and sidecar wraps stay inert; SQL recording
 	via frappe.recorder proceeds as usual.
+
+	v0.12.21: the cached payload is wrapped in the v0.12.0 versioned
+	envelope so future schema bumps to the meta dict shape can be
+	detected via ``redis_schema.unwrap_value``'s drift branch.
+	Pre-v0.12.21 bare-dict values still resolve through ``unwrap_value``'s
+	legacy-detection branch in ``get_session_meta``.
 	"""
-	frappe.cache.set_value(_meta_key(session_uuid), meta)
+	from optimus import redis_schema
+
+	frappe.cache.set_value(_meta_key(session_uuid), redis_schema.wrap_value(meta))
 
 
 def get_session_meta(session_uuid: str) -> dict | None:
-	return frappe.cache.get_value(_meta_key(session_uuid))
+	"""v0.12.21: unwrap the envelope shape introduced by
+	``set_session_meta``. Handles new (wrapped) and legacy (bare dict)
+	shapes transparently. Returns ``None`` for missing keys."""
+	from optimus import redis_schema
+
+	raw = frappe.cache.get_value(_meta_key(session_uuid))
+	payload, _version = redis_schema.unwrap_value(raw)
+	if payload is None:
+		return None
+	# Defensive: payload should be a dict. A non-dict from a corrupt
+	# write (or a future-version envelope where unwrap returned the
+	# default=None) would crash callers expecting `.get(...)`. Normalize.
+	return payload if isinstance(payload, dict) else None
 
 
 # ----- session → recording UUIDs (set, append-only during recording) ------
@@ -316,11 +370,80 @@ def get_pending_jobs(session_uuid: str) -> set[str]:
 # (job_id -> JSON metadata, never pruned until session cleanup). analyze reads
 # the hash to persist one Optimus Background Job row per enqueued job with its
 # terminal status, so failed / timed-out jobs are reported instead of vanishing.
+#
+# Multi-worker safety (v0.7.x+): updates go through ``_atomic_merge_job_meta``,
+# which uses a Redis Lua script to do HGET → decode → merge → encode → HSET in
+# a single server-side step. Without that, two workers updating the same
+# job_id's meta concurrently (e.g. after_job's ``set_job_recording`` racing
+# analyze's ``_finalize_pending_statuses`` at the wait cap) can DROP fields
+# via interleaved read-modify-write. The helper falls back to non-atomic
+# read-modify-write for cache backends without ``.eval()`` (FakeCache in
+# tests, exotic Redis variants) — preserves existing behavior, sheds the
+# multi-worker guarantee in those contexts.
+
+
+# Lua scripts. ``cjson`` ships with Redis's standard Lua sandbox; no extra
+# setup needed. KEYS[1] = jobs hash key (pre-prefixed via make_key), ARGV[1]
+# = job_id field, ARGV[2] = JSON-encoded dict of fields to merge.
+_MERGE_JOB_META_LUA = """
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+local meta = {}
+if current then meta = cjson.decode(current) end
+local new_fields = cjson.decode(ARGV[2])
+for k, v in pairs(new_fields) do meta[k] = v end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(meta))
+return 1
+"""
+
+_SETDEFAULT_JOB_META_LUA = """
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+local meta = {}
+if current then meta = cjson.decode(current) end
+local new_fields = cjson.decode(ARGV[2])
+for k, v in pairs(new_fields) do
+    if meta[k] == nil or meta[k] == '' then meta[k] = v end
+end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(meta))
+return 1
+"""
+
+
+# Frappe's RedisWrapper.hget/hset wrap values in pickle.dumps / pickle.loads.
+# Lua can't do pickle, so the Lua merge script stores plain JSON bytes; we
+# need to read/write the bg-jobs hash on the SAME byte format. ``_raw_redis``
+# returns a redis-py client that shares frappe.cache's connection pool but
+# bypasses the pickle wrapper. Returns None in test contexts where
+# ``frappe.cache`` is a FakeCache stand-in (no connection_pool); _read_job /
+# _write_job then fall back to ``frappe.cache.hget`` / ``.hset`` directly,
+# which is fine because FakeCache stores values as-is (no pickling) — the
+# encoding stays consistent within either environment.
+_RAW_REDIS = None
+
+
+def _raw_redis():
+	global _RAW_REDIS
+	if _RAW_REDIS is not None:
+		return _RAW_REDIS
+	try:
+		import redis
+
+		pool = getattr(frappe.cache, "connection_pool", None)
+		if pool is None:
+			return None
+		_RAW_REDIS = redis.Redis(connection_pool=pool)
+		return _RAW_REDIS
+	except Exception:
+		return None
 
 
 def _read_job(session_uuid: str, job_id: str) -> dict | None:
 	try:
-		raw = frappe.cache.hget(_jobs_key(session_uuid), job_id)
+		r = _raw_redis()
+		if r is not None:
+			prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+			raw = r.hget(prefixed, job_id)
+		else:
+			raw = frappe.cache.hget(_jobs_key(session_uuid), job_id)
 	except Exception:
 		return None
 	if not raw:
@@ -335,27 +458,77 @@ def _read_job(session_uuid: str, job_id: str) -> dict | None:
 
 def _write_job(session_uuid: str, job_id: str, meta: dict) -> None:
 	try:
-		frappe.cache.hset(_jobs_key(session_uuid), job_id, json.dumps(meta))
+		r = _raw_redis()
+		if r is not None:
+			prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+			r.hset(prefixed, job_id, json.dumps(meta))
+		else:
+			frappe.cache.hset(_jobs_key(session_uuid), job_id, json.dumps(meta))
 	except Exception:
 		pass
 
 
-def record_job(session_uuid: str, job_id: str, method: str) -> None:
-	"""Record an enqueued RQ job's identity + method so analyze can report its
-	terminal status later. Idempotent; never overwrites a status already set.
-	Best-effort."""
+def _atomic_merge_job_meta(
+	session_uuid: str, job_id: str, fields: dict, *, setdefault: bool = False
+) -> None:
+	"""Atomic Redis-side merge of fields onto the per-job meta hash field.
+	Closes the multi-worker read-modify-write race that drops fields when
+	two workers update the same job_id's meta concurrently.
+
+	``setdefault=True`` preserves any existing value for each field (used by
+	``record_job`` so before_job's later call doesn't clobber the original
+	enqueue timestamp).
+
+	Filters None values so callers can pass ``error=None`` without nuking a
+	real error already in meta. Falls back to the legacy non-atomic
+	read-modify-write on any backend that rejects ``.eval()`` (FakeCache in
+	tests, exotic Redis variants) — best-effort, never raises."""
 	if not session_uuid or not job_id:
 		return
+	fields = {k: v for k, v in fields.items() if v is not None}
+	if not fields:
+		return
+	script = _SETDEFAULT_JOB_META_LUA if setdefault else _MERGE_JOB_META_LUA
+	try:
+		# Frappe's RedisWrapper prefixes every key with ``<db_name>|`` via
+		# ``make_key`` in its overridden hset / hget methods. ``.eval`` is
+		# inherited from redis-py and does NOT prefix automatically, so the
+		# script would write to an unprefixed key that ``_read_job`` /
+		# ``_write_job`` can never find. Pre-prefix here so Lua and the
+		# fallback path target the same Redis key.
+		prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+		frappe.cache.eval(script, 1, prefixed, job_id, json.dumps(fields))
+		return
+	except Exception:
+		# Fall through to the non-atomic path. Loses the multi-worker safety
+		# guarantee, but preserves existing behavior on backends without Lua
+		# (FakeCache in tests, any Redis variant that rejects scripting).
+		pass
 	meta = _read_job(session_uuid, job_id) or {}
-	meta.setdefault("method", method or "")
-	if "enqueued_at" not in meta:
-		try:
-			from frappe.utils import now_datetime
-
-			meta["enqueued_at"] = str(now_datetime())
-		except Exception:
-			pass
+	if setdefault:
+		for k, v in fields.items():
+			if not meta.get(k):  # treats empty string + None as "absent"
+				meta[k] = v
+	else:
+		meta.update(fields)
 	_write_job(session_uuid, job_id, meta)
+
+
+def record_job(session_uuid: str, job_id: str, method: str) -> None:
+	"""Record an enqueued RQ job's identity + method so analyze can report its
+	terminal status later. Idempotent: a later call (e.g. before_job's
+	defensive re-record after the enqueue patch) won't clobber the original
+	method or enqueued_at. Best-effort."""
+	if not session_uuid or not job_id:
+		return
+	try:
+		from frappe.utils import now_datetime
+
+		enqueued_at = str(now_datetime())
+	except Exception:
+		enqueued_at = None
+	fields = {"method": method or "", "enqueued_at": enqueued_at}
+	_atomic_merge_job_meta(session_uuid, job_id, fields, setdefault=True)
 
 
 def set_job_recording(session_uuid: str, job_id: str, recording_uuid: str) -> None:
@@ -363,19 +536,13 @@ def set_job_recording(session_uuid: str, job_id: str, recording_uuid: str) -> No
 	captured query data). Best-effort."""
 	if not session_uuid or not job_id or not recording_uuid:
 		return
-	meta = _read_job(session_uuid, job_id) or {}
-	meta["recording_uuid"] = recording_uuid
-	_write_job(session_uuid, job_id, meta)
+	_atomic_merge_job_meta(session_uuid, job_id, {"recording_uuid": recording_uuid})
 
 
 def set_job_status(session_uuid: str, job_id: str, **fields) -> None:
 	"""Merge terminal-status fields (status, error, started_at, ended_at,
 	duration_ms, …) onto a tracked job. Best-effort."""
-	if not session_uuid or not job_id:
-		return
-	meta = _read_job(session_uuid, job_id) or {}
-	meta.update({k: v for k, v in fields.items() if v is not None})
-	_write_job(session_uuid, job_id, meta)
+	_atomic_merge_job_meta(session_uuid, job_id, fields)
 
 
 def get_jobs(session_uuid: str) -> list[dict]:
@@ -384,7 +551,12 @@ def get_jobs(session_uuid: str) -> list[dict]:
 	if not session_uuid:
 		return []
 	try:
-		raw = frappe.cache.hgetall(_jobs_key(session_uuid)) or {}
+		r = _raw_redis()
+		if r is not None:
+			prefixed = frappe.cache.make_key(_jobs_key(session_uuid))
+			raw = r.hgetall(prefixed) or {}
+		else:
+			raw = frappe.cache.hgetall(_jobs_key(session_uuid)) or {}
 	except Exception:
 		return []
 	jobs: list[dict] = []
@@ -461,6 +633,7 @@ def delete_session_state(session_uuid: str) -> None:
 	# Per-recording infra keys (profiler:infra:<recording_uuid>) are
 	# cleaned up alongside RECORDER_REQUEST_HASH entries when analyze
 	# walks the recording UUIDs, so no separate sweep here.
-	frappe.cache.delete_value(f"profiler:frontend:{session_uuid}")
-	frappe.cache.delete_value(f"profiler:frontend:{session_uuid}:xhr")
-	frappe.cache.delete_value(f"profiler:frontend:{session_uuid}:vitals")
+	from optimus import redis_keys
+	frappe.cache.delete_value(redis_keys.frontend_legacy(session_uuid))
+	frappe.cache.delete_value(redis_keys.frontend_xhr(session_uuid))
+	frappe.cache.delete_value(redis_keys.frontend_vitals(session_uuid))

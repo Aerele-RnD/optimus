@@ -170,8 +170,12 @@ def test_hooks_callbacks_invokes_snapshot():
     assert "infra_capture" in after
     assert "infra_capture" in before_job
     assert "infra_capture" in after_job
-    assert "profiler:infra:" in after
-    assert "profiler:infra:" in after_job
+    # v0.12.0+: the Redis key is built through ``redis_keys.infra(uuid)``
+    # (the inline f-string ``"profiler:infra:<uuid>"`` was migrated to the
+    # centralized builder). Assert the canonical call appears in both
+    # request + job teardown paths.
+    assert "redis_keys.infra(" in after
+    assert "redis_keys.infra(" in after_job
 
 
 def test_stop_session_force_stops_infra_inflight():

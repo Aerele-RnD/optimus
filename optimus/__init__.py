@@ -1,4 +1,4 @@
-__version__ = "0.7.0"
+__version__ = "0.12.26"
 
 
 def safe_commit() -> None:
@@ -146,6 +146,208 @@ def _patch_enqueue():
 _patch_enqueue()
 
 
+# ---------------------------------------------------------------------------
+# frappe.recorder monkey-patch — capture-time redaction (v0.7.x+)
+# ---------------------------------------------------------------------------
+# The Frappe recorder snapshots ``frappe.local.form_dict`` + ``request.headers``
+# at ``Recorder.__init__`` and stores each ``frappe.db.sql`` call's
+# post-substitution query string at ``Recorder.register``. Both writes land
+# in Redis (``RECORDER_REQUEST_HASH``) verbatim, then get persisted into the
+# ``Optimus Session`` DocType's JSON blobs at analyze. Customers who export
+# the report or back up their DB have, in effect, exfiltrated raw passwords /
+# tokens / cookies.
+#
+# Pre-v0.7.x+ the renderer ran ``_redact_sensitive`` / ``_redact_sql_literals``
+# at render time as a last line of defense. That left a window where raw
+# values existed in Redis + on disk. The architecture review (Critical Risk
+# #1) called this out; this patch closes it by redacting at the earliest
+# point we control — when the Recorder captures.
+#
+# Patch surface:
+#   - ``Recorder.__init__`` — after the original sets ``self.form_dict`` /
+#     ``self.headers``, walk them via ``redaction.redact_sensitive`` so the
+#     values reach ``dump()`` already scrubbed.
+#   - ``Recorder.register(data)`` — before ``_original_register(data)``,
+#     replace ``data["query"]`` with its redacted form so the SQL string
+#     stored in ``self.calls`` never carried the original literal.
+#
+# Idempotent via the ``_profiler_patched`` marker (same pattern as
+# ``_patch_enqueue``). Wrapped in ``try/except`` at every layer so a patch
+# failure never breaks a customer's request — degrades gracefully back to
+# the renderer's defense-in-depth redaction.
+
+
+def _patch_recorder():
+	"""Install capture-time redaction on Frappe's recorder. Mirrors
+	``_patch_enqueue``: monkey-patch at app-import, idempotent via the
+	``_profiler_patched`` marker, best-effort ``try/except`` so a patch
+	failure never breaks the request.
+
+	Settings are read INSIDE each wrap (not at install time) so changes to
+	``sensitive_sql_columns`` / ``sensitive_form_keys`` take effect on the
+	next request without a bench restart.
+	"""
+	try:
+		import frappe.recorder as _rec
+	except ImportError:
+		# Frappe isn't available — running unit tests in a plain Python
+		# interpreter. Match _patch_enqueue's silent no-op.
+		return
+
+	Recorder = getattr(_rec, "Recorder", None)
+	if Recorder is None:
+		return  # frappe shape changed; degrade gracefully
+
+	# Defensive: skip if either method is missing (future Frappe version).
+	if not hasattr(Recorder, "register") or not hasattr(Recorder, "__init__"):
+		return
+	if getattr(Recorder.register, "_profiler_patched", False):
+		return  # already patched (idempotent re-import)
+
+	_original_init = Recorder.__init__
+	_original_register = Recorder.register
+
+	def _read_extras():
+		"""Read the live sensitive-list settings. Best-effort — falls back
+		to empty extras (defaults still apply) if settings can't be loaded
+		(early-boot, no DB connection, etc.)."""
+		try:
+			from optimus.settings import get_config
+
+			cfg = get_config()
+			return (
+				tuple(cfg.sensitive_form_keys or ()),
+				tuple(cfg.sensitive_sql_columns or ()),
+			)
+		except Exception:
+			return ((), ())
+
+	def _profiler_init(self, *args, **kwargs):
+		_original_init(self, *args, **kwargs)
+		try:
+			from optimus.redaction import redact_sensitive
+
+			extra_keys, _ = _read_extras()
+			if isinstance(getattr(self, "form_dict", None), dict):
+				self.form_dict = redact_sensitive(self.form_dict, extra_keys=extra_keys)
+			if isinstance(getattr(self, "headers", None), dict):
+				self.headers = redact_sensitive(self.headers, extra_keys=extra_keys)
+		except Exception:
+			# Never break the user's request because OUR scrubber failed.
+			# Renderer-side defense-in-depth still catches anything that
+			# slipped through.
+			pass
+
+	def _profiler_register(self, data):
+		try:
+			from optimus.redaction import redact_sql_literals
+
+			_, extra_cols = _read_extras()
+			if isinstance(data, dict) and isinstance(data.get("query"), str):
+				data["query"] = redact_sql_literals(data["query"], extra_columns=extra_cols)
+		except Exception:
+			pass
+		return _original_register(self, data)
+
+	_profiler_init._profiler_patched = True
+	_profiler_init.__wrapped__ = _original_init
+	_profiler_register._profiler_patched = True
+	_profiler_register.__wrapped__ = _original_register
+
+	Recorder.__init__ = _profiler_init
+	Recorder.register = _profiler_register
+
+
+_patch_recorder()
+
+
+# ---------------------------------------------------------------------------
+# sys.monitoring tool-2 startup probe (v0.7.x+) — Critical Risk #3
+# ---------------------------------------------------------------------------
+# On Python 3.12+ line_profiler claims sys.monitoring.PROFILER_ID (tool 2).
+# If a worker died mid-Phase-2 without running its after_request finally
+# (or hit the pre-6f66a43 teardown bug), tool 2 stays owned by
+# "line_profiler" process-globally — and the next request to that worker
+# inherits the orphan AND gets line-traced. The pre-arm self-heal in
+# optimus/line_profile/hooks.py covers Phase 2 paths but only fires when
+# the NEXT Phase 2 request runs; every interim request between worker
+# boot and that Phase 2 fire pays the line-trace tax.
+#
+# This probe runs ONCE at app-import (between _patch_recorder and
+# _try_install_capture_wraps) and:
+#
+#   * Auto-reclaims tool 2 when it's owned by "line_profiler" — the
+#     worker-respawn-after-crash case — and LOGS the recovery so the
+#     event is visible in journalctl + Error Log.
+#   * Logs LOUDLY when tool 2 is owned by an unknown component (third-
+#     party profiler / debugger / future Python change), but does NOT
+#     touch the tool. Phase 2 will conflict; the operator decides.
+#   * Silent (and a no-op) on Python < 3.12 (no sys.monitoring) or when
+#     nobody owns tool 2.
+#
+# Best-effort everywhere — never raises out of the import path.
+
+
+def _startup_probe_tool2() -> None:
+	"""Detect a leaked sys.monitoring tool 2 at app-import. See the
+	rationale comment above. Best-effort; mirrors the discipline of
+	_patch_enqueue / _patch_recorder."""
+	try:
+		import sys
+
+		mon = getattr(sys, "monitoring", None)
+		if mon is None:
+			return  # Python < 3.12 — nothing to probe
+		pid = mon.PROFILER_ID
+		owner = mon.get_tool(pid)
+		if owner is None:
+			return  # happy path: nobody owns it
+
+		# Resolve a usable logger. Pre-frappe-init contexts (some bench
+		# bootstrap modes, plain pytest) won't have frappe.logger ready;
+		# degrade gracefully to print so the warning is still visible.
+		try:
+			import frappe
+
+			log = frappe.logger().warning
+		except Exception:
+			log = print
+
+		if owner == "line_profiler":
+			log(
+				"optimus._startup_probe_tool2: reclaiming line_profiler "
+				"orphan on sys.monitoring tool 2 (worker died mid-Phase-2). "
+				"Auto-released; next Phase 2 run starts clean."
+			)
+			try:
+				mon.set_events(pid, 0)
+				mon.free_tool_id(pid)
+			except Exception:
+				pass
+		else:
+			log(
+				f"optimus._startup_probe_tool2: sys.monitoring tool 2 is "
+				f"already owned by {owner!r} at app-import. Phase 2 will "
+				f"conflict; check for a third-party profiler / debugger."
+			)
+	except Exception as exc:
+		# Probe failure must never break app load. Best-effort log + return.
+		try:
+			import frappe
+
+			frappe.log_error(title="optimus._startup_probe_tool2")
+		except Exception:
+			pass
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("startup_probe_tool2", exc)
+		except Exception:
+			pass
+
+
+_startup_probe_tool2()
+
+
 # v0.3.0: install sidecar wraps for redundant-call detection.
 # Idempotent — safe to call multiple times. Wraps are activation-gated
 # at call time so they're no-ops for non-recording users.
@@ -195,11 +397,16 @@ def _try_install_capture_wraps() -> bool:
 
 		capture.install_wraps()
 		return True
-	except Exception:
+	except Exception as exc:
 		try:
 			frappe.log_error(title="optimus capture.install_wraps")
 		except Exception:
 			pass  # never let a logging failure break app load
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("capture_install_wraps", exc)
+		except Exception:
+			pass
 		return False
 
 
@@ -207,3 +414,26 @@ def _try_install_capture_wraps() -> bool:
 # before_request / before_job hooks will trigger the deferred install
 # on first request.
 _try_install_capture_wraps()
+
+
+# ---------------------------------------------------------------------------
+# v0.12.0: Redis schema-version sentinel
+# ---------------------------------------------------------------------------
+# Write the current SCHEMA_VERSION to ``optimus:schema_version`` at app
+# import so future migration paths can detect upgrades. Idempotent —
+# overwrites the sentinel on every boot. Best-effort: a Redis hiccup
+# must never break app load, same discipline as ``_startup_probe_tool2``
+# and ``_try_install_capture_wraps`` above. See
+# :mod:`optimus.redis_schema` for the contract.
+def _write_schema_sentinel() -> None:
+	try:
+		from optimus import redis_schema
+
+		redis_schema.write_schema_sentinel()
+	except Exception:
+		# Sentinel write isn't strictly required for normal operation
+		# (no read path uses it yet). Silently degrade.
+		pass
+
+
+_write_schema_sentinel()

@@ -866,9 +866,9 @@ class TestRenderTimeCallsiteResolution:
 	def test_repeated_hot_frame_resolves_to_file_line_and_snippet(self):
 		# "path::func" with a shallow user-app-style path resolves via the
 		# dotted strategy. Use this very app's renderer.render.
-		doc = _fake_doc([_repeated_hot_frame("optimus/renderer.py::render")])
+		doc = _fake_doc([_repeated_hot_frame("optimus/renderer/_internal.py::render")])
 		html = renderer.render_raw(doc, recordings=[])
-		assert "optimus/renderer.py:" in html      # resolved callsite line
+		assert "optimus/renderer/_internal.py:" in html      # resolved callsite line
 		assert "def render(" in _plain(html)                        # the highlighted def line
 		assert "vscode://file" in html                      # _abs → editor link
 		assert 'class="smoking"' in html

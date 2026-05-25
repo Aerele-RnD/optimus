@@ -7,11 +7,13 @@ dynamic = ["version"]
 dependencies = [
 	# "frappe~=15.0.0" # Installed and managed by bench.
 	"pyinstrument>=4.6,<6",
-	# line_profiler 4.2.0's setup.py accesses ast.Constant.s which was
-	# removed in Python 3.12+. 5.x classifies Python 3.10–3.14 explicitly
-	# and builds cleanly on the bench's 3.14.x interpreter. Resolver picks
-	# the latest available — 5.x on 3.12+, 4.x as a fallback.
-	"line_profiler>=4.0,<6",
+	# Phase 2 line profiling depends on the sys.monitoring tool-2 path
+	# that arrived in line_profiler 5.x; the 4.x line uses the legacy
+	# sys.settrace mechanism that the leak fix in 6f66a43 does NOT
+	# protect (a botched 4.x teardown leaks a different tracing hook).
+	# Pin >=5.0 so Phase 2's leak-resistant release_monitoring_tool() +
+	# the 10s overhead-budget watchdog (4357c8f) actually apply.
+	"line_profiler>=5.0,<6",
 	# Already a transitive Frappe dependency; declared explicitly because
 	# ai_fix.py imports it directly to call the configured LLM endpoint.
 	"requests>=2.28",

@@ -97,6 +97,9 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 _DEFAULT_PROVIDER = "Anthropic"
 
+# Fallback timeout when settings can't be read (pure-pytest path with no
+# bench, or a settings cache miss during early bootstrap). v0.9.0+ the live
+# value comes from cfg.ai_request_timeout_seconds (clamped 10–600s).
 _HTTP_TIMEOUT = 60            # seconds; one shot, no retries
 _MAX_OUTPUT_TOKENS = 2000
 _SOURCE_LINES_BEFORE = 24     # how much code window the caller should gather
@@ -394,6 +397,50 @@ _AI_SECTION_FLAGS = {
 }
 
 
+def is_finding_type_excluded(finding_type: str | None) -> bool:
+	"""Return True when ``finding_type`` is in ``cfg.ai_excluded_finding_types``.
+
+	v0.9.0 per-type opt-out (Critical Risk #2 of the architecture review).
+	Pure-function read of the configured exclusion list, exact case-sensitive
+	match. Empty / unknown / non-eligible type → False (an inert exclude is
+	safer than a partial-match exclude that would let data through when the
+	operator intended to block it).
+
+	Reads settings via the cached ``get_config()`` reader — adds at most one
+	Redis lookup per call, and that's a single cached hit. Returning False on
+	any read error (no bench, settings cache wedged) is the safe direction:
+	if the operator's intent is to block, the master gates (``ai_enabled``,
+	``ai_auto_suggest``) already give them coarser control; if the operator
+	hasn't configured an exclusion list at all, returning False is correct.
+	"""
+	if not finding_type or not isinstance(finding_type, str):
+		return False
+	try:
+		from optimus.settings import get_config
+		excluded = get_config().ai_excluded_finding_types
+	except Exception:
+		return False
+	return finding_type in (excluded or ())
+
+
+def _resolve_timeout_seconds() -> int:
+	"""Return the configured HTTP timeout for outbound LLM calls, falling
+	back to :data:`_HTTP_TIMEOUT` when settings can't be read.
+
+	v0.9.0 (Critical Risk #2): hosted providers answer in seconds, but a
+	cold-start local LLM (ollama / vLLM / LM Studio) routinely exceeds 60s
+	on first call. The clamp to ``[10, 600]`` is applied in
+	``settings._resolve``; this helper is defensive against a settings cache
+	miss during bootstrap or a pure-pytest call path with no Frappe.
+	"""
+	try:
+		from optimus.settings import get_config
+		v = get_config().ai_request_timeout_seconds
+		return max(10, min(600, int(v or _HTTP_TIMEOUT)))
+	except Exception:
+		return _HTTP_TIMEOUT
+
+
 def is_available(section: str | None = None) -> bool:
 	"""True when AI fix suggestions are turned on and minimally configured:
 	``ai_enabled`` set, a model resolvable for the chosen provider, and an
@@ -441,7 +488,14 @@ def suggest_fix(finding: dict) -> dict:
 	directional rather than a verified code fix. Raises ``AiFixError``
 	(user-facing) on a configuration problem, a network / auth / rate-limit
 	error, or an empty response.
+
+	v0.9.0: ``ai_excluded_finding_types`` is consulted first. When the
+	finding's type is on the operator's exclusion list, this returns
+	immediately with ``AiFixError("excluded by ai_excluded_finding_types")``
+	— the payload is never built and no request leaves the host.
 	"""
+	if is_finding_type_excluded(finding.get("finding_type")):
+		raise AiFixError("excluded by ai_excluded_finding_types")
 	provider = _resolve_provider()
 	if not provider.get("model"):
 		raise AiFixError(
@@ -990,16 +1044,32 @@ def _log_http_error(provider: str, where: str, status: int | None, detail: str =
 		)
 	except Exception:
 		pass
+	# v0.8.0: aggregate LLM transport health into the opt-in failure telemetry
+	# DocType so the operator can tell intermittent flapping from always-down.
+	# Provider name + endpoint label + status only — never payload, never key.
+	try:
+		from optimus import telemetry
+		telemetry.emit_failure(
+			"ai_fix.http_error",
+			context={
+				"provider": provider,
+				"where": where,
+				"status": str(status) if status is not None else "",
+			},
+		)
+	except Exception:
+		pass
 
 
 def _http_post(url: str, headers: dict, body: dict, *, provider: str, where: str) -> dict:
 	"""POST JSON, return the parsed response dict. Maps transport / HTTP /
 	decode errors to ``AiFixError`` with operator-friendly messages."""
+	timeout = _resolve_timeout_seconds()
 	try:
-		resp = requests.post(url, headers=headers, json=body, timeout=_HTTP_TIMEOUT)
+		resp = requests.post(url, headers=headers, json=body, timeout=timeout)
 	except requests.exceptions.Timeout:
 		_log_http_error(provider, where, None, "timeout")
-		raise AiFixError(f"The AI provider didn't respond within {_HTTP_TIMEOUT}s.")
+		raise AiFixError(f"The AI provider didn't respond within {timeout}s.")
 	except requests.exceptions.RequestException as e:
 		_log_http_error(provider, where, None, type(e).__name__)
 		raise AiFixError(f"Couldn't reach the AI provider: {type(e).__name__}.")

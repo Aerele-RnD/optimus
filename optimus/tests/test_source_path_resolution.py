@@ -18,7 +18,7 @@ import types
 from optimus import analyze, renderer
 
 # A real, always-present app-relative path: this very test file's package home.
-_APP_REL = "optimus/renderer.py"
+_APP_REL = "optimus/renderer/_internal.py"
 _ABS_REAL = renderer.__file__  # the resolved absolute path of the same file
 
 
@@ -35,7 +35,7 @@ class TestResolveSourcePath:
 		resolved = renderer._resolve_source_path(_APP_REL)
 		assert resolved is not None and os.path.exists(resolved)
 		assert os.path.abspath(resolved).replace("\\", "/").endswith(
-			"/optimus/renderer.py"
+			"/optimus/renderer/_internal.py"
 		)
 
 	def test_resolves_a_frappe_core_relative_path(self):
@@ -121,9 +121,12 @@ class TestAiPayloadForFinding:
 			}),
 			llm_fix_json=None,
 		)
-		phase2_index = {("renderer.py", "render"): {
+		# v0.10.0: the phase-2 index keys on the file's basename. The
+		# function "render" now lives in renderer/_internal.py — the index
+		# key becomes ("_internal.py", "render").
+		phase2_index = {("_internal.py", "render"): {
 			"lineno": 1, "content": "first line", "total_ms": 387, "hits": 2,
-			"run_uuid": "r", "dotted_path": "optimus.renderer.render",
+			"run_uuid": "r", "dotted_path": "optimus.renderer._internal.render",
 		}}
 		payload = analyze._ai_payload_for_finding(child, {}, phase2_index=phase2_index)
 		assert payload.get("source_window"), "a wider source window should be attached"

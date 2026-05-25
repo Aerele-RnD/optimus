@@ -279,8 +279,26 @@
   /* Per-action XHR timing: numeric columns capped, Action and URL
      share the remaining width; .tbl-clip wraps long /api/method/...
      strings inside the URL cell instead of pushing past the page. */
+  table.xhr-timing-table { table-layout: fixed; }
   table.xhr-timing-table col.col-action { width: 28%; }
   table.xhr-timing-table col.col-num    { width: 70px; }
+
+  /* Frontend disclosure table — URL takes the bulk, Duration stays
+     narrow, Reason wraps in whatever's left. */
+  table.orphaned-xhrs-table { table-layout: fixed; }
+  table.orphaned-xhrs-table col.col-url { width: 60%; }
+  table.orphaned-xhrs-table col.col-num { width: 100px; }
+
+  /* DB-tables breakdown (Time spent per database table): fixed layout
+     so a pathologically long table name (``tabSome Very Long DocType
+     Name``) wraps inside the first column instead of squeezing every
+     metric column to a single character. ``overflow-wrap: anywhere``
+     on the first td lets the name break at any character if needed. */
+  table.db-tables-table { table-layout: fixed; }
+  table.db-tables-table col.col-tname    { width: 30%; }
+  table.db-tables-table col.col-num      { width: 90px; }
+  table.db-tables-table col.col-num-wide { width: 110px; }
+  table.db-tables-table tbody td:first-child { overflow-wrap: anywhere; }
   /* col.col-url uses the remaining width implicitly (auto) */
 
   /* resource-table column widths — pairs with the tbl-clip class
@@ -296,8 +314,11 @@
      table so long action labels / callsite paths wrap inside their columns
      and the numeric columns stay aligned (instead of the auto-layout ragged
      widths). col.col-action takes the remaining width. */
-  table.queries-flat-table col.col-idx      { width: 36px; }
-  table.queries-flat-table col.col-num      { width: 92px; }
+  /* 44px col-idx (matches query-table) so 2-digit row indexes fit on one
+     line; 110px col-num for Duration so its "per hit" scope-tag sub-label
+     doesn't truncate to a single visible "P" character. */
+  table.queries-flat-table col.col-idx      { width: 44px; }
+  table.queries-flat-table col.col-num      { width: 110px; }
   table.queries-flat-table col.col-copies   { width: 60px; }
   table.queries-flat-table col.col-callsite { width: 34%; }
 
@@ -311,7 +332,9 @@
   table.per-action-table tbody td:first-child,
   table.per-action-table thead th:first-child,
   table.resource-table tbody td:first-child,
-  table.resource-table thead th:first-child {
+  table.resource-table thead th:first-child,
+  table.queries-flat-table tbody td:first-child,
+  table.queries-flat-table thead th:first-child {
     padding-left: 6px;
     padding-right: 6px;
   }
@@ -685,8 +708,26 @@
     font-size: 0.8em; color: var(--ink-mute);
     font-weight: 400; letter-spacing: 0.02em;
     margin-left: 4px;
+    /* Defensive: tight Duration headers (e.g. queries-flat-table's col-num)
+       used to clip "per hit" to a single "P" character when the column
+       width left no room. Nowrap forces the whole label onto one line so
+       any future column-shrink fails loudly (overflow) rather than
+       quietly clipping mid-word. */
+    white-space: nowrap;
   }
-  th .scope-tag, td.num .scope-tag { display: inline-block; }
+  /* Stack scope-tag sub-labels BELOW the main header text — keeps tight
+     numeric columns from having their sub-labels (e.g. "per hit", "per req
+     · all queries") overflow into the next column's header. The
+     vitals-table used to override this case-by-case; now it's the default
+     for every table header in the report. Cell values (td.num) still keep
+     scope-tags inline because the value column is single-line and the
+     label sits next to the number naturally. */
+  th .scope-tag {
+    display: block;
+    margin-left: 0;
+    margin-top: 2px;
+  }
+  td.num .scope-tag { display: inline-block; }
 
   /* NAV PILLS - replaces the Jump-to .section.small block. Phase K.2:
      sticky-top so the jump-to nav stays accessible when the reader
@@ -799,8 +840,13 @@
     background: var(--bg-paper); border: 1px solid var(--rule);
     border-radius: 6px; padding: 18px 20px;
   }
+  /* 340px label column (was 240px) so typical 47-49 char action labels
+     like "POST /api/method/erpnext.accounts.utils.recompute" fit without
+     ellipsis. The bar track (1fr) auto-shrinks to make room; the bar's
+     relative scaling within its track is unchanged (still 100% of track
+     for the longest action). Duration column unchanged at 88px. */
   .waterfall-row {
-    display: grid; grid-template-columns: 240px 1fr 88px;
+    display: grid; grid-template-columns: 340px 1fr 88px;
     gap: 12px; align-items: center; padding: 6px 0; font-size: 12.5px;
   }
   .waterfall-row + .waterfall-row { border-top: 1px solid var(--rule); }
@@ -1258,13 +1304,6 @@
   #frontend table.vitals-table thead th {
     white-space: normal;
   }
-  /* Render the scope-tag on its own line under the metric name —
-     cleaner than wrapping mid-phrase. */
-  #frontend table.vitals-table thead th .scope-tag {
-    display: block;
-    margin-left: 0;
-    margin-top: 2px;
-  }
   table.data thead th.num { text-align: right; }
   table.data tbody td {
     padding: 12px 14px; border-bottom: 1px solid var(--rule);
@@ -1694,7 +1733,11 @@
         {% set _link = callsite._abs or (callsite.filename if callsite.filename and callsite.filename.startswith("/") else None) %}
         <div class="finding-meta">
           {% if callsite.is_representative %}<span class="muted">most-called from</span> {% endif %}
-          {% if _link %}
+          {% if callsite._link_kind == "desk" %}
+            {# Server Script: callsite._abs already holds the full Desk URL
+               (/app/server-script/<name>). No vscode://file prefix, no :lineno suffix. #}
+            <a class="callsite-link" href="{{ callsite._abs }}" title="Open in Frappe Desk">{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}</a>
+          {% elif _link %}
             <a class="callsite-link" href="vscode://file{{ _link }}:{{ callsite.lineno }}" title="Open in VS Code / Cursor">{{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}</a>
           {% else %}
             {{ callsite.filename }}:{{ callsite.lineno }}{% if callsite.function %} &middot; {{ callsite.function }}{% endif %}
@@ -2954,7 +2997,7 @@
 
     {% if report_data.frontend.xhr_matched %}
     <h3 style="margin-bottom: 8px;">Per-action XHR timing</h3>
-    <table class="tbl-clip xhr-timing-table data" style="width: 100%; font-size: 0.85rem;">
+    <table class="data tbl-clip xhr-timing-table">
       <colgroup>
         <col class="col-action">
         <col class="col-num">
@@ -2965,28 +3008,26 @@
         <col class="col-url">
       </colgroup>
       <thead>
-        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
-          <th style="padding: 6px 8px; text-align: left;">Action</th>
-          <th style="padding: 6px 8px; text-align: right;">Backend <small class="scope-tag">per hit</small></th>
-          <th style="padding: 6px 8px; text-align: right;">Browser <small class="scope-tag">per hit</small></th>
-          <th style="padding: 6px 8px; text-align: right;">Network Δ <small class="scope-tag">per hit</small></th>
-          <th style="padding: 6px 8px; text-align: right;">Status</th>
-          <th style="padding: 6px 8px; text-align: right;">Size</th>
-          <th style="padding: 6px 8px; text-align: left;">URL</th>
+        <tr>
+          <th>Action</th>
+          <th class="num">Backend <small class="scope-tag">per hit</small></th>
+          <th class="num">Browser <small class="scope-tag">per hit</small></th>
+          <th class="num">Network Δ <small class="scope-tag">per hit</small></th>
+          <th class="num">Status</th>
+          <th class="num">Size</th>
+          <th>URL</th>
         </tr>
       </thead>
       <tbody>
         {% for m in report_data.frontend.xhr_matched %}
-        <tr style="border-bottom: 1px solid #f3f4f6;">
-          <td style="padding: 4px 8px;">{{ m.action_label }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.backend_ms) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.xhr_ms) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(m.network_delta_ms) }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ m.status }}</td>
-          <td style="padding: 4px 8px; text-align: right;">{{ ((m.response_size_bytes or 0) / 1024) | round(1) }}KB</td>
-          <td style="padding: 4px 8px;">
-            <code style="font-size: 0.75rem;">{{ m.url }}</code>
-          </td>
+        <tr>
+          <td>{{ m.action_label }}</td>
+          <td class="num">{{ fmt_ms(m.backend_ms) }}</td>
+          <td class="num">{{ fmt_ms(m.xhr_ms) }}</td>
+          <td class="num">{{ fmt_ms(m.network_delta_ms) }}</td>
+          <td class="num">{{ m.status }}</td>
+          <td class="num">{{ ((m.response_size_bytes or 0) / 1024) | round(1) }}KB</td>
+          <td><code class="small">{{ m.url }}</code></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -3031,20 +3072,25 @@
       <summary class="small muted" style="cursor: pointer;">
         Orphaned XHRs ({{ report_data.frontend.orphans | length }}) - no matching server recording
       </summary>
-      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px;">
+      <table class="data tbl-clip orphaned-xhrs-table">
+        <colgroup>
+          <col class="col-url">
+          <col class="col-num">
+          <col class="col-reason">
+        </colgroup>
         <thead>
-          <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
-            <th style="padding: 6px 8px; text-align: left;">URL</th>
-            <th style="padding: 6px 8px; text-align: right;">Duration <small class="scope-tag">per hit</small></th>
-            <th style="padding: 6px 8px; text-align: left;">Reason</th>
+          <tr>
+            <th>URL</th>
+            <th class="num">Duration <small class="scope-tag">per hit</small></th>
+            <th>Reason</th>
           </tr>
         </thead>
         <tbody>
           {% for o in report_data.frontend.orphans %}
-          <tr style="border-bottom: 1px solid #f3f4f6;">
-            <td style="padding: 4px 8px;"><code style="font-size: 0.75rem;">{{ o.url }}</code></td>
-            <td style="padding: 4px 8px; text-align: right;">{{ fmt_ms(o.duration_ms or 0) }}</td>
-            <td style="padding: 4px 8px;">{{ o.reason }}</td>
+          <tr>
+            <td><code class="small">{{ o.url }}</code></td>
+            <td class="num">{{ fmt_ms(o.duration_ms or 0) }}</td>
+            <td>{{ o.reason }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -3284,7 +3330,15 @@
       </p>
       {% endif %}
       <p class="small muted">Where the time goes, and how each table was used. A query touching multiple tables is counted against each, so the rows sum to more than the session total. <strong>Reads</strong> = <code>SELECT</code>; <strong>Writes</strong> = <code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code>. Sorted by time desc.</p>
-      <table class="data">
+      <table class="data db-tables-table">
+        <colgroup>
+          <col class="col-tname">
+          <col class="col-num">
+          <col class="col-num">
+          <col class="col-num">
+          <col class="col-num-wide">
+          <col class="col-num-wide">
+        </colgroup>
         <thead>
           <tr>
             <th>Table</th>

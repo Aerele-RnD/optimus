@@ -81,7 +81,18 @@ def before_request_line_profile(*args, **kwargs) -> None:
 		# after_request teardown) and left tool 2 registered, clear the orphan
 		# before enabling so the worker recovers without a bench restart. Guarded
 		# on "no active profiler in this thread" so it can't drop our own run.
+		# Log when the reclaim actually fires — silent reclaim masked the leak
+		# class in production for months (Critical Risk #3 of the architecture
+		# review).
 		if getattr(frappe.local, "_lp_profiler", None) is None:
+			import sys as _sys
+
+			_mon = getattr(_sys, "monitoring", None)
+			if _mon is not None and _mon.get_tool(_mon.PROFILER_ID) == "line_profiler":
+				frappe.logger().warning(
+					"optimus.line_profile.before_request: reclaiming orphan "
+					"tool 2 from a prior request that skipped teardown."
+				)
 			capture.release_monitoring_tool()
 		profiler.enable_by_count()
 		frappe.local._lp_profiler = profiler
@@ -96,6 +107,11 @@ def before_request_line_profile(*args, **kwargs) -> None:
 			title="phase 2 before_request failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("phase2.before_request", exc)
+		except Exception:
+			pass
 
 
 def after_request_line_profile(*args, **kwargs) -> None:
@@ -129,6 +145,11 @@ def after_request_line_profile(*args, **kwargs) -> None:
 			title="phase 2 after_request failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("phase2.after_request", exc)
+		except Exception:
+			pass
 	finally:
 		# Guarantee no process-global sys.monitoring line-trace hook survives
 		# this request — a leaked tool would line-trace every later request.
@@ -184,8 +205,17 @@ def before_job_line_profile(method=None, kwargs=None, **rest) -> None:
 
 		# Self-heal a tool 2 orphaned by a previously-killed job (see
 		# before_request_line_profile). RQ workers run one job at a time, so
-		# there's no in-process concurrency to disturb here.
+		# there's no in-process concurrency to disturb here. Log when the
+		# reclaim actually fires (Critical Risk #3).
 		if getattr(frappe.local, "_lp_profiler", None) is None:
+			import sys as _sys
+
+			_mon = getattr(_sys, "monitoring", None)
+			if _mon is not None and _mon.get_tool(_mon.PROFILER_ID) == "line_profiler":
+				frappe.logger().warning(
+					"optimus.line_profile.before_job: reclaiming orphan "
+					"tool 2 from a prior job that skipped teardown."
+				)
 			capture.release_monitoring_tool()
 		profiler.enable_by_count()
 		frappe.local._lp_profiler = profiler
@@ -198,6 +228,11 @@ def before_job_line_profile(method=None, kwargs=None, **rest) -> None:
 			title="phase 2 before_job failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("phase2.before_job", exc)
+		except Exception:
+			pass
 
 
 def after_job_line_profile(method=None, kwargs=None, result=None, **rest) -> None:
@@ -227,5 +262,10 @@ def after_job_line_profile(method=None, kwargs=None, result=None, **rest) -> Non
 			title="phase 2 after_job failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("phase2.after_job", exc)
+		except Exception:
+			pass
 	finally:
 		capture.release_monitoring_tool()

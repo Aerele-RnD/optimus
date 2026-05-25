@@ -120,6 +120,227 @@ class TestTemplateCSS:
 				f"{col_class} must have an explicit width CSS rule"
 			)
 
+	def test_queries_flat_table_idx_column_has_tight_padding(self):
+		"""Without the 6px L/R override the default 14px×2 table.data padding
+		eats 28px from a ~36-44px col-idx, leaving room for only a single
+		digit. ``per-action-table`` and ``resource-table`` already have this
+		override; ``queries-flat-table`` must too or its 2-digit indexes
+		(10, 11, …) wrap onto a second line."""
+		tpl = _read_template()
+		# Match the tight-padding rule's selector list and confirm it includes
+		# queries-flat-table's first-child cells.
+		assert re.search(
+			r"table\.queries-flat-table\s+tbody\s+td:first-child[^{]*\{[^}]*padding-left:\s*6px",
+			tpl,
+			re.DOTALL,
+		), "queries-flat-table tbody td:first-child must have padding-left: 6px"
+		assert re.search(
+			r"table\.queries-flat-table\s+thead\s+th:first-child[^{]*\{[^}]*padding-left:\s*6px",
+			tpl,
+			re.DOTALL,
+		), "queries-flat-table thead th:first-child must have padding-left: 6px"
+
+	def test_queries_flat_table_col_idx_fits_two_digit_indexes(self):
+		"""Forward-compatible lower bound: col-idx must be ≥ 40px so that
+		even with tight 12px padding it has ≥ 28px content room — enough
+		for ``10``, ``11``, ``999`` to fit on one line."""
+		tpl = _read_template()
+		m = re.search(
+			r"table\.queries-flat-table\s+col\.col-idx\s+\{[^}]*width:\s*(\d+)px",
+			tpl,
+		)
+		assert m, "queries-flat-table col-idx width rule missing"
+		width = int(m.group(1))
+		assert width >= 40, (
+			f"queries-flat-table col-idx is {width}px; must be ≥ 40px so "
+			"2-digit row indexes don't wrap (current default padding eats 12px)."
+		)
+
+	def test_queries_flat_table_col_num_fits_per_hit_label(self):
+		"""Historical: at 92px col-num couldn't fit ``Duration per hit`` inline
+		and the sub-label collapsed to a barely-visible ``P``. We later flipped
+		header scope-tags to ``display: block`` so the sub-label stacks below
+		the main word (no horizontal space needed) — but the 110px width is
+		kept as defensive headroom: even if some future revert makes scope-
+		tags inline again, the column still has room for the inline label."""
+		tpl = _read_template()
+		m = re.search(
+			r"table\.queries-flat-table\s+col\.col-num\s+\{[^}]*width:\s*(\d+)px",
+			tpl,
+		)
+		assert m, "queries-flat-table col-num width rule missing"
+		width = int(m.group(1))
+		assert width >= 100, (
+			f"queries-flat-table col-num is {width}px; must be ≥ 100px as "
+			"defensive headroom for the 'Duration per hit' header."
+		)
+
+	def test_scope_tag_has_nowrap_guard(self):
+		"""Defensive: the ``.scope-tag`` sub-label inside a Duration ``<th>``
+		must not wrap mid-word. Without this, any future column shrink can
+		clip the label to a single-character artefact (e.g. ``per hit`` →
+		``P``)."""
+		tpl = _read_template()
+		# The scope-tag rule lives in the <style> block. Find its body and
+		# assert white-space: nowrap is set.
+		m = re.search(r"\.scope-tag\s+\{([^}]*)\}", tpl, re.DOTALL)
+		assert m, ".scope-tag CSS rule not found"
+		body = m.group(1)
+		assert "white-space" in body and "nowrap" in body, (
+			"`.scope-tag` must declare `white-space: nowrap` to prevent "
+			"mid-word truncation in tight Duration headers"
+		)
+
+	def test_header_scope_tag_stacks_block(self):
+		"""``th .scope-tag`` must use ``display: block`` so sub-labels stack
+		BELOW the main header word instead of running inline. With nowrap
+		(see test_scope_tag_has_nowrap_guard) the inline form would overflow
+		into the next column header — block-display moves the label to a new
+		row of the th, taking zero horizontal space."""
+		tpl = _read_template()
+		# Match the BARE global rule whose selector starts with ``th .scope-tag``
+		# at the start of a line — distinguishes from compound selectors like
+		# ``#frontend table.vitals-table thead th .scope-tag``.
+		m = re.search(r"^\s*th\s+\.scope-tag\s*\{", tpl, re.MULTILINE)
+		assert m, (
+			"`th .scope-tag` CSS rule (bare, no table-scope prefix) not found"
+		)
+		# Walk to the matching '}' to extract the body.
+		body = tpl[m.end() : tpl.index("}", m.end())]
+		assert "display" in body and "block" in body and "inline-block" not in body, (
+			"`th .scope-tag` must use `display: block` (not inline-block) so "
+			"the sub-label stacks below the main header and can't overflow "
+			"into the next column. Found body: " + body.strip()
+		)
+
+	def test_vitals_table_no_longer_overrides_scope_tag_display(self):
+		"""The vitals-table used to have its own override for header scope-
+		tag display:block — we promoted that pattern to the global default,
+		so the per-table override is now redundant and must be removed (to
+		keep the CSS as single-source-of-truth)."""
+		tpl = _read_template()
+		# Match the old override's selector with flexible whitespace.
+		m = re.search(
+			r"#frontend\s+table\.vitals-table\s+thead\s+th\s+\.scope-tag\s*\{",
+			tpl,
+		)
+		assert m is None, (
+			"The `#frontend table.vitals-table thead th .scope-tag` override "
+			"should be removed — the global `th .scope-tag { display: block }` "
+			"rule subsumes it."
+		)
+
+	# ----------------------------------------------------------------
+	# Audit follow-up: kill inline cell-styling on XHR + Orphaned XHRs
+	# tables so they pick up the global `table.data thead th` rules
+	# (uppercase smallcaps, padding, block-stacked scope-tags). DB-tables
+	# breakdown also gets a defensive colgroup so a long table name can't
+	# squeeze the metric columns.
+	# ----------------------------------------------------------------
+
+	def _xhr_timing_block(self, tpl):
+		"""Return the XHR timing table block (from its <h3> heading through
+		its closing </table>) so tests can scope assertions. Anchored on the
+		closing </h3> tag to avoid false matches in CSS comments that
+		contain the literal phrase."""
+		m = re.search(
+			r"Per-action XHR timing</h3>.*?</table>",
+			tpl,
+			re.DOTALL,
+		)
+		return m.group(0) if m else None
+
+	def _orphaned_xhrs_block(self, tpl):
+		# Anchored on the <details><summary> that introduces the table.
+		m = re.search(
+			r"<summary[^>]*>\s*Orphaned XHRs.*?</table>",
+			tpl,
+			re.DOTALL,
+		)
+		return m.group(0) if m else None
+
+	def _db_tables_block(self, tpl):
+		# Anchored on the <h2> heading.
+		m = re.search(
+			r"<h2[^>]*>Time spent per database table</h2>.*?</section>",
+			tpl,
+			re.DOTALL,
+		)
+		return m.group(0) if m else None
+
+	def test_xhr_timing_table_uses_data_class(self):
+		"""The XHR timing table must carry the `.data` class so it picks
+		up the global header styling (uppercase smallcaps, padding,
+		block-stacked scope-tag)."""
+		block = self._xhr_timing_block(_read_template())
+		assert block, "Per-action XHR timing section not found"
+		# Match the <table ... class=...> opener.
+		m = re.search(r"<table[^>]*\bclass=\"[^\"]*\"", block)
+		assert m, "no <table class=...> in XHR timing section"
+		cls = m.group(0)
+		assert "data" in cls and "xhr-timing-table" in cls, (
+			f"XHR timing table must have `data` + `xhr-timing-table` in its "
+			f"class list; found: {cls!r}"
+		)
+
+	def test_xhr_timing_table_has_no_inline_cell_styles(self):
+		"""Once the table uses the `.data` class, the per-cell inline
+		`style=\"padding: 6px 8px; ...\"` attributes must be stripped —
+		they bypass the global header/body padding and prevent the
+		scope-tag from block-stacking."""
+		block = self._xhr_timing_block(_read_template())
+		assert block, "Per-action XHR timing section not found"
+		offenders = re.findall(r"<(?:th|td)\s+style=", block)
+		assert not offenders, (
+			f"XHR timing table still has {len(offenders)} `<th style=` / "
+			"`<td style=` inline attributes; strip them so the table inherits "
+			"the global `.data` styling."
+		)
+
+	def test_orphaned_xhrs_table_uses_data_class_and_no_inline_styles(self):
+		"""Same migration as the XHR timing table: add `data` to the
+		class list AND remove all inline cell styles."""
+		block = self._orphaned_xhrs_block(_read_template())
+		assert block, "Orphaned XHRs section not found"
+		m = re.search(r"<table[^>]*\bclass=\"[^\"]*\"", block)
+		assert m, "Orphaned XHRs table has no class attribute"
+		cls = m.group(0)
+		assert "data" in cls and "orphaned-xhrs-table" in cls, (
+			f"Orphaned XHRs table must carry `data` + `orphaned-xhrs-table`; "
+			f"found: {cls!r}"
+		)
+		offenders = re.findall(r"<(?:th|td)\s+style=", block)
+		assert not offenders, (
+			f"Orphaned XHRs table still has {len(offenders)} inline cell styles; "
+			"strip them so the table inherits the global `.data` styling."
+		)
+
+	def test_db_tables_breakdown_has_colgroup_and_fixed_layout(self):
+		"""'Time spent per database table' currently uses auto-layout with
+		no colgroup. A pathologically long table name could push the metric
+		columns into a single character. Add a fixed-layout + colgroup so
+		long names wrap inside the first column instead."""
+		tpl = _read_template()
+		block = self._db_tables_block(tpl)
+		assert block, "DB-tables section not found"
+		# Class on the <table> opener.
+		m = re.search(r"<table[^>]*\bclass=\"[^\"]*\"", block)
+		assert m and "db-tables-table" in m.group(0), (
+			"DB-tables `<table>` must carry the `db-tables-table` class so "
+			"the layout rules below can target it."
+		)
+		# Colgroup present inside the section.
+		assert "<colgroup>" in block, "DB-tables section is missing a <colgroup>"
+		# CSS rule defining the fixed layout.
+		assert re.search(
+			r"table\.db-tables-table\s*\{[^}]*table-layout:\s*fixed",
+			tpl,
+			re.DOTALL,
+		), (
+			"`table.db-tables-table { table-layout: fixed }` rule must be "
+			"defined in <style> so the colgroup widths are enforced."
+		)
+
 
 class TestEndToEndRender:
 	"""End-to-end: render a report with a long callsite path and

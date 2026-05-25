@@ -113,6 +113,32 @@ class TestSurface:
 			"report without them"
 		)
 
+	def test_status_gate_rejects_non_terminal_sessions(self):
+		"""v0.12.9: regenerate_reports must refuse Recording / Stopping
+		/ Analyzing sessions. Pre-v0.12.9 the code had no status check
+		despite the docstring claiming "Allowed on Ready OR Failed
+		sessions" — a re-render on an in-flight session would attach
+		an incomplete report to a still-running analyze that the
+		pipeline would then overwrite. The gate enforces the
+		docstring's contract."""
+		body = _regenerate_reports_body()
+		# Match the actual code, allowing any quote style and
+		# whitespace inside the membership tuple.
+		assert re.search(
+			r'row\[["\']status["\']\]\s+not in\s+\(\s*["\']Ready["\']\s*,\s*["\']Failed["\']\s*\)',
+			body,
+		), (
+			"regenerate_reports must gate on row['status'] not in "
+			"('Ready', 'Failed') — pre-v0.12.9 the endpoint accepted "
+			"any status and re-rendered mid-analyze sessions"
+		)
+		# The error message must mention 'retry_analyze' as the
+		# operator's recourse for a stuck pipeline.
+		assert "retry_analyze" in body, (
+			"the status-rejection error message must point operators at "
+			"retry_analyze as the recourse for stuck pipelines"
+		)
+
 
 class TestButtonWired:
 	"""The server endpoint is useless without a UI trigger. This test

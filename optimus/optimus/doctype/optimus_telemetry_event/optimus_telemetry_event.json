@@ -1,0 +1,143 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-05-24 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "event_name",
+  "signature",
+  "severity",
+  "count",
+  "first_seen",
+  "last_seen",
+  "version_section",
+  "optimus_version",
+  "python_version",
+  "frappe_version",
+  "detail_section",
+  "last_traceback",
+  "last_context"
+ ],
+ "fields": [
+  {
+   "description": "Optimus-internal failure category. Hot-path emit sites use a stable string like 'phase2.before_request' or 'hooks_callbacks.after_job'.",
+   "fieldname": "event_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Event Name",
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "description": "16-char hash of (event_name + last-5-traceback-frames). Distinguishes 'this fails from THIS code path' vs 'same event name, different bug'. The DocType row name is derived deterministically from (event_name, signature) so the PRIMARY KEY provides the composite uniqueness the UPSERT relies on.",
+   "fieldname": "signature",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Signature",
+   "length": 32,
+   "read_only": 1
+  },
+  {
+   "fieldname": "severity",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Severity",
+   "length": 20,
+   "read_only": 1
+  },
+  {
+   "description": "Total occurrences of this (event_name, signature) since first_seen.",
+   "fieldname": "count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_seen",
+   "fieldtype": "Datetime",
+   "label": "First Seen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_seen",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Last Seen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "version_section",
+   "fieldtype": "Section Break",
+   "label": "Environment"
+  },
+  {
+   "fieldname": "optimus_version",
+   "fieldtype": "Data",
+   "label": "Optimus Version",
+   "length": 20,
+   "read_only": 1
+  },
+  {
+   "fieldname": "python_version",
+   "fieldtype": "Data",
+   "label": "Python Version",
+   "length": 20,
+   "read_only": 1
+  },
+  {
+   "fieldname": "frappe_version",
+   "fieldtype": "Data",
+   "label": "Frappe Version",
+   "length": 20,
+   "read_only": 1
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "Last Occurrence"
+  },
+  {
+   "description": "Most recent traceback with PII-sensitive paths scrubbed: optimus frames keep file:line:func, other apps collapse to '<user_code>:LINE'.",
+   "fieldname": "last_traceback",
+   "fieldtype": "Code",
+   "label": "Last Traceback",
+   "options": "Text",
+   "read_only": 1
+  },
+  {
+   "description": "Optimus-internal context dict (capped at 8 keys, 200 chars/value). NEVER contains user code, queries, or user data.",
+   "fieldname": "last_context",
+   "fieldtype": "Long Text",
+   "label": "Last Context (JSON)",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-05-24 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Optimus",
+ "name": "Optimus Telemetry Event",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1
+  }
+ ],
+ "sort_field": "last_seen",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
