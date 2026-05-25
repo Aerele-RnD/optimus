@@ -8,6 +8,130 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.3] — 2026-05-25
+
+**Integration test — `api.suggest_fix` honours
+`ai_excluded_finding_types`. Third row of the v0.11.0 deferred-tests
+table is now ticked.**
+
+The v0.9.0 release (`043fa66`) shipped AI privacy hardening: the
+`ai_excluded_finding_types` Settings field (Small Text, multi-line,
+exact case-sensitive match) backed by `ai_fix.is_finding_type_excluded()`.
+The unit-suite tests (`optimus/tests/test_ai_privacy.py`) cover the
+parser, the helper, the inner `ai_fix.suggest_fix(finding)` refusal,
+and a `requests.post`-never-called spy. They can't prove:
+
+* That the **whitelisted endpoint** `api.suggest_fix(session_uuid,
+  finding_ref, regenerate)` actually honours the exclusion before any
+  AI dispatch — there's a separate refusal site at `api.py:1333-1347`
+  with its own user-readable error message.
+* That the live Optimus Settings cache invalidation (the doc's
+  `on_update` deletes `redis_keys.settings_cache()`) propagates so the
+  endpoint sees the operator's edit without a restart.
+* That the v0.8.0 telemetry event `ai.fix_call_refused_by_exclusion`
+  (severity `warning`, context `{finding_type: ...}`) actually lands
+  in `tabOptimus Telemetry Event` after a refusal.
+* That the exclusion is case-sensitive at the API boundary.
+
+That gap is what this integration test fills.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_ai_privacy_exclusion_on_api.py`**
+  — 5 tests covering the v0.9.0 exclusion gate at the live API
+  boundary against real MariaDB + the live Optimus Settings cache:
+  - `test_excluded_finding_type_throws_with_clear_error_message` —
+    `api.suggest_fix(session_uuid, "0")` on a "Slow Query" finding
+    while "Slow Query" is in the exclusion list → raises
+    `frappe.ValidationError` with a message that contains both
+    "exclusion list" and "Optimus Settings" (verbatim substrings
+    from the user-facing message at api.py:1343-1346).
+  - `test_excluded_finding_type_emits_telemetry_refusal_event` —
+    after the refusal raises, `telemetry.flush()` lands exactly one
+    row in `Optimus Telemetry Event` with
+    `event_name="ai.fix_call_refused_by_exclusion"`,
+    `severity="warning"`, and `last_context` mentioning the
+    refused finding type.
+  - `test_exclusion_is_case_sensitive_at_api_boundary` — exclusion
+    = "slow query" (lowercase), finding type = "Slow Query"
+    (capitalised). With `ai_fix.suggest_fix` patched to a benign
+    stub, the endpoint reaches the stub (gate doesn't fire on case
+    mismatch) and returns its payload. Zero refusal telemetry rows
+    afterwards.
+  - `test_empty_exclusion_list_does_not_refuse` — exclusion = ""
+    (empty Small Text). Endpoint reaches the stubbed AI dispatch
+    and returns its payload. Zero refusal telemetry rows.
+  - `test_settings_save_invalidates_cache_so_api_picks_up_new_exclusion`
+    — start with exclusion = ""; first call succeeds (stub
+    invoked). Save Optimus Settings with exclusion = "Slow Query"
+    → the doc's `on_update` deletes `redis_keys.settings_cache()`.
+    Second call → raises the exclusion error WITHOUT invoking
+    `ai_fix.suggest_fix`. Confirms the cache-invalidation contract
+    across the integration boundary.
+- Workflow line in `.github/workflows/integration.yml` to run the new
+  module against the bench-bootstrapped `test_site`.
+
+### Per-test isolation
+
+- **Unique `session_uuid` per test** (`test-{frappe.generate_hash
+  (length=12)}`) so the synthesised Optimus Session doesn't collide
+  with sibling tests in the same process.
+- **`setUpClass` patches `ai_fix.is_available` to True** so the
+  endpoint's early "AI fix suggestions aren't configured" guard
+  doesn't preempt the exclusion gate. Production is unaffected — the
+  patch is scoped to this TestCase only.
+- **`setUp` snapshots `telemetry_enabled`, `telemetry_sink_doctype`,
+  `ai_enabled`, `ai_suggest_findings`, `ai_excluded_finding_types`**
+  from the live Settings doc, then forces the test env. `tearDown`
+  restores whatever the original values were.
+- **`tearDown` does `frappe.delete_doc("Optimus Session", name, force=1)`
+  + `frappe.db.delete("Optimus Telemetry Event", {event_name:
+  "ai.fix_call_refused_by_exclusion"})`** so the bench is left clean.
+- **Non-refusal tests patch `optimus.ai_fix.suggest_fix`** to a
+  benign stub (`unittest.mock.patch.object`) so the test never
+  reaches a real LLM HTTP call.
+
+### Synthetic Optimus Session
+
+- The session is created directly via `frappe.get_doc({
+  "doctype": "Optimus Session", "session_uuid": ..., "title": ...,
+  "user": "Administrator", "status": "Ready", "started_at": now,
+  "findings": [{"doctype": "Optimus Finding",
+  "finding_type": "Slow Query", "severity": "high",
+  "title": "test finding", "llm_fix_json": ""}]}).insert(...)`. We
+  deliberately avoid the full `api.start → analyze` pipeline because
+  the refusal gate at `api.py:1333` only needs `status="Ready"` +
+  `findings[0].finding_type IN exclusion-list`; standing up a real
+  workload would be extra surface area for no test value.
+
+### Docs
+
+- `optimus/tests_integration/README.md` — row 3 of the extraction
+  roadmap ticked. 4 rows remain
+  (`test_regenerate_reports_idempotent.py`,
+  `test_phase2_tool_orphan_recovery.py`,
+  `test_safe_report_self_contained_on_real_bench.py`,
+  `test_janitor_sweeps_actually_delete.py`).
+
+### Unchanged
+
+- `optimus/api.py` — the endpoint under test stays exactly as-is.
+- `optimus/ai_fix.py` — the helpers under test (`is_finding_type_excluded`,
+  `is_available`, `AI_ELIGIBLE_FINDING_TYPES`) stay as-is.
+- `optimus/settings.py` — resolve / cache logic unchanged.
+- `Optimus Settings` / `Optimus Session` / `Optimus Finding` DocType
+  JSONs — schemas are the v0.9.0 / pre-existing shapes.
+- All v0.9.0 unit-suite ai-privacy tests
+  (`optimus/tests/test_ai_privacy.py`) — they stay as the pure-pytest
+  backstop.
+
+### Compatibility
+
+No behaviour change. Pure test addition. Integration-suite total:
+18 → 23 tests. Unit suite stays at 1818.
+
+---
+
 ## [0.12.2] — 2026-05-25
 
 **Integration test — telemetry flush → Optimus Telemetry Event DocType

@@ -117,7 +117,7 @@ using the harness above:
 |---|---|---|
 | ✓ `test_atomic_lua_merge_concurrent.py` (done in v0.12.1) | real-Redis + real-Lua concurrent test exercising the v0.7.x trilogy's invariants (recording+status race, distinct job_ids, setdefault first-writer-wins, fallback path) | Field loss under worker contention |
 | ✓ `test_telemetry_flush_doctype_sink.py` (done in v0.12.2) | enables telemetry, emits failures, flushes, asserts DocType row shape + signature dedup + master-gate + scrub-through-persistence + UPSERT count accumulation | Settings → DocType wiring + flush logic + scrub round-trip |
-| `test_ai_privacy_exclusion_on_api.py` | hits the live `api.suggest_fix` endpoint with an excluded type | API surface respects the exclusion + telemetry logs the refusal |
+| ✓ `test_ai_privacy_exclusion_on_api.py` (done in v0.12.3) | drives the live `api.suggest_fix` endpoint against a synthetic Optimus Session with one Finding, asserts refusal-with-message + telemetry refusal event + case-sensitivity + empty-list bypass + Settings-save cache invalidation | API surface respects v0.9.0 exclusion + v0.8.0 telemetry round-trip + settings cache propagation |
 | `test_regenerate_reports_idempotent.py` | renders, regenerates, diffs the two HTML outputs | Re-render path is byte-stable when recordings cached |
 | `test_phase2_tool_orphan_recovery.py` | leaks `sys.monitoring` tool 2, simulates worker respawn, verifies the startup probe reclaims it | The v0.7.x `fbf3179` fix holds across real worker bounces |
 | `test_safe_report_self_contained_on_real_bench.py` | renders a real session, downloads the safe-report HTML file, asserts no remote-fetch URLs | The self-containment canary holds when assets come through real bench paths |

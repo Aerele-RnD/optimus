@@ -135,6 +135,10 @@ jobs:
             --app optimus \
             --module optimus.tests_integration.test_telemetry_flush_doctype_sink \
             2>&1 | tee "${RUNNER_TEMP}/integration-telemetry.log"
+          bench --site test_site run-tests \
+            --app optimus \
+            --module optimus.tests_integration.test_ai_privacy_exclusion_on_api \
+            2>&1 | tee "${RUNNER_TEMP}/integration-ai-privacy.log"
 
       - name: Publish integration summary
         if: always()
