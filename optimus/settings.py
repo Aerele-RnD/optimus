@@ -625,9 +625,22 @@ def get_config() -> OptimusConfig:
 		return OptimusConfig()
 
 	try:
-		cached = frappe.cache.get_value(_CACHE_KEY)
-		if cached is not None:
-			return OptimusConfig(**cached)
+		# v0.12.11: ``settings_cache`` is the first value to migrate to the
+		# v0.12.0 versioned envelope. ``unwrap_value`` returns ``(payload,
+		# version)``; the payload is the OptimusConfig field dict in either
+		# the new-shape envelope (``{"_v": 1, "data": {...}}``) or the
+		# legacy bare-dict shape (pre-v0.12.11 writes still flow through
+		# unchanged via the legacy-detection branch). On a schema-version
+		# bump WITHOUT a migration, ``unwrap_value`` returns ``(default=
+		# None, observed_version)`` AND emits a ``redis.schema_drift``
+		# telemetry event — the request falls through to the slow path
+		# (``_resolve``) and re-writes a fresh envelope.
+		from optimus import redis_schema
+
+		cached_raw = frappe.cache.get_value(_CACHE_KEY)
+		payload, _version = redis_schema.unwrap_value(cached_raw)
+		if isinstance(payload, dict) and payload:
+			return OptimusConfig(**payload)
 	except Exception:
 		pass
 
@@ -637,7 +650,11 @@ def get_config() -> OptimusConfig:
 		return OptimusConfig()
 
 	try:
-		frappe.cache.set_value(_CACHE_KEY, cfg.__dict__)
+		from optimus import redis_schema
+
+		frappe.cache.set_value(
+			_CACHE_KEY, redis_schema.wrap_value(cfg.__dict__)
+		)
 	except Exception:
 		pass
 

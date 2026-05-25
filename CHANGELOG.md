@@ -8,6 +8,94 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.11] — 2026-05-25
+
+**Redis-schema versioning — first value migrated to the `wrap_value`
+/ `unwrap_value` envelope.**
+
+The v0.12.0 release shipped the versioning foundation
+(`optimus/redis_schema.py`: `wrap_value`, `unwrap_value`,
+`SCHEMA_VERSION`, sentinel-write at app-import) but deliberately did
+not wrap any existing value. This release starts the rollout:
+**`settings_cache`** is the first value to migrate.
+
+### Why settings_cache first
+
+* **Hot path** — `get_config()` is called from every request hook;
+  the envelope overhead has to be invisible.
+* **Single writer + single reader** — both inside
+  `optimus/settings.py`, no cross-module coordination.
+* **Stable dict shape** — `OptimusConfig.__dict__` is well-defined.
+  Future schema bumps would touch the dataclass fields, which is
+  exactly the situation the envelope was designed for.
+* **Cache invalidation already in place** — the Optimus Settings
+  DocType controller's `on_update` deletes the key, so the next
+  request rebuilds the value with the new envelope shape
+  automatically. Rollout proves itself live on the first save after
+  upgrade.
+
+### Changed
+
+- **`optimus/settings.py:get_config()`**:
+  - WRITE: `frappe.cache.set_value(_CACHE_KEY,
+    redis_schema.wrap_value(cfg.__dict__))` instead of bare
+    `set_value(_CACHE_KEY, cfg.__dict__)`.
+  - READ: `payload, _version = redis_schema.unwrap_value(
+    frappe.cache.get_value(_CACHE_KEY))`; new-shape envelopes
+    unwrap to the dict, legacy pre-v0.12.11 bare-dict values pass
+    through unchanged via `unwrap_value`'s legacy-detection branch.
+
+### Added
+
+- **NEW `optimus/tests/test_settings_envelope_rollout.py`** (~200 LOC,
+  4 tests, all pure-pytest with a dict-backed `_FakeCache`):
+  - `test_fresh_write_stores_envelope_not_bare_dict` — write-path
+    canary; asserts the post-write cache value is shaped
+    `{"_v": SCHEMA_VERSION, "data": {...}}`.
+  - `test_hit_on_enveloped_value_returns_config` — new-shape read
+    path; cache HIT reconstructs OptimusConfig without re-resolving.
+  - `test_hit_on_legacy_bare_dict_returns_config` — **the
+    migration-safety contract**. Pre-v0.12.11 writers stored bare
+    dicts; new readers must NOT crash. Catches a regression where
+    `unwrap_value`'s legacy-detection branch goes away.
+  - `test_drift_falls_through_to_resolve` — a future-schema
+    envelope (`_v=999`) triggers fall-through to `_resolve` AND a
+    `redis.schema_drift` telemetry event; the next write produces a
+    fresh current-version envelope so the cache doesn't stay broken.
+
+### Docs
+
+- `docs/REDIS-SCHEMA.md` — `optimus_settings_cached` row updated to
+  reflect the new envelope shape; legacy-compat note added.
+
+### Compatibility
+
+- **Forward** (new readers, old writers): supported. The legacy
+  bare-dict path stays open in `unwrap_value` for as long as readers
+  might encounter pre-v0.12.11 values.
+- **Backward** (old readers, new writers): NOT supported. An old
+  worker reading a new-shape value would try
+  `OptimusConfig(**{"_v": 1, "data": {...}})` and fail on the
+  unrecognised `_v` keyword arg. Bench restart cycles all workers
+  at once, so the mixed-state window is the bounded few-second
+  gap between worker stop + worker start. Per
+  `[[reference_optimus_redis_schema]]` the rollout was always going
+  to require a single-bench restart cadence; this is documented in
+  the schema-bump contract.
+
+### Unchanged
+
+- `optimus/redis_schema.py` — the envelope helpers ship as-is; no
+  edits to the wrap/unwrap logic. Only the call-site code changed.
+- All other Redis values — `retention_backlog`, `analyze_inflight`,
+  `onboarding_seen`, `explain_cache`, the session hash, etc. — all
+  still bare-shaped. Future PRs roll out one at a time.
+
+Unit suite: 1819 → 1823 (+4 from the new envelope-rollout test
+module). Integration suite unchanged at 39.
+
+---
+
 ## [0.12.10] — 2026-05-25
 
 **Renderer extraction — `doc_event_renderer` is the sixth submodule

@@ -90,7 +90,7 @@ when you add a new key; the audit test asserts this table matches
 | `profiler:explain:<cache_key>` | string | raw | none (read-through cache) | EXPLAIN result hash; persists across sessions. |
 | `optimus:analyze:inflight` | string (heartbeat token) | raw | 300s (`_SINGLEFLIGHT_TTL_SECONDS`) | Single-flight guard; heartbeated by the live analyze; auto-clears on worker death. |
 | `optimus:retention_backlog` | integer | raw | 3600s | Janitor backlog counter when daily sweep hits its per-run cap. |
-| `optimus_settings_cached` | dataclass dict | Frappe pickle | none (invalidated by DocType `on_update`) | Pre-prefix legacy name; kept as-is to avoid a one-shot cache miss on upgrade. |
+| `optimus_settings_cached` | **enveloped** dataclass dict (v0.12.11+) | Frappe pickle around `{"_v": 1, "data": {...}}` | none (invalidated by DocType `on_update`) | Pre-prefix legacy name; kept as-is to avoid a one-shot cache miss on upgrade. **First value migrated to the v0.12.0 versioned envelope (v0.12.11).** Reads still accept legacy bare-dict shape for backward compat with pre-v0.12.11 writers. |
 | `optimus:schema_version` | integer | raw | none | v0.12.0+ sentinel. Written at app import. See § 4. |
 
 ---
