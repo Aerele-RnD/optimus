@@ -531,6 +531,17 @@ def _build_background_jobs(jobs, fmt_ms=None) -> list[dict]:
 			"queries": job.get("queries_count", 0) or 0,
 			"db_time_display": fmt(job.get("query_time_ms", 0) or 0),
 			"finding_count": job.get("findings_count", 0) or 0,
+			# Also coerce the ORIGINAL ``findings_count`` (with 's') key —
+			# the existing line above only adds a new ``finding_count``
+			# (without 's'). Jobs that Failed before producing findings
+			# carry ``findings_count: None`` from analyze; the bg_jobs
+			# section template iterates with ``map(attribute='findings_count')
+			# | sum`` and Jinja's ``map('default', 0)`` filter only handles
+			# Undefined (not None), so an uncoerced None crashes the whole
+			# render with ``unsupported operand type(s) for +: 'int' and
+			# 'NoneType'``. The fix is render-time so it applies on
+			# regenerate_reports too — no re-analyze needed.
+			"findings_count": int(job.get("findings_count") or 0),
 		})
 		result.append(entry)
 	return result

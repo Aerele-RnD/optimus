@@ -448,6 +448,39 @@ class TestBackgroundJobsShape:
 		assert j["finding_count"] == 1
 		assert j["bar_kind"] == "warn"  # 799ms in [300, 1000)
 
+	def test_findings_count_none_coerced_to_zero(self):
+		"""Regression: Failed jobs that didn't produce findings carry
+		``findings_count: None`` from analyze. The bg-jobs section
+		template sums ``findings_count`` via Jinja's ``map | sum``, and
+		Jinja's ``map('default', 0)`` filter only handles Undefined (NOT
+		None) — so an uncoerced None used to crash the whole render with
+		``unsupported operand type(s) for +: 'int' and 'NoneType'``.
+		``_build_background_jobs`` now coerces the original
+		``findings_count`` key to ``int(... or 0)`` alongside the contract
+		``finding_count`` key, so the sum filter receives only ints."""
+		jobs = {"jobs": [
+			{
+				"method": "bg_recheck_users",
+				"duration_ms": 800,
+				"findings_count": 2,
+			},
+			{
+				"method": "bg_failed_job",
+				"duration_ms": 5,
+				"findings_count": None,  # Failed before analyze counted findings
+				"status": "Failed",
+			},
+		]}
+		out = build_report_context(_doc(), _ctx(background_jobs=jobs))
+		jobs_out = out["background_jobs"]
+		# Both contract + legacy keys: numeric, never None.
+		assert jobs_out[0]["findings_count"] == 2
+		assert jobs_out[0]["finding_count"] == 2
+		assert jobs_out[1]["findings_count"] == 0
+		assert jobs_out[1]["finding_count"] == 0
+		# The original template sum that used to crash now succeeds.
+		assert sum(j["findings_count"] for j in jobs_out) == 2
+
 
 class TestDocEventsShape:
 	def test_doctype_has_contract_fields(self):
