@@ -8,6 +8,72 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.6] — 2026-05-25
+
+**Integration test — safe-report self-containment on the real bench.
+Sixth row of the v0.11.0 deferred-tests table is now ticked.**
+
+The safe-report HTML is the **dev-shop interchange format**: a
+self-contained file an operator can email / attach / archive without
+needing a live Frappe bench to view it. Per
+`[[feedback_safe_report_self_contained]]`: "no CDN/remote fetches;
+load-bearing offline guarantee with a canary acceptance test." The
+unit suite (`test_report_a11y.py::test_report_is_self_contained_offline`)
+covers this against the in-memory render. It can't cover the on-disk
+file after Frappe's `file_manager` writes it.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_safe_report_self_contained_on_real_bench.py`**
+  (~200 LOC, 3 tests). Each test creates a minimal synthetic Optimus
+  Session, calls `api.regenerate_reports(uuid)`, reads
+  `raw_report_file` via the File doc, and asserts:
+  - `test_on_disk_report_has_no_remote_resource_urls` — mirrors the
+    unit-suite canary at the integration boundary: no `src=https?:`,
+    no `<link href=https?:`, no `@import`, no `url(http`. Includes
+    a positive sanity check (at least one human-facing anchor link
+    exists) so the negative checks don't trivially pass on an empty
+    page.
+  - `test_on_disk_report_has_no_inline_or_external_javascript` —
+    no `<script` tag in any form (the safe report is JS-free, which
+    is part of why it's safe to open in an arbitrary browser).
+  - `test_on_disk_report_does_not_reference_live_bench_asset_urls`
+    — no `/assets/`, no `/files/`, no `/api/method/` in
+    `src`/`href` positions. Bench-local asset references would
+    render in a live-bench browser but break the moment the file is
+    moved off-bench.
+- Workflow line in `.github/workflows/integration.yml`.
+
+### Per-test isolation
+
+- Unique `session_uuid` per test; explicit File-row + Session-row
+  cleanup in tearDown.
+- `setUp` does the regenerate call so each test gets fresh on-disk
+  HTML (independent of sibling-test side effects).
+
+### Docs
+
+- `optimus/tests_integration/README.md` — row 6 of the extraction
+  roadmap ticked. 1 row remains
+  (`test_janitor_sweeps_actually_delete.py`).
+
+### Unchanged
+
+- `optimus/api.py` `regenerate_reports` — endpoint under test stays
+  as-is.
+- `optimus/analyze.py` `_save_report_file` — file-write path
+  unchanged.
+- Unit-suite self-containment canaries
+  (`test_report_a11y.py`, `test_lens_promo.py`, etc.) stay as the
+  pure-pytest backstop.
+
+### Compatibility
+
+No behaviour change. Pure test addition. Integration-suite total:
+31 → 34 tests. Unit suite stays at 1818.
+
+---
+
 ## [0.12.5] — 2026-05-25
 
 **Integration test — Phase-2 tool-2 orphan recovery. Fifth row of the

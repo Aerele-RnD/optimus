@@ -147,6 +147,10 @@ jobs:
             --app optimus \
             --module optimus.tests_integration.test_phase2_tool_orphan_recovery \
             2>&1 | tee "${RUNNER_TEMP}/integration-phase2-orphan.log"
+          bench --site test_site run-tests \
+            --app optimus \
+            --module optimus.tests_integration.test_safe_report_self_contained_on_real_bench \
+            2>&1 | tee "${RUNNER_TEMP}/integration-self-contained.log"
 
       - name: Publish integration summary
         if: always()
