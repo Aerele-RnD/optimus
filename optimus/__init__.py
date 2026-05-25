@@ -1,4 +1,4 @@
-__version__ = "0.12.18"
+__version__ = "0.12.19"
 
 
 def safe_commit() -> None:

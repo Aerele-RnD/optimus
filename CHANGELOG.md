@@ -8,6 +8,95 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.19] — 2026-05-25
+
+**Renderer extraction — `finding_enrichment` phase 2 (drill-down chain
+attachers) ships alongside the existing phase 1. Same submodule.**
+
+The drill-down chain cluster — `_find_node_in_tree`,
+`_walk_drilldown_chain`, `_attach_drilldown_chains` — is a self-
+contained sub-cluster of the larger finding_enrichment family that
+the v0.12.16 docstring documented as "still in `_internal.py`". Today
+it moves into `finding_enrichment.py` alongside the phase 1 helpers.
+Same submodule because their architectural identity matches; the
+"phase" distinction is about extraction batches, not boundaries.
+
+### Moved
+
+- **`_find_node_in_tree(tree, basename, function)`** — depth-first
+  walk a pyinstrument call tree for a `(basename, function)` match.
+  Stdlib-only.
+- **`_walk_drilldown_chain(tree, callsite, ...)`** — hottest-child
+  traversal below a finding's origin frame. Uses
+  `_find_node_in_tree` + lazy imports of
+  `optimus.renderer.call_tree_renderer._ct_is_other_frame` and
+  `optimus.analyzers.base.is_framework_callsite`.
+- **`_attach_drilldown_chains(findings, actions, tracked_apps)`** —
+  in-place attachment of the chain onto each finding's
+  `technical_detail`. Uses `_walk_drilldown_chain` + `json.loads` for
+  tree deserialisation.
+
+Out of `optimus/renderer/_internal.py` (now ~3,158 LOC; was ~3,320),
+into existing `optimus/renderer/finding_enrichment.py` (extended from
+~210 LOC → ~375 LOC).
+
+### Implementation
+
+- The `_ct_is_other_frame` lazy import inside `_walk_drilldown_chain`
+  avoids the circular import risk: `call_tree_renderer.py` could
+  theoretically grow a dependency on finding_enrichment in the
+  future; the lazy form makes that direction safe.
+- `is_framework_callsite` already lazy-loaded inside the original
+  function body — preserved.
+- The standard back-import block at the top of `_internal.py`
+  re-imports `_find_node_in_tree`, `_walk_drilldown_chain`,
+  `_attach_drilldown_chains` so call sites in `render()` resolve
+  unchanged through the same shim path.
+
+### What stays in _internal.py (the still-deferred subset)
+
+The HIGH-coupling subset depends on source-resolution helpers
+(`_action_dotted_entry`, `_skip_decorators_to_def`,
+`_resolve_dotted_to_code`, `_action_entry_callsite`,
+`_resolve_frame_key_to_callsite`, `_bench_relative_display`) which
+are themselves intermixed with action-rendering code. Phase 3 needs
+either a sibling `source_resolution.py` extraction first (clean) or
+an expanded back-import design (messy). Per-batch scope decision:
+ship phase 2 today (clean), document phase 3 for later.
+
+Still in `_internal.py` pending phase 3:
+- `_finding_to_dict` (~200 LOC, the main render-dict builder).
+- `_attach_representative_callsites` (calls 6 source-resolution
+  helpers above).
+- `_expand_self_time_snippets` (calls `_read_function_body_snippet`).
+- `_retarget_phase1_callsites_to_drilldown_leaf` (uses
+  `_find_call_line_in_function_body`).
+- `_find_call_line_in_function_body` (AST walker).
+
+### Docs
+
+- `optimus/renderer/README.md` — current-layout block updated
+  (`finding_enrichment.py` now lists phase 1+2 contents); roadmap
+  table marks `finding_enrichment` as ◐ phase 1+2 done, ~365 LOC
+  remaining.
+
+### Unchanged
+
+- Behaviour identical — every call site through `_internal.py`'s
+  shim resolves the function the same way.
+- All 62 unit tests across `test_drilldown_chain.py` +
+  `test_finding_card_smoking_gun.py` (which exercise the moved
+  functions via the `renderer.X` package surface) stay green without
+  modification.
+- `test_renderer_structure_snapshot.py` (14 tests) stays green
+  without fixture regeneration — output HTML is byte-equivalent.
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1854.
+
+---
+
 ## [0.12.18] — 2026-05-25
 
 **Janitor proactive schema-drift sweep — the daily cron now compares

@@ -62,12 +62,15 @@ optimus/renderer/
                            #    _render_phase2_function_table,
                            #    _render_phase2_diff_table,
                            #    _render_line_drilldown_panel
-  finding_enrichment.py    # Finding-grouping helpers (phase 1 of the
-                           # finding_enrichment cluster) —
-                           #    _root_cause_key,
+  finding_enrichment.py    # Finding-enrichment helpers (phases 1+2
+                           # of the larger finding_enrichment family).
+                           # Phase 1 (v0.12.16): _root_cause_key,
                            #    _group_findings_by_root_cause,
                            #    _normalize_callsite,
                            #    _GROUPING_SEVERITY_RANK
+                           # Phase 2 (v0.12.19): _find_node_in_tree,
+                           #    _walk_drilldown_chain,
+                           #    _attach_drilldown_chains
 ```
 
 All eight submodules are imported back into `_internal.py` under their
@@ -179,7 +182,7 @@ Remaining two:
 | ✓ `call_tree_renderer` (done in v0.12.8) | 240 | Weak | `_render_call_tree_panel`, `_render_call_tree_node`, `_ct_is_user_frame`, `_ct_is_sql_leaf`, `_ct_is_other_frame`. Self-contained tree rendering. |
 | ✓ `doc_event_renderer` (done in v0.12.10) | 376 | Moderate | `_extract_target_doc`, `_attach_action_context`, `_build_doc_event_breakdown`, plus 6 helpers + constants. Self-contained at module-import time despite "Moderate" coupling at analyze-time. |
 | ✓ `line_drilldown` (done in v0.12.12) | 416 (scoped) | Internal | `_render_line_drilldown_panel`, `_build_line_drilldown_callsite_index`, `_make_line_drilldown_lookup`, `_phase2_invoked`, `_render_phase2_function_table`, `_render_phase2_diff_table` + 3 back-compat aliases. Semi-public — `analyze.py` calls `_build_line_drilldown_callsite_index` via the package shim. Smaller than the README's 840-LOC estimate because `_find_call_line_in_function_body` (AST-walking helper) + `_retarget_phase1_callsites_to_drilldown_leaf` + `_root_cause_key` / `_group_findings_by_root_cause` stay with the still-pending finding_enrichment cluster. |
-| ◐ `finding_enrichment` (phase 1 done in v0.12.16, rest deferred) | ~700 → ~530 LOC remaining | HIGH | Phase 1 moved: `_root_cause_key`, `_group_findings_by_root_cause`, `_normalize_callsite` + `_GROUPING_SEVERITY_RANK`. Remaining (HIGH coupling — needs a focused PR): `_finding_to_dict`, `_attach_drilldown_chains`, `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_find_call_line_in_function_body`, `_walk_drilldown_chain`. |
+| ◐ `finding_enrichment` (phases 1+2 done, ~365 LOC remaining) | ~365 LOC remaining (was ~700 total) | HIGH | Phase 1 (v0.12.16): `_root_cause_key`, `_group_findings_by_root_cause`, `_normalize_callsite` + `_GROUPING_SEVERITY_RANK`. Phase 2 (v0.12.19): `_find_node_in_tree`, `_walk_drilldown_chain`, `_attach_drilldown_chains`. Remaining (the source-resolution-dependent subset; needs a sibling `source_resolution.py` extraction first): `_finding_to_dict` (~200 LOC), `_attach_representative_callsites`, `_expand_self_time_snippets`, `_retarget_phase1_callsites_to_drilldown_leaf`, `_find_call_line_in_function_body`. |
 | `render()` orchestrator | 812 | Core | The big function itself. Could be split into per-phase helpers within `_internal.py`, but a per-module split isn't natural — it's an orchestrator, not a section. Keep integrated. |
 
 Each follow-up PR uses the recipe above. The structural snapshot is the
