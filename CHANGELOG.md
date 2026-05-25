@@ -8,6 +8,92 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.23] — 2026-05-25
+
+**Renderer extraction — NEW `source_resolution.py` submodule. Prep work
+for finding_enrichment phase 3.**
+
+The HIGH-coupling finding-enrichment subset (`_finding_to_dict`,
+`_attach_representative_callsites`, etc.) depends on 6 source-
+resolution helpers that have been intermixed with action-rendering
+code in `_internal.py`. Lifting those 6 helpers to a sibling submodule
+NOW means the next renderer-extraction PR can move the finding-
+enrichment subset cleanly without dragging in a sprawling helper
+family.
+
+### Moved
+
+Six functions from `_internal.py` → `optimus/renderer/source_resolution.py`:
+
+- `_action_dotted_entry(action)` — derive an action's dotted entry-
+  point path (RQ Job: method; HTTP `/api/method/<dotted>`: dotted).
+- `_skip_decorators_to_def(abs_filename, start_lineno, fn_name)` —
+  walk past `@decorator` lines to land on `def <fn_name>` (Python
+  3.11+ `co_firstlineno` points at the first decorator, not the def).
+- `_resolve_dotted_to_code(dotted)` — `(abs_filename, lineno,
+  func_name)` from a dotted module path. Uses `importlib` (NOT
+  `frappe.get_attr` — no live-site dependency).
+- `_bench_relative_display(abs_path)` — `apps/<app>/...` display form
+  via `frappe.utils.get_bench_path`. Falls back to absolute.
+- `_action_entry_callsite(action, *, cache)` — full resolution:
+  action → dotted → code → `{filename, _abs, lineno, function,
+  source_snippet}`.
+- `_resolve_frame_key_to_callsite(function_key, *, cache)` — same
+  but starting from a repeated-hot-frame key (`short_path::func`).
+
+Out of `optimus/renderer/_internal.py` (now ~2,919 LOC; was ~3,170),
+into NEW `optimus/renderer/source_resolution.py` (~260 LOC).
+
+### Implementation
+
+- All 6 functions form a tight cluster (only call each other +
+  stdlib + sibling renderer submodules' `_read_source_snippet` /
+  `_resolve_source_path` from `source.py`).
+- Lazy import of `frappe.utils.get_bench_path` inside
+  `_bench_relative_display` preserved — keeps the module importable
+  in non-bench contexts (pure-pytest).
+- Standard back-import block at the top of `_internal.py` re-imports
+  all 6 names so call sites (including ~6 in-`_internal.py` callers
+  + tests via `renderer.X`) resolve unchanged.
+- Structural-snapshot canary stays byte-identical without fixture
+  regeneration.
+
+### Why now
+
+`finding_enrichment` phase 3 needs these helpers as a stable
+dependency. Two paths were possible:
+
+1. **Move them with phase 3** — would put 6 helpers + 5 finding-
+   enrichment functions in the same PR, 11 moves at once.
+2. **Move them first** (this PR) — clean 6-function extraction
+   today; phase 3 becomes a clean 5-function extraction tomorrow.
+
+Option 2 wins on reviewability and on testability (any regression in
+option 1 could be blamed on either move; option 2's halves are
+independently validated).
+
+### Docs
+
+- `optimus/renderer/README.md` — current-layout block bumped to 9
+  submodules; new `source_resolution.py` row added with the 6-
+  function inventory.
+
+### Unchanged
+
+- Behaviour identical — every call site resolves the same function
+  through the back-import shim.
+- 59 unit tests across `test_action_entry_callsite.py` (which
+  exercises 5 of the 6 moved helpers via `renderer.X`) stay green
+  without modification.
+- `test_renderer_structure_snapshot.py` stays green (no fixture
+  update).
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1859.
+
+---
+
 ## [0.12.22] — 2026-05-25
 
 **Docs — `docs/HMAC-ENVELOPE.md` specifies the future-scheme design

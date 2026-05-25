@@ -71,6 +71,15 @@ optimus/renderer/
                            # Phase 2 (v0.12.19): _find_node_in_tree,
                            #    _walk_drilldown_chain,
                            #    _attach_drilldown_chains
+  source_resolution.py     # Dotted-path → (abs_file, lineno, func_name)
+                           # + display helpers. v0.12.23 prep work
+                           # for finding_enrichment phase 3:
+                           #    _action_dotted_entry,
+                           #    _skip_decorators_to_def,
+                           #    _resolve_dotted_to_code,
+                           #    _bench_relative_display,
+                           #    _action_entry_callsite,
+                           #    _resolve_frame_key_to_callsite
 ```
 
 All eight submodules are imported back into `_internal.py` under their
