@@ -8,6 +8,72 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.22] — 2026-05-25
+
+**Docs — `docs/HMAC-ENVELOPE.md` specifies the future-scheme design
+(v2 HMAC-SHA512, v3 AES-SIV, v4+ key rotation) using v0.12.14's
+1-byte version marker as the extension point.**
+
+The v0.12.14 release shipped the 1-byte HMAC scheme marker without
+specifying what future schemes look like — the marker was an extension
+point but the extension semantics weren't documented. A future
+operator who needs SHA-512 (FIPS 140-3 compliance) or AES-SIV
+(encryption at rest in Redis) would have had to re-derive the design
+from scratch. This release pre-designs those paths.
+
+### Added
+
+- **NEW `docs/HMAC-ENVELOPE.md`** — documents:
+  - The v0 (legacy, pre-v0.12.14) + v1 (current) byte layouts.
+  - The backward-compat read path's single-HMAC-step + first-byte
+    disambiguation, with the rationale for `\x01` as the marker
+    (pickle never emits it; producer-compat table for msgpack /
+    JSON / raw bytes).
+  - **Scheme v2 (HMAC-SHA512) implementation sketch** — handles
+    the 32 → 64 byte signature length change via two-attempt
+    verify, preserves v0/v1 compat. Includes a defence-in-depth
+    guard against attacker-crafted v0 blobs whose body starts with
+    a future scheme marker.
+  - **Scheme v3 (AES-SIV authenticated encryption) sketch** — same
+    envelope shape as v1; SIV tag replaces HMAC; deterministic-
+    encryption fits the multi-read Redis pattern.
+  - **Scheme v4+ (key rotation)** — marker low-bits carry a
+    key-id; operator-driven extension requiring per-key-id secret
+    resolution in `_hmac_secret`.
+  - The existing v0.12.14 canary-test suite (~13 tests) + the
+    additional `TestSchemeV2RoundTrip` / `TestV0V1V2Coexistence`
+    /`TestV1ReaderRejectsV2Blob` tests a future v2 PR should add.
+  - Operator notes: how to inspect a blob's scheme from
+    `frappe.cache.hget` output; the four-step re-sign procedure
+    (no inline migration today); when the janitor's daily cron
+    could automate the re-sign post-bump.
+  - **Out-of-scope deferrals**: nonce-based AEAD (AES-GCM /
+    ChaCha20-Poly1305 don't fit the deterministic-retrieval
+    pattern); asymmetric signatures (Ed25519 — overkill for the
+    intra-bench trust model).
+
+### Why pre-design
+
+When the real need for scheme v2 lands, the operator doing the work
+will have:
+* The byte layout pre-decided (no design rounds with reviewers).
+* The backward-compat semantics pre-specified (no risk of
+  inadvertently breaking v0/v1 read paths).
+* The canary-test additions enumerated.
+* A defence-in-depth guard baked in (the attacker-crafted-v0
+  edge case).
+
+The v0.12.14 PR itself was straightforward because the v0 → v1
+transition was simple. v1 → v2 involves a signature-length change;
+the design needs to live somewhere readable before the implementation
+PR lands.
+
+### Unchanged
+
+No code change. Documentation-only PR. Unit suite stays at 1859.
+
+---
+
 ## [0.12.21] — 2026-05-25
 
 **Redis-schema rollout continues — `session_meta` is the fifth value
