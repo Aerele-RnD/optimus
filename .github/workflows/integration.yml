@@ -89,10 +89,17 @@ jobs:
           python-version: '3.14'
           cache: 'pip'
 
-      - name: Set up Node 20
-        # Frappe's asset pipeline needs Node even with --skip-assets;
-        # ``bench init`` shells out to ``yarn install`` for the Frappe
-        # framework's own JS deps before building the bench skeleton.
+      - name: Set up Node 24
+        # v0.12.29: Frappe v16's package.json declares
+        # ``"engines": { "node": ">=24" }``. Node 20 (the previous pin)
+        # tripped a yarn-install warning ("Node 24") and would
+        # subsequently fail Frappe's own ``yarn run`` build steps that
+        # check engines strictly. Pinning 24 matches the upstream-
+        # mandated minimum — same pattern as the Python 3.12 → 3.14
+        # bump in the sibling commit. Frappe's asset pipeline needs
+        # Node even with --skip-assets; ``bench init`` shells out to
+        # ``yarn install`` for the Frappe framework's own JS deps
+        # before building the bench skeleton.
         #
         # NB: no ``cache: 'yarn'`` here — that directive requires a
         # ``yarn.lock`` in the optimus repo at setup-node time, but
@@ -103,7 +110,7 @@ jobs:
         # ``~/.cache/yarn``, so Frappe's repeat installs stay fast.
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Cache the Frappe checkout across runs
         # Bench provisioning's dominant cost is the Frappe clone (~150 MB)
