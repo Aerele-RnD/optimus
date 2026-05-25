@@ -94,7 +94,21 @@ _step "symlink optimus into apps/ + register in apps.txt"
 # — including uncommitted changes — instead of whatever ``main`` happens
 # to be at the moment.
 ln -snf "${OPTIMUS_REPO_DIR}" apps/optimus
-grep -qxF "optimus" sites/apps.txt || echo "optimus" >> sites/apps.txt
+
+# v0.12.30: ``echo "optimus" >> sites/apps.txt`` appended without a
+# separator when bench init produced an apps.txt with no trailing
+# newline (Frappe v16 currently writes "frappe" with no final \n).
+# The concatenation gave a single line "frappeoptimus", which
+# ``bench new-site`` tried to ``import_module('frappeoptimus.commands')``
+# → ModuleNotFoundError. The fix: ``printf '\noptimus\n'`` instead of
+# ``echo "optimus"`` — the leading \n forces a line break regardless
+# of whether apps.txt already ends with one (a blank line in apps.txt
+# is ignored by Frappe's app-discovery loop).
+if ! grep -qxF "optimus" sites/apps.txt; then
+	printf '\noptimus\n' >> sites/apps.txt
+fi
+echo "apps.txt contents:"
+cat sites/apps.txt
 _end
 
 _step "pip install -e apps/optimus"
