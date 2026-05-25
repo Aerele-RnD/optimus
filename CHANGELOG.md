@@ -8,6 +8,58 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.20] — 2026-05-25
+
+**LP key-helper unification — Phase-2 line_profile capture now uses
+`optimus.redis_keys.lp_*` instead of its local key helpers.**
+
+The v0.12.0 release centralised every Redis key pattern in
+`optimus/redis_keys.py` and added drift-detection (`test_redis_audit.py`),
+but `optimus/line_profile/capture.py` kept its own `_active_key` /
+`_picks_key` / `_source_key` / `_samples_key` / `_budget_hit_key`
+helpers — deferred from v0.12.0 as cleanup. This release closes that
+gap. Pure cleanup; zero behaviour change.
+
+### Changed
+
+- **`optimus/line_profile/capture.py`** — top-of-module
+  `from optimus import redis_keys as _redis_keys` added; the 5 local
+  key helpers retired; ~16 call sites migrated to
+  `_redis_keys.lp_active(user)` / `_redis_keys.lp_picks(run_uuid)` /
+  etc. The `cleanup_run` iterable that walked the local helpers as
+  function references now walks the `_redis_keys.lp_*` references
+  instead.
+
+### Why this matters
+
+- **Single source of truth** — `optimus/redis_keys.py` is the
+  documented "every key built here, every key found via
+  `test_redis_audit.py`" location. The LP local helpers were the
+  last surviving exception (per `[[reference_optimus_redis_schema]]`).
+- **Drift protection** — the v0.12.0 audit test's inline-key regex
+  scanned for f-string `profiler:*` patterns; the LP local helpers
+  were f-strings, which is why they tripped the audit and got
+  flagged on the deferred-work list.
+- **Byte-identical keys** — `_redis_keys.lp_active(user)` produces
+  the EXACT same string (`profiler:lp:active:<user>`) the local
+  helper did. On-disk Redis values from pre-v0.12.20 benches resolve
+  unchanged.
+
+### Unchanged
+
+- All v0.12.0 unit tests (`test_redis_audit.py` etc.) — they didn't
+  need to change because the key strings stayed identical.
+- `redis_keys.lp_*` functions in `optimus/redis_keys.py` — the
+  receiving side stays as the v0.12.0 documented shape.
+- Behaviour identical — every cache write/read produces the same
+  key, just resolved through the centralized module.
+
+### Compatibility
+
+Pure cleanup. No behaviour change. Unit suite stays at 1854.
+
+---
+
 ## [0.12.19] — 2026-05-25
 
 **Renderer extraction — `finding_enrichment` phase 2 (drill-down chain
