@@ -8,6 +8,90 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.7] — 2026-05-25
+
+**Integration test — `janitor.sweep_old_sessions` actually deletes.
+Seventh and final row of the v0.11.0 deferred-tests table is now
+ticked. The integration extraction roadmap is complete.**
+
+The janitor's `sweep_old_sessions` (janitor.py:96-139) is the daily
+cron that enforces the retention policy: Ready / Failed sessions older
+than `DEFAULT_RETENTION_DAYS` (90, configurable via
+`site_config.optimus_session_retention_days`) get hard-deleted. The
+unit suite covers individual sweep functions in isolation but mocks
+the deletion. It can't prove that the cron actually deletes the
+DocType row + cascades to attached File rows, or that the
+terminal-state filter is correct.
+
+### Added
+
+- **NEW `optimus/tests_integration/test_janitor_sweeps_actually_delete.py`**
+  (~250 LOC, 4 tests). Each test seeds an Optimus Session with a
+  controlled `started_at` + status, calls
+  `janitor.sweep_old_sessions()`, and asserts the post-sweep state.
+  `tearDown` tracks every UUID created so anything the sweep DIDN'T
+  delete (negative controls) gets wiped:
+  - `test_sweep_deletes_session_older_than_retention` — the canary.
+    100-day-old Ready session → deleted. Without this, the Optimus
+    Session table grows unbounded.
+  - `test_sweep_keeps_session_within_retention` — negative control.
+    30-day-old Ready session → kept. Catches over-aggressive
+    deletion.
+  - `test_sweep_keeps_active_sessions_regardless_of_age` —
+    terminal-state contract. 100-day-old Analyzing session → kept.
+    The daily sweep filters `status IN (Ready, Failed)` exclusively;
+    non-terminal states are the 5-minute `sweep_stale_sessions`'s
+    job.
+  - `test_sweep_cascades_attached_file_deletion` — disk-hygiene
+    contract. Deletes the session AND its `raw_report_file` File
+    row. Orphan File rows would inflate disk usage forever even
+    though the parent session is gone.
+- Workflow line in `.github/workflows/integration.yml`.
+
+### Per-test isolation
+
+- Per-test unique `session_uuid` tracked in `self._uuids` list;
+  tearDown wipes any UUID that survived the sweep (negative-control
+  rows) plus their attached File rows.
+- The synthetic File-row insertion clears `frappe.local.request`
+  before insert so Frappe's `validate_file_extension` hits its
+  no-request bypass — same pattern `analyze._save_report_file`
+  uses for the same reason.
+
+### Docs
+
+- `optimus/tests_integration/README.md` — row 7 of the extraction
+  roadmap ticked. **All 7 deferred-tests rows now complete.**
+
+### Unchanged
+
+- `optimus/janitor.py` — function under test stays as-is.
+- All unit-suite janitor tests (`test_janitor.py`,
+  `test_janitor_telemetry.py`, etc.) — they stay as the pure-pytest
+  backstop.
+
+### Compatibility
+
+No behaviour change. Pure test addition. Integration-suite total:
+34 → 38 tests. Unit suite stays at 1818.
+
+### Milestone
+
+The v0.11.0 deferred-tests roadmap is now fully complete:
+
+1. ✓ v0.12.1 — `test_atomic_lua_merge_concurrent.py`
+2. ✓ v0.12.2 — `test_telemetry_flush_doctype_sink.py`
+3. ✓ v0.12.3 — `test_ai_privacy_exclusion_on_api.py`
+4. ✓ v0.12.4 — `test_regenerate_reports_idempotent.py`
+5. ✓ v0.12.5 — `test_phase2_tool_orphan_recovery.py`
+6. ✓ v0.12.6 — `test_safe_report_self_contained_on_real_bench.py`
+7. ✓ v0.12.7 — `test_janitor_sweeps_actually_delete.py`
+
+Every high-impact integration scenario the v0.7.x architecture
+review identified now has a real-bench canary.
+
+---
+
 ## [0.12.6] — 2026-05-25
 
 **Integration test — safe-report self-containment on the real bench.
