@@ -8,6 +8,88 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.16] — 2026-05-25
+
+**Renderer extraction — `finding_enrichment` phase 1 (the low-coupling
+subset) is the eighth submodule out of `_internal.py`.**
+
+The full `finding_enrichment` cluster spans ~11 functions
+non-contiguously across ~1500 LOC of `_internal.py`. The previous
+batch documented this as a "defer to focused PR" item because of the
+high coupling. This release ships the **tight subset** — the 3 pure-
+function helpers that have minimal back-coupling — leaving the
+HIGH-coupling subset (`_finding_to_dict` family + AST walker + chain
+attachers) for a future PR.
+
+### Moved
+
+- **`_root_cause_key(finding)`** — `(basename, function)` deepest-
+  user-code anchor for a finding. Stdlib-only.
+- **`_group_findings_by_root_cause(findings)`** — collapse findings
+  sharing a root cause into one primary + `sub_findings` list. Uses
+  `_root_cause_key` + `_GROUPING_SEVERITY_RANK`.
+- **`_normalize_callsite(callsite)`** — normalize dict-or-string
+  callsite shapes to a single `{filename, lineno, function}` dict.
+  Stdlib-only.
+- **Constant `_GROUPING_SEVERITY_RANK`** — severity-rank lookup
+  (different from `doc_event_renderer._SEVERITY_RANK`; different
+  values + use).
+
+Out of `optimus/renderer/_internal.py` (now ~3,316 LOC; was ~3,482),
+into NEW `optimus/renderer/finding_enrichment.py` (~210 LOC).
+
+### Implementation
+
+- Standard `from optimus.renderer.finding_enrichment import …` shim
+  block at the top of `_internal.py`. Re-imports `_GROUPING_SEVERITY_RANK`,
+  `_root_cause_key`, `_group_findings_by_root_cause`, `_normalize_callsite`
+  so call sites resolve unchanged.
+- Structural-snapshot canary stays green without fixture regeneration.
+
+### Deferred (the remaining HIGH-coupling subset)
+
+The following stay in `_internal.py` pending a focused future PR with
+proper coupling-graph design:
+
+- `_finding_to_dict` (~200 LOC, the renderer's main finding-to-dict
+  builder — calls many internal helpers).
+- `_walk_drilldown_chain` + `_attach_drilldown_chains`.
+- `_attach_representative_callsites` (calls source-resolution
+  helpers `_action_dotted_entry`, `_skip_decorators_to_def`,
+  `_resolve_dotted_to_code`, `_action_entry_callsite`,
+  `_resolve_frame_key_to_callsite`, `_bench_relative_display`).
+- `_expand_self_time_snippets`.
+- `_retarget_phase1_callsites_to_drilldown_leaf` (uses
+  `_find_call_line_in_function_body`).
+- `_find_call_line_in_function_body` (AST walker).
+
+A future "finding_enrichment phase 2" PR would need to either move
+the source-resolution helper family with the cluster (extracting a
+new `source_resolution.py`-style sibling submodule), or leave the
+helpers in `_internal.py` and use the back-import pattern at
+sufficient scale that the cycle-detection becomes worth designing
+for. Neither is a one-batch task.
+
+### Docs
+
+- `optimus/renderer/README.md` — current-layout block bumped to 8
+  submodules; roadmap table marks `finding_enrichment` as ◐ (phase 1
+  done; rest deferred). Updated cluster-size estimate.
+
+### Unchanged
+
+- Behaviour identical — every call site through `_internal.py`'s
+  shim resolves the function the same way.
+- All unit tests pass without modification (the 3 moved functions
+  weren't directly imported by name in any test file outside
+  `_internal.py` itself).
+
+### Compatibility
+
+No behaviour change. Pure refactor. Unit suite stays at 1843.
+
+---
+
 ## [0.12.15] — 2026-05-25
 
 **Workflow cleanup — `.github/workflows/integration.yml`'s 9 hard-coded
