@@ -1165,6 +1165,20 @@ def regenerate_reports(session_uuid: str) -> dict:
 	if not row:
 		frappe.throw(f"No Optimus Session found for uuid {session_uuid}")
 
+	# v0.12.9: enforce the docstring's "Allowed on Ready OR Failed
+	# sessions" contract. The pre-v0.12.9 code accepted any status,
+	# which would attach an incomplete report to a still-running
+	# analyze (Recording / Stopping / Analyzing) that the pipeline
+	# would then overwrite — confusing for operators, and surfaced
+	# in v0.12.4 by the integration test that exercised this gap.
+	if row["status"] not in ("Ready", "Failed"):
+		frappe.throw(
+			f"regenerate_reports requires the session to be in a terminal "
+			f"state (Ready or Failed); this one is '{row['status']}'. "
+			f"Wait for analyze to finish, or use retry_analyze to restart "
+			f"a stuck pipeline."
+		)
+
 	roles = set(frappe.get_roles(user))
 	if (
 		row["user"] != user

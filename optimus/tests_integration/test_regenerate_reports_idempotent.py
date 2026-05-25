@@ -299,3 +299,26 @@ class TestRegenerateReportsIdempotent(FrappeTestCase):
 		assert file_url, (
 			"raw_report_file should be set even when regenerating a Failed session"
 		)
+
+	def test_regenerate_refuses_non_terminal_status(self):
+		"""v0.12.9: regenerate must refuse sessions in non-terminal
+		states (Recording / Stopping / Analyzing). Pre-v0.12.9 the
+		endpoint accepted any status and would attach an incomplete
+		report to a still-running analyze that the pipeline would
+		then overwrite — closing that gap is what this test pins."""
+		# Move the session from Ready (the setUp default) to Analyzing.
+		frappe.db.set_value(
+			_SESSION_DOCTYPE, self._session_doc.name, "status", "Analyzing"
+		)
+		frappe.db.commit()
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			api.regenerate_reports(self._uuid)
+		msg = str(ctx.exception)
+		assert "terminal" in msg.lower() or "ready" in msg.lower(), (
+			f"error message should explain why the call refused; got: {msg!r}"
+		)
+		assert "retry_analyze" in msg, (
+			f"error message should point operators at retry_analyze as the "
+			f"recourse for stuck pipelines; got: {msg!r}"
+		)

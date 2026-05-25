@@ -8,6 +8,59 @@ versions may contain breaking changes — see migration notes below).
 
 ---
 
+## [0.12.9] — 2026-05-25
+
+**Bug fix — `api.regenerate_reports` now enforces its documented
+"Ready or Failed sessions only" contract.**
+
+v0.12.4 surfaced (via the new integration test) that
+`api.regenerate_reports` had **no `status` gate** in its
+implementation. The docstring claimed "Allowed on Ready OR Failed
+sessions" but the code accepted any status — Recording, Stopping,
+Analyzing all re-rendered. Re-rendering an in-flight session would
+attach an incomplete report to a still-running analyze, which the
+pipeline would then overwrite on completion. Confusing for
+operators; load-bearing only for the few who had a Failed session
+they wanted to re-render after a renderer fix.
+
+### Changed
+
+- **`api.regenerate_reports` now throws `ValidationError`** for any
+  status outside `{Ready, Failed}` with a message pointing the
+  operator at `retry_analyze` as the recourse for stuck pipelines
+  (`api.py:1167-1180`). The gate fires after the
+  ``session_uuid`` / row-existence checks but before any other side
+  effect, so refused calls produce zero attachment churn.
+
+### Added
+
+- **`optimus/tests/test_regenerate_reports_api.py::test_status_gate_rejects_non_terminal_sessions`**
+  — pure-pytest source-inspection test that confirms the gate is
+  present and the error message points at `retry_analyze`.
+- **`optimus/tests_integration/test_regenerate_reports_idempotent.py::test_regenerate_refuses_non_terminal_status`**
+  — integration test that demotes a session to `Analyzing` and
+  asserts the endpoint raises with an operator-friendly message.
+
+### Compatibility
+
+Soft breaking. Any external automation that called
+`regenerate_reports` against an Analyzing / Recording / Stopping
+session would now see a `ValidationError`. In practice no operator
+flow does this — the UI button is only visible on Ready / Failed
+sessions per the existing `test_button_visible_on_ready_and_failed`
+test. Anyone shelling out to the endpoint directly (rare) would have
+been getting incomplete / overwritten reports before this fix.
+
+### Discovery → fix lineage
+
+- v0.12.4 CHANGELOG documented the gap as "out of scope for this PR".
+- v0.12.9 (this PR) closes it.
+
+Unit suite: 1819 (1818 + 1 new source-inspection test). Integration
+suite: 39 (38 + 1 new test in the existing module).
+
+---
+
 ## [0.12.8] — 2026-05-25
 
 **Renderer extraction — `call_tree_renderer` is the fifth submodule
