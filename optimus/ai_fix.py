@@ -530,6 +530,7 @@ def suggest_fix(finding: dict) -> dict:
 	if not text:
 		raise AiFixError("The AI provider returned an empty response.")
 	text = _flag_metadata_column_index_advice(text)
+	text = _flag_raw_sql_in_fix(text)
 
 	return {
 		"suggestion": text,
@@ -609,8 +610,13 @@ def suggest_index(table_payload: dict) -> dict:
 	if not text:
 		raise AiFixError("The AI provider returned an empty response.")
 	# Same guardrail as suggest_fix: if the model recommended indexing a Frappe
-	# metadata column, append a correction note.
+	# metadata column, append a correction note. Plus the raw-SQL guardrail —
+	# the index-suggestion path doesn't usually emit code, but a model can
+	# still volunteer a ``frappe.db.sql("ALTER ...")`` fallback that should
+	# be flagged (DDL verbs are excluded from the detector anyway, so this
+	# guard fires only on the broader anti-pattern).
 	text = _flag_metadata_column_index_advice(text)
+	text = _flag_raw_sql_in_fix(text)
 	return {
 		"suggestion": text,
 		"model": provider["model"],
@@ -752,6 +758,119 @@ def _metadata_columns() -> frozenset:
 		return FRAPPE_METADATA_COLUMNS
 	except Exception:
 		return frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Output guardrail: raw `frappe.db.sql(...)` in suggested fix code
+# ---------------------------------------------------------------------------
+# The system prompt at the top of this module tells the LLM "never hand-built
+# SQL strings" and lists ``frappe.get_all`` / ``frappe.get_list`` /
+# ``frappe.db.get_value`` / ``frappe.db.get_values`` / ``frappe.qb`` as the
+# idiomatic alternatives. The few-shot examples reinforce that. But a
+# sufficiently confident model still occasionally leaks raw SQL into its
+# proposed fix code — and the system-prompt instruction alone is a soft
+# nudge with no backstop.
+#
+# This guardrail mirrors ``_flag_metadata_column_index_advice``: detect the
+# anti-pattern in the LLM's output, append a clearly-marked profiler note,
+# never rewrite (markdown is fragile). The note is advisory, not blocking —
+# a fix that legitimately needs raw SQL (DDL, vendor-specific MariaDB
+# extensions) can be acted on with the operator's judgement.
+
+# ``frappe.db.sql(…, "SELECT …"…)``. The literal can be a regular string,
+# f-string, or raw string; the verb that follows is case-insensitive. The
+# verbs covered are the ones a model is most likely to suggest as a "fix"
+# (DDL like CREATE / ALTER is intentionally outside the scope — those are
+# legit administrative paths and the prompt already rarely produces them).
+_RAW_SQL_IN_FIX_RE = re.compile(
+	r'frappe\.db\.sql\s*\(\s*[fr]?["\']\s*'
+	r'(?:SELECT|INSERT|UPDATE|DELETE|REPLACE)\b',
+	re.IGNORECASE,
+)
+
+# Markdown code-fence detector. Group 1 captures the info-string
+# (``diff`` / ``python`` / ``py`` / empty for un-tagged fences).
+_CODE_FENCE_RE = re.compile(r'^```(\w*)\s*$')
+
+
+def _flag_raw_sql_in_fix(text: str) -> str:
+	"""If the model's proposed fix contains a raw ``frappe.db.sql(...)`` call
+	with a SELECT / INSERT / UPDATE / DELETE / REPLACE literal, append a
+	correction note. Same contract as ``_flag_metadata_column_index_advice``
+	— returns the text unchanged when the fix is clean, otherwise with the
+	profiler note appended.
+
+	Detection scope:
+
+	* Only matches inside markdown code-fenced blocks (``\\`\\`\\`diff`` /
+	  ``\\`\\`\\`python`` / ``\\`\\`\\`py`` / un-tagged fences). Prose
+	  mentions like "instead of ``frappe.db.sql`` use ..." are
+	  intentionally EXCLUDED — the guardrail must not fire on the LLM's
+	  own commentary.
+	* Inside a ``diff`` block, only ADDITION lines (starting with ``+``
+	  but not ``+++`` — the diff file-header) count as "the proposed
+	  fix". REMOVAL lines (``-``) are the BEFORE code being replaced;
+	  flagging them would invert the guardrail (the model is rightly
+	  showing the bad pattern being removed).
+	* Inside non-diff code blocks, every line counts (the whole block
+	  is the proposal).
+
+	Known scope limits:
+
+	* Only detects ``frappe.db.sql``. Other invocations
+	  (``frappe.db.multisql``, future Frappe SQL helpers) are not
+	  detected — widen the pattern in a follow-up if production
+	  surfaces them.
+	* DDL verbs (CREATE / ALTER / DROP) are excluded — DDL via raw SQL
+	  is sometimes the right answer (e.g. ``ADD INDEX`` when the
+	  Customize-Form route isn't an option).
+	"""
+	if not text:
+		return text
+
+	flagged = False
+	in_fence = False
+	fence_kind = ""
+	for line in text.splitlines():
+		fence_match = _CODE_FENCE_RE.match(line.strip())
+		if fence_match:
+			if not in_fence:
+				in_fence = True
+				fence_kind = (fence_match.group(1) or "").lower()
+			else:
+				in_fence = False
+				fence_kind = ""
+			continue
+		if not in_fence:
+			continue
+
+		# Inside a code block. Diff blocks restrict scanning to addition
+		# lines; non-diff blocks scan every line.
+		if fence_kind == "diff":
+			if not line.startswith("+") or line.startswith("+++"):
+				continue
+			# Strip the leading "+" so the regex sees actual code, not
+			# the diff-marker prefix.
+			line_to_scan = line[1:]
+		else:
+			line_to_scan = line
+
+		if _RAW_SQL_IN_FIX_RE.search(line_to_scan):
+			flagged = True
+			break
+
+	if not flagged:
+		return text
+
+	return text.rstrip() + (
+		"\n\n> **Profiler note:** the fix above includes a raw "
+		"`frappe.db.sql(\"SELECT …\")` call. The recommended Frappe pattern "
+		"is `frappe.get_all` / `frappe.get_list` / `frappe.db.get_value` / "
+		"`frappe.db.get_values` (Document API for typical reads) or "
+		"`frappe.qb` (query builder for joins / aggregations / dynamic "
+		"conditions). Use raw SQL only when none of those API surfaces fit "
+		"(rare — e.g. DDL, vendor-specific MariaDB extensions)."
+	)
 
 
 def _flag_metadata_column_index_advice(text: str) -> str:
