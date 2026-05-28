@@ -681,13 +681,19 @@ class TestDocEventLifecycleSection:
 	def test_controller_override_finding_and_cascade_note(self):
 		# A GLEntry.validate finding (controller override — no hooks needed),
 		# action target = Sales Invoice → "GL Entry touched during a SI submit".
+		from unittest.mock import patch as _patch
+
 		finding = self._finding(
 			"Slow Hot Path", "In savedocs:Submit, 30% spent in GLEntry.validate",
 			function="GLEntry.validate", filename="erpnext/accounts/doctype/gl_entry/gl_entry.py",
 			lineno=50, cumulative_ms=42,
 		)
 		doc = _doc([self._savedocs_action()], findings=[finding])
-		html = renderer.render_raw(doc, recordings=[self._si_recording()])
+		# v0.13.x: default ignored_apps=("frappe", "erpnext") would drop the
+		# erpnext-callsite fixture finding. Override to () so this test
+		# exercises the Doc-event lifecycle path, not the filter.
+		with _patch("optimus.settings.get_ignored_apps", return_value=()):
+			html = renderer.render_raw(doc, recordings=[self._si_recording()])
 		assert "<h2>Doc-event lifecycle</h2>" in html
 		assert "Gl Entry" in html
 		# v0.7.x Phase F: kind tag → `.method-tag` info-blue pill.

@@ -90,6 +90,60 @@ def after_install():
 		except Exception:
 			pass
 
+	# v0.13.x: pre-populate Optimus Settings ▸ Ignored Apps with the two
+	# framework apps operators most commonly can't (or won't) patch —
+	# ``frappe`` and ``erpnext``. Mirrors the tracked-apps seed: writes
+	# only when the table is empty (idempotent, never clobbers an
+	# operator's existing configuration). Operators who DO want frappe /
+	# erpnext findings (e.g. core contributors) can remove the rows
+	# after install.
+	try:
+		_seed_ignored_apps_with_framework_apps()
+	except Exception as exc:
+		try:
+			frappe.log_error(title="optimus after_install ignored-apps seed")
+		except Exception:
+			pass
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("install.after_install.ignored_apps_seed", exc)
+		except Exception:
+			pass
+
+
+# v0.13.x: the framework apps seeded into Ignored Apps on fresh install.
+# Kept module-level so tests can pin the exact list. Operators who run
+# only ERPNext (no further custom layer) often KEEP erpnext too — but
+# the seed sets up the common 95% case (frappe is uniformly noise for
+# any custom-app developer; erpnext is noise for everyone NOT actively
+# patching ERPNext core).
+_DEFAULT_IGNORED_APPS = ("frappe", "erpnext")
+
+
+def _seed_ignored_apps_with_framework_apps():
+	"""Populate Optimus Settings.ignored_apps with the two framework
+	apps operators most commonly can't (or won't) patch on day one.
+
+	Idempotent: if ``ignored_apps`` already has any rows (either from a
+	previous install run on the same site, or from manual operator
+	configuration before re-running migrate), we do NOT touch it. The
+	seed is a fresh-install convenience, never a retroactive rewrite.
+	"""
+	if not frappe.db.exists("DocType", "Optimus Settings"):
+		# Migration hasn't created the Single yet — skip silently
+		# (mirror the tracked-apps seed's early-return).
+		return
+
+	settings = frappe.get_single("Optimus Settings")
+	if settings.ignored_apps:
+		# Respect existing config — never overwrite.
+		return
+
+	for app_name in _DEFAULT_IGNORED_APPS:
+		settings.append("ignored_apps", {"app_name": app_name})
+	settings.save(ignore_permissions=True)
+	safe_commit()
+
 
 def _seed_tracked_apps_from_installed_apps():
 	"""Populate Optimus Settings.tracked_apps with every installed

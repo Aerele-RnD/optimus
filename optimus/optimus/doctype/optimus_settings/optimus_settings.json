@@ -151,7 +151,7 @@
   {
    "fieldname": "apps_description_ignored",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\"><b>Ignored Apps</b> is an <i>exclusion list</i> — findings whose blame app falls in this list are <b>dropped from the report entirely</b> (both the \"Findings — what to fix\" and \"Framework-level observations\" sections). Use it for apps you can't (or won't) patch (typically <code>frappe</code>, <code>optimus</code>, sometimes <code>erpnext</code>). Default empty. The \"Issues found\" stat card shows the kept count plus a \"N findings hidden\" note, so the total stays honest.</p>"
+   "options": "<p class=\"text-muted small\"><b>Ignored Apps</b> is an <i>exclusion list</i> — findings whose blame app falls in this list are <b>dropped from the report entirely</b> (both the \"Findings — what to fix\" and \"Framework-level observations\" sections). Use it for apps you can't (or won't) patch (typically <code>frappe</code>, <code>optimus</code>, sometimes <code>erpnext</code>). <b>Default on fresh install:</b> <code>frappe</code> and <code>erpnext</code> are seeded so a typical custom-app developer doesn't see framework noise on day one — remove them if you're actively patching framework code. The \"Issues found\" stat card shows the kept count plus a \"N findings hidden\" note, so the total stays honest.</p>"
   },
   {
    "fieldname": "ignored_apps",

@@ -91,11 +91,17 @@ def test_bench_relative_path_does_not_emit_link():
 	from pyinstrument's short form — can't be made into a working
 	vscode:// URL without an abs path. Render as plain code instead
 	of emitting a broken link."""
+	from unittest.mock import patch as _patch
+
 	from optimus import renderer
 
 	doc = _fake_session_doc(callsite_filename="frappe/handler.py",
 	                        callsite_lineno=10)
-	html = renderer.render(doc, recordings=[])
+	# v0.13.x: default ignored_apps=("frappe", "erpnext") would filter the
+	# fixture finding out. Override to () so this test exercises its
+	# actual intent (link rendering, not the filter).
+	with _patch("optimus.settings.get_ignored_apps", return_value=()):
+		html = renderer.render(doc, recordings=[])
 
 	assert 'vscode://file/frappe/handler.py' not in html, (
 		"Non-absolute path must NOT be linked as vscode:// — the URL "

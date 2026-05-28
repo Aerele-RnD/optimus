@@ -626,14 +626,16 @@ class TestRenderConfigFooter:
 
 	def test_footer_stamps_default_on_values(self):
 		from optimus import renderer
-		# Default OptimusConfig() → hide_framework_tables on, no tracked/
-		# ignored apps, AI section toggles on, min_action_duration_ms=0.
+		# Default OptimusConfig() → hide_framework_tables on, no tracked
+		# apps, ignored_apps seeded with frappe + erpnext (v0.13.x default),
+		# AI section toggles on, min_action_duration_ms=0.
 		html = renderer.render_raw(self._doc(), recordings=[])
 		# Anchor label is unambiguous.
 		assert "<strong>Rendered with:</strong>" in html
 		assert "hide_framework_tables=on" in html
 		assert "tracked_apps=(none)" in html
-		assert "ignored_apps=(none)" in html
+		# v0.13.x: ignored_apps seeded with frappe + erpnext on fresh installs.
+		assert "ignored_apps=frappe, erpnext" in html
 		assert "ai_suggest_findings=on" in html
 		assert "ai_suggest_indexes=on" in html
 		assert "min_action_duration_ms=0" in html
