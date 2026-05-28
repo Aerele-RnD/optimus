@@ -23,9 +23,8 @@ values from older releases.
    - ``version is None`` → legacy un-enveloped value; treat as bare
      payload (backward-compat path; eventually migrate it on next write).
    - ``version != SCHEMA_VERSION`` → unknown / future schema; the helper
-     returns the caller's ``default`` AND emits a ``redis.schema_drift``
-     telemetry event so the operator sees the drift in
-     ``Optimus Telemetry Event``.
+     returns the caller's ``default`` so the host code path degrades
+     gracefully.
 
 **What this release does NOT do:**
 
@@ -93,8 +92,7 @@ def unwrap_value(
 
 	  * ``value is None`` (missing key) → ``(default, None)``.
 	  * ``value`` is a dict with ``_v == expected`` → ``(value["data"], expected)``.
-	  * ``value`` is a dict with ``_v != expected`` → ``(default, <observed>)``
-	    AND a ``redis.schema_drift`` telemetry event is emitted.
+	  * ``value`` is a dict with ``_v != expected`` → ``(default, <observed>)``.
 	  * ``value`` is anything else (legacy un-wrapped) → ``(value, None)``.
 
 	The legacy-detection branch is the migration-safety net: any value
@@ -111,24 +109,10 @@ def unwrap_value(
 			observed = 0
 		if observed == int(expected):
 			return value.get(_ENVELOPE_PAYLOAD_FIELD), observed
-		# Drift — emit telemetry but return the caller's default so the
-		# host code path can degrade gracefully. We DON'T try to migrate
-		# inline; that would couple this helper to every value shape's
-		# migration rules. Operators see the drift in Optimus Telemetry
-		# Event and a future PR can ship the migration.
-		try:
-			from optimus import telemetry
-
-			telemetry.emit_failure(
-				"redis.schema_drift",
-				context={
-					"observed_version": str(observed),
-					"expected_version": str(expected),
-				},
-				severity="warning",
-			)
-		except Exception:
-			pass
+		# Drift — return the caller's default so the host code path can
+		# degrade gracefully. We DON'T try to migrate inline; that would
+		# couple this helper to every value shape's migration rules. A
+		# future PR can ship the migration.
 		return default, observed
 	# Legacy un-wrapped value (or a non-dict like a raw string). Pass
 	# through; the caller treats it as the bare payload.

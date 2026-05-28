@@ -25,21 +25,16 @@ The unit suite (``test_line_profile_monitoring.py``) covers the
 release helper at the function-call boundary. It cannot prove:
 
   * That the worker-respawn probe at ``optimus.__init__`` actually
-    reclaims a leaked tool 2 in a real Frappe bench (with
-    ``frappe.logger().warning`` reachable — the probe's primary
-    visibility signal). Under pytest the probe runs against the
-    Frappe stub.
+    reclaims a leaked tool 2 in a real Frappe bench. Under pytest the
+    probe runs against the Frappe stub.
   * That the probe correctly **declines to reclaim** tool 2 when it's
     owned by a non-line_profiler tool (a third-party debugger or
     profiler). The probe must respect ownership boundaries.
-  * That the probe is silent (no telemetry, no log spam) on the happy
-    path where nobody owns tool 2.
 
-That gap is what this integration test fills. The 4 tests invoke
+That gap is what this integration test fills. The tests invoke
 ``optimus._startup_probe_tool2`` directly against manipulated
 ``sys.monitoring`` state — same shape as the unit tests'
-``_leak_tool`` helper, but exercised in a real-bench context where
-``frappe.logger()`` resolves and the optimus telemetry path is real.
+``_leak_tool`` helper, but exercised in a real-bench context.
 
 A note on "simulating worker respawn": we can't actually fork a
 worker mid-Phase-2 and re-import optimus inside a test (the optimus
@@ -58,11 +53,9 @@ import pytest
 from frappe.tests.utils import FrappeTestCase
 
 import optimus
-from optimus import telemetry
 
 _HAS_MON = hasattr(sys, "monitoring")
 _PID = sys.monitoring.PROFILER_ID if _HAS_MON else None
-_PROBE_FAILURE_EVENT = "startup_probe_tool2"
 
 
 @pytest.mark.skipif(not _HAS_MON, reason="sys.monitoring requires Python 3.12+")
@@ -80,10 +73,6 @@ class TestPhase2ToolOrphanRecovery(FrappeTestCase):
 		# the prior test would silently slow this one (and corrupt the
 		# assertion).
 		self._ensure_tool_2_is_free()
-		# Drain telemetry buffer + wipe any prior probe-failure rows so
-		# the happy-path test's "no telemetry" assertion is tight.
-		telemetry.drain_for_test()
-		self._wipe_probe_failure_rows()
 
 	def tearDown(self):
 		# Belt-and-suspenders: never let a leaked tool 2 from this test
@@ -92,11 +81,6 @@ class TestPhase2ToolOrphanRecovery(FrappeTestCase):
 			self._ensure_tool_2_is_free()
 		except Exception:
 			pass
-		try:
-			self._wipe_probe_failure_rows()
-		except Exception:
-			pass
-		telemetry.drain_for_test()
 		super().tearDown()
 
 	# --- sys.monitoring helpers ---------------------------------------
@@ -131,26 +115,7 @@ class TestPhase2ToolOrphanRecovery(FrappeTestCase):
 		# the most common third-party-tool registration pattern (claim
 		# the tool slot, install events on demand).
 
-	# --- Telemetry helpers --------------------------------------------
-
-	def _wipe_probe_failure_rows(self) -> None:
-		try:
-			frappe.db.delete(
-				"Optimus Telemetry Event",
-				{"event_name": _PROBE_FAILURE_EVENT},
-			)
-			frappe.db.commit()
-		except Exception:
-			pass
-
-	def _probe_failure_rows(self) -> list[dict]:
-		return frappe.get_all(
-			"Optimus Telemetry Event",
-			filters={"event_name": _PROBE_FAILURE_EVENT},
-			fields=["name", "event_name", "count"],
-		)
-
-	# --- The 4 tests --------------------------------------------------
+	# --- The tests ----------------------------------------------------
 
 	def test_probe_reclaims_leaked_line_profiler_tool_2_on_simulated_worker_respawn(self):
 		"""The canary. Simulate the post-Phase-2-death state (tool 2
@@ -207,25 +172,3 @@ class TestPhase2ToolOrphanRecovery(FrappeTestCase):
 			"probe accidentally reclaimed a tool owned by a non-line_profiler — "
 			"this would silently break the third-party tool's tracing"
 		)
-
-	def test_probe_emits_no_telemetry_on_happy_path(self):
-		"""Quiet-on-success contract. The probe runs at every worker
-		import — emitting a telemetry event on the no-op path would
-		flood ``Optimus Telemetry Event`` with worker-restart noise
-		and crowd out real failures. Confirms ``emit_failure`` is
-		called ONLY when the probe itself raises (not when tool 2 is
-		unowned, the common case)."""
-		# Confirm precondition: nothing owns tool 2.
-		assert sys.monitoring.get_tool(_PID) is None
-
-		optimus._startup_probe_tool2()
-
-		# Drain whatever's in the buffer; flush any pending writes; the
-		# DocType should still be empty for this event.
-		wrote = telemetry.flush()
-		# We don't assert wrote == 0 because OTHER unrelated events
-		# from sibling tests / autouse fixtures may have flushed
-		# alongside. We DO assert no startup_probe_tool2 row exists.
-		_ = wrote
-		rows = self._probe_failure_rows()
-		assert rows == [], f"probe emitted telemetry on the happy path (no-op tool free): {rows!r}"

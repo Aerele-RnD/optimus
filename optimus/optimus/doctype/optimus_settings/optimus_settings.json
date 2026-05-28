@@ -87,16 +87,7 @@
   "ai_privacy_description",
   "ai_excluded_finding_types",
   "column_break_ai_privacy",
-  "ai_request_timeout_seconds",
-  "telemetry_tab",
-  "telemetry_section",
-  "telemetry_description",
-  "telemetry_enabled",
-  "telemetry_sink_doctype",
-  "telemetry_sink_jsonl_file",
-  "column_break_telemetry",
-  "telemetry_endpoint_url",
-  "telemetry_retention_days"
+  "ai_request_timeout_seconds"
  ],
  "fields": [
   {
@@ -614,65 +605,6 @@
    "fieldname": "ai_request_timeout_seconds",
    "fieldtype": "Int",
    "label": "Request timeout (seconds)",
-   "non_negative": 1
-  },
-  {
-   "fieldname": "telemetry_tab",
-   "fieldtype": "Tab Break",
-   "label": "Telemetry"
-  },
-  {
-   "fieldname": "telemetry_section",
-   "fieldtype": "Section Break",
-   "label": "Failure Telemetry"
-  },
-  {
-   "fieldname": "telemetry_description",
-   "fieldtype": "HTML",
-   "options": "<div class='form-message'><b>Opt-in failure aggregation.</b> When enabled, Optimus counts its own internal failures (hooks, line-profiler teardown, analyze pipeline, LLM transport) by signature so you can tell <i>'fails 4000×/day from THIS code path'</i> from <i>'happened once and never again'</i>. Default sink is the <b>Optimus Telemetry Event</b> DocType you can browse in your own Desk — no data leaves this server. Hot-path emit is lock-free and reads no settings; the scheduled flush runs every 10 minutes.<br><br><b>What gets recorded:</b> exception class, traceback with file paths scrubbed to <code>&lt;bench&gt;/apps/optimus/...</code> (frames in your own apps collapse to <code>&lt;user_code&gt;:LINE</code>), and a small Optimus-internal context dict. No queries, no user code, no user data.</div>"
-  },
-  {
-   "default": "0",
-   "description": "Master gate. OFF by default. When enabled, failures are appended to an in-process bounded buffer (no DB / Redis I/O on the hot path) and flushed to the configured sinks every 10 minutes by the scheduler.",
-   "fieldname": "telemetry_enabled",
-   "fieldtype": "Check",
-   "label": "Enable failure telemetry"
-  },
-  {
-   "default": "1",
-   "depends_on": "eval:doc.telemetry_enabled",
-   "description": "Write aggregated rows to the Optimus Telemetry Event DocType. Browseable from Desk; retained for the duration set below.",
-   "fieldname": "telemetry_sink_doctype",
-   "fieldtype": "Check",
-   "label": "Local DocType sink"
-  },
-  {
-   "default": "0",
-   "depends_on": "eval:doc.telemetry_enabled",
-   "description": "Append one JSON line per signature per flush to <code>&lt;bench&gt;/logs/optimus_telemetry.jsonl</code> — for ingestion by log aggregators (Loki, Datadog, etc.). Rotation is your responsibility; the file is owned by your bench's normal log rotation.",
-   "fieldname": "telemetry_sink_jsonl_file",
-   "fieldtype": "Check",
-   "label": "JSONL log file sink"
-  },
-  {
-   "depends_on": "eval:doc.telemetry_enabled",
-   "fieldname": "column_break_telemetry",
-   "fieldtype": "Column Break"
-  },
-  {
-   "depends_on": "eval:doc.telemetry_enabled",
-   "description": "Phase B — HTTPS transport is not yet implemented. The field is accepted now so a future Optimus release can ship it as a purely additive change, but anything you save here is currently unused.",
-   "fieldname": "telemetry_endpoint_url",
-   "fieldtype": "Data",
-   "label": "Remote HTTPS endpoint (Phase B — not yet active)"
-  },
-  {
-   "default": "30",
-   "depends_on": "eval:doc.telemetry_enabled",
-   "description": "Daily janitor deletes Optimus Telemetry Event rows whose Last Seen is older than this many days. Capped at 100 deletions per run to keep the sweep bounded.",
-   "fieldname": "telemetry_retention_days",
-   "fieldtype": "Int",
-   "label": "Retention (days)",
    "non_negative": 1
   }
  ],

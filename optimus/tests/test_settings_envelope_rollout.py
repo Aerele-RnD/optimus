@@ -178,8 +178,7 @@ class TestSettingsEnvelopeLegacyCompat:
 class TestSettingsEnvelopeDriftHandling:
 	"""A cache HIT against a value with a MISMATCHED ``_v`` (future
 	schema not yet supported) falls through to ``_resolve`` and stores a
-	fresh new-shape envelope. The drift event lands in the in-process
-	telemetry buffer for operator visibility."""
+	fresh new-shape envelope."""
 
 	def test_drift_falls_through_to_resolve(self):
 		fresh = _fresh_settings_module()

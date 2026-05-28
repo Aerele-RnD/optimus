@@ -34,7 +34,6 @@ _OPTIMUS_DOCTYPES = (
 	"Optimus Background Job",
 	"Optimus Phase Two Run",
 	"Optimus Tracked App",
-	"Optimus Telemetry Event",
 )
 
 

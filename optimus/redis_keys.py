@@ -51,8 +51,7 @@ from __future__ import annotations
 # constant signals to ``redis_schema.unwrap_value`` that any persisted
 # value missing or carrying a different ``_v`` field is from a different
 # era — the unwrapper either migrates it (when a migration path exists)
-# or returns the caller's default and emits a ``redis.schema_drift``
-# telemetry event.
+# or returns the caller's default.
 SCHEMA_VERSION = 1
 
 # Namespace prefixes — documented here, not used in the builders below

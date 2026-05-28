@@ -314,7 +314,7 @@ class TestAtomicLuaMergeConcurrent(FrappeTestCase):
 	# 5. Sanity: with Lua disabled, _atomic_merge_job_meta doesn't
 	#    raise — the wrapper catches the eval failure and falls
 	#    through silently. Defensive lock-in for the contract that
-	#    "telemetry / atomic-merge must NEVER break the host code".
+	#    "atomic-merge must NEVER break the host code".
 	# ----------------------------------------------------------------
 
 	def test_atomic_merge_does_not_raise_when_lua_unavailable(self):

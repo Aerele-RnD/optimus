@@ -107,11 +107,6 @@ def before_request_line_profile(*args, **kwargs) -> None:
 			title="phase 2 before_request failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("phase2.before_request", exc)
-		except Exception:
-			pass
 
 
 def after_request_line_profile(*args, **kwargs) -> None:
@@ -145,11 +140,6 @@ def after_request_line_profile(*args, **kwargs) -> None:
 			title="phase 2 after_request failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("phase2.after_request", exc)
-		except Exception:
-			pass
 	finally:
 		# Guarantee no process-global sys.monitoring line-trace hook survives
 		# this request — a leaked tool would line-trace every later request.
@@ -228,11 +218,6 @@ def before_job_line_profile(method=None, kwargs=None, **rest) -> None:
 			title="phase 2 before_job failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("phase2.before_job", exc)
-		except Exception:
-			pass
 
 
 def after_job_line_profile(method=None, kwargs=None, result=None, **rest) -> None:
@@ -262,10 +247,5 @@ def after_job_line_profile(method=None, kwargs=None, result=None, **rest) -> Non
 			title="phase 2 after_job failed",
 			message=f"{type(exc).__name__}: {exc}",
 		)
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("phase2.after_job", exc)
-		except Exception:
-			pass
 	finally:
 		capture.release_monitoring_tool()

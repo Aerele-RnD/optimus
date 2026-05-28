@@ -133,13 +133,6 @@ scheduler_events = {
 		"*/5 * * * *": [
 			"optimus.janitor.sweep_stale_sessions",
 		],
-		# v0.8.0: opt-in failure telemetry. Drains the in-process bounded
-		# buffer to the configured sinks. No-op when telemetry is OFF
-		# (the master gate is checked inside flush()), so this cron is
-		# safe to leave active regardless of the operator's setting.
-		"*/10 * * * *": [
-			"optimus.telemetry.flush",
-		],
 	},
 	"daily": [
 		"optimus.janitor.sweep_old_sessions",
