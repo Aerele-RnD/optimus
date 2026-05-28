@@ -161,13 +161,34 @@ _DEFAULTS = {
 	"ai_request_timeout_seconds": 60,
 }
 
-# v0.7.x: the nine detection-sensitivity knobs the Sensitivity Profile governs.
-# These are the thresholds that decide whether / at what severity a finding
-# surfaces. NOT included: display filters (min_action_duration_ms,
-# large_duration_threshold_ms), Phase-2 UI knobs (auto_expand_*, phase2_*),
-# capture caps, retention, or AI — those are deployment choices, not detection
-# sensitivity, and stay editable regardless of profile.
+# v0.13.x: every knob whose DocType description advertises a
+# "Reference values — Strict: X · Recommended: Y · Relaxed: Z" triplet
+# joins the Sensitivity Profile. Pre-v0.13.x this was nine detection-
+# sensitivity thresholds only (the comment block here used to say
+# "display filters / Phase-2 UI / capture caps / retention / AI are
+# deployment choices, not detection sensitivity") — but every one of
+# those fields ALSO advertises a triplet in its operator-facing
+# description, which made the UI promise something the resolve path
+# wasn't keeping. The fix: honor the triplet everywhere it's
+# advertised. A field has a triplet iff its tuning matters enough for
+# a deployment to want a one-knob preset; that's the right test for
+# inclusion regardless of which capture-vs-detection-vs-display axis
+# it lives on.
+#
+# Order mirrors the DocType's field_order so the JS-side
+# get_config_profiles API returns presets in the same order operators
+# see them in the form.
 _SENSITIVITY_KEYS = (
+	# General → Session retention
+	"session_retention_days",
+	# Capture capacity
+	"max_queries_per_recording",
+	"pyinstrument_sampler_interval_ms",
+	"background_job_wait_seconds",
+	# Display filters
+	"min_action_duration_ms",
+	"large_duration_threshold_ms",
+	# Analyzer thresholds (detection — the original nine)
 	"redundant_doc_threshold",
 	"redundant_cache_threshold",
 	"redundant_perm_threshold",
@@ -177,6 +198,12 @@ _SENSITIVITY_KEYS = (
 	"slow_hot_path_min_ms",
 	"hot_line_high_pct",
 	"hot_line_high_min_ms",
+	# Phase-2 UI knobs
+	"phase2_max_runs_per_session",
+	"auto_expand_max_depth",
+	"auto_expand_min_ms",
+	# AI auto-suggest cap
+	"ai_auto_suggest_max",
 )
 
 # Named Sensitivity Profiles — the single source of truth for preset numbers
@@ -187,8 +214,26 @@ _SENSITIVITY_KEYS = (
 # respect the controller's _NUMERIC_FLOORS. "Custom" is intentionally absent —
 # _resolve keys off ``_PROFILES.get(profile)`` so Custom falls through to the
 # stored-value logic. Build Recommended from _DEFAULTS to prevent drift.
+#
+# Numbers below mirror the "Reference values — Strict: X · Recommended: Y ·
+# Relaxed: Z" triplet baked into each field's DocType description, so the
+# operator-facing form text and the resolve-path behaviour stay in sync.
+# ``test_profiles_match_doctype_reference_values`` regression-guards the
+# pair.
 _PROFILES = {
 	"Strict": {
+		# General + capture + display + Phase-2 + AI extras (v0.13.x)
+		"session_retention_days": 90,
+		"max_queries_per_recording": 5000,
+		"pyinstrument_sampler_interval_ms": 0.5,
+		"background_job_wait_seconds": 300,
+		"min_action_duration_ms": 0.0,
+		"large_duration_threshold_ms": 500.0,
+		"phase2_max_runs_per_session": 25,
+		"auto_expand_max_depth": 15,
+		"auto_expand_min_ms": 25.0,
+		"ai_auto_suggest_max": 10,
+		# Analyzer thresholds (the original nine)
 		"redundant_doc_threshold": 3,
 		"redundant_cache_threshold": 20,
 		"redundant_perm_threshold": 5,
@@ -201,6 +246,18 @@ _PROFILES = {
 	},
 	"Recommended": {key: _DEFAULTS[key] for key in _SENSITIVITY_KEYS},
 	"Relaxed": {
+		# General + capture + display + Phase-2 + AI extras (v0.13.x)
+		"session_retention_days": 7,
+		"max_queries_per_recording": 1000,
+		"pyinstrument_sampler_interval_ms": 5.0,
+		"background_job_wait_seconds": 60,
+		"min_action_duration_ms": 50.0,
+		"large_duration_threshold_ms": 99999999.0,
+		"phase2_max_runs_per_session": 5,
+		"auto_expand_max_depth": 5,
+		"auto_expand_min_ms": 100.0,
+		"ai_auto_suggest_max": 3,
+		# Analyzer thresholds (the original nine)
 		"redundant_doc_threshold": 10,
 		"redundant_cache_threshold": 100,
 		"redundant_perm_threshold": 25,
@@ -533,11 +590,31 @@ def _resolve() -> OptimusConfig:
 			return float(preset[key])
 		return _float(key)
 
+	# v0.13.x: zero-allowed sensitivity fields use this helper instead of
+	# the generic ``_sens_int`` so an operator who wrote 0 in the form
+	# (under Custom) gets 0 — not the _DEFAULTS fallback the truthy-check
+	# in ``_threshold`` would trigger.
+	def _sens_int_zero_ok(key: str) -> int:
+		if preset is not None:
+			return int(preset[key])
+		v = row.get(key)
+		if v is not None:
+			return int(v)
+		return int(_DEFAULTS[key])
+
+	def _sens_float_zero_ok(key: str) -> float:
+		if preset is not None:
+			return float(preset[key])
+		v = row.get(key)
+		if v is not None:
+			return float(v)
+		return float(_DEFAULTS[key])
+
 	return OptimusConfig(
 		enabled=bool(row.get("enabled", _DEFAULTS["enabled"])),
-		session_retention_days=int(
-			row.get("session_retention_days") or _DEFAULTS["session_retention_days"]
-		),
+		# v0.13.x: profile-aware. Was ``_threshold``-style truthy-check; the
+		# preset wins under Strict/Recommended/Relaxed.
+		session_retention_days=_sens_int("session_retention_days"),
 		tracked_apps=tuple(row.get("tracked_apps") or ()),
 		# v0.13.x: fall through to ``_DEFAULTS["ignored_apps"]`` (frappe +
 		# erpnext) when the DocType row hasn't populated this field —
@@ -554,8 +631,10 @@ def _resolve() -> OptimusConfig:
 			if "hide_framework_tables" in row
 			else _DEFAULTS["hide_framework_tables"]
 		),
-		max_queries_per_recording=_threshold("max_queries_per_recording"),
-		# Nine detection-sensitivity knobs — profile-aware (see _sens_* above).
+		# v0.13.x: now profile-aware (was ``_threshold`` only).
+		max_queries_per_recording=_sens_int("max_queries_per_recording"),
+		# Original nine detection-sensitivity knobs — profile-aware
+		# (see _sens_* above). Still here for clarity.
 		redundant_doc_threshold=_sens_int("redundant_doc_threshold"),
 		redundant_cache_threshold=_sens_int("redundant_cache_threshold"),
 		redundant_perm_threshold=_sens_int("redundant_perm_threshold"),
@@ -565,29 +644,32 @@ def _resolve() -> OptimusConfig:
 		slow_hot_path_min_ms=_sens_float("slow_hot_path_min_ms"),
 		hot_line_high_pct=_sens_float("hot_line_high_pct"),
 		hot_line_high_min_ms=_sens_float("hot_line_high_min_ms"),
-		pyinstrument_sampler_interval_ms=_float("pyinstrument_sampler_interval_ms"),
-		# min_action_duration_ms allows 0 — read directly without the
-		# zero-falls-through helper.
-		min_action_duration_ms=float(
-			row.get("min_action_duration_ms")
-			if row.get("min_action_duration_ms") is not None
-			else _DEFAULTS["min_action_duration_ms"]
-		),
-		large_duration_threshold_ms=_float("large_duration_threshold_ms"),
-		phase2_max_runs_per_session=_int_with_default("phase2_max_runs_per_session"),
+		# v0.13.x: profile-aware (was ``_float``).
+		pyinstrument_sampler_interval_ms=_sens_float("pyinstrument_sampler_interval_ms"),
+		# v0.13.x: profile-aware. ``min_action_duration_ms`` allows 0 as a
+		# legitimate "show everything" sentinel, so we use the
+		# zero-OK variant — under Custom, a stored 0 doesn't fall
+		# through to the default.
+		min_action_duration_ms=_sens_float_zero_ok("min_action_duration_ms"),
+		# v0.13.x: profile-aware (was ``_float``).
+		large_duration_threshold_ms=_sens_float("large_duration_threshold_ms"),
+		# v0.13.x: profile-aware (was ``_int_with_default``).
+		phase2_max_runs_per_session=_sens_int("phase2_max_runs_per_session"),
 		phase2_default_auto_expand=bool(
 			row.get("phase2_default_auto_expand")
 			if "phase2_default_auto_expand" in row
 			else _DEFAULTS["phase2_default_auto_expand"]
 		),
-		# 0 = don't wait; clamp to [0, 300] (300 = hard ceiling regardless of config).
-		background_job_wait_seconds=max(0, min(300, int(
-			row.get("background_job_wait_seconds")
-			if row.get("background_job_wait_seconds") is not None
-			else _DEFAULTS["background_job_wait_seconds"]
-		))),
-		auto_expand_max_depth=_int_with_default("auto_expand_max_depth"),
-		auto_expand_min_ms=_float("auto_expand_min_ms"),
+		# v0.13.x: profile-aware. 0 = don't wait (sentinel); clamp to
+		# [0, 300] (hard ceiling regardless of profile choice). Under
+		# Custom, an operator's stored 0 is preserved via the zero-OK
+		# variant.
+		background_job_wait_seconds=max(
+			0, min(300, _sens_int_zero_ok("background_job_wait_seconds"))
+		),
+		# v0.13.x: profile-aware (was ``_int_with_default`` / ``_float``).
+		auto_expand_max_depth=_sens_int("auto_expand_max_depth"),
+		auto_expand_min_ms=_sens_float("auto_expand_min_ms"),
 		skip_request_paths=tuple(row.get("skip_request_paths") or ()),
 		skip_users=tuple(row.get("skip_users") or ()),
 		sensitive_sql_columns=tuple(row.get("sensitive_sql_columns") or ()),
@@ -605,13 +687,9 @@ def _resolve() -> OptimusConfig:
 			if "ai_auto_suggest" in row
 			else _DEFAULTS["ai_auto_suggest"]
 		),
-		# Allows 0 (= every eligible finding) — read directly, no
-		# zero-falls-through helper.
-		ai_auto_suggest_max=int(
-			row.get("ai_auto_suggest_max")
-			if row.get("ai_auto_suggest_max") is not None
-			else _DEFAULTS["ai_auto_suggest_max"]
-		),
+		# v0.13.x: profile-aware. Allows 0 (= every eligible finding) —
+		# the zero-OK variant keeps a stored 0 under Custom.
+		ai_auto_suggest_max=_sens_int_zero_ok("ai_auto_suggest_max"),
 		ai_humanize_steps=bool(
 			row.get("ai_humanize_steps")
 			if "ai_humanize_steps" in row

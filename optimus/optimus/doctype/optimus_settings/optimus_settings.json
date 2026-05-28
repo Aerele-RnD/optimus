@@ -126,7 +126,8 @@
    "fieldname": "session_retention_days",
    "fieldtype": "Int",
    "label": "Session Retention (days)",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "fieldname": "apps_section",
@@ -227,7 +228,8 @@
    "fieldname": "max_queries_per_recording",
    "fieldtype": "Int",
    "label": "Max Queries per Recording",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "default": "1.0",
@@ -235,7 +237,8 @@
    "fieldname": "pyinstrument_sampler_interval_ms",
    "fieldtype": "Float",
    "label": "Sampler Interval (ms)",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "fieldname": "column_break_capacity",
@@ -254,7 +257,8 @@
    "fieldname": "background_job_wait_seconds",
    "fieldtype": "Int",
    "label": "Wait for Background Jobs (seconds)",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "fieldname": "display_filters_section",
@@ -272,7 +276,8 @@
    "fieldname": "min_action_duration_ms",
    "fieldtype": "Float",
    "label": "Min Action Duration to Show (ms)",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "fieldname": "column_break_display_filters",
@@ -284,7 +289,8 @@
    "fieldname": "large_duration_threshold_ms",
    "fieldtype": "Float",
    "label": "Render durations in seconds above (ms)",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "fieldname": "analysis_tab",
@@ -299,7 +305,7 @@
   {
    "fieldname": "sensitivity_description",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\">Pick a preset to set every detection threshold below in one move. <b>Strict</b> catches more (more findings, more noise); <b>Relaxed</b> catches less; <b>Recommended</b> is the shipped default and automatically tracks future tuning. Choose <b>Custom</b> to edit the individual thresholds yourself — they stay locked under the named presets. Display filters, Phase-2, capture, retention and AI settings are not affected by the profile.</p>"
+   "options": "<p class=\"text-muted small\">Pick a preset to set every tunable threshold across Optimus in one move — analyzer thresholds (the original nine), capture knobs (max queries / sampler interval / background-job wait), retention, display filters, Phase-2 defaults, and the AI auto-suggest cap. <b>Strict</b> catches more (more findings, more noise) and keeps data longer; <b>Relaxed</b> catches less and prunes faster; <b>Recommended</b> is the shipped default and automatically tracks future tuning. Choose <b>Custom</b> to edit the individual fields yourself — they stay locked under the named presets.</p>"
   },
   {
    "default": "Recommended",
@@ -434,7 +440,8 @@
    "fieldname": "phase2_max_runs_per_session",
    "fieldtype": "Int",
    "label": "Phase 2: Max Runs per Session",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "default": "1",
@@ -453,7 +460,8 @@
    "fieldname": "auto_expand_max_depth",
    "fieldtype": "Int",
    "label": "Auto-Expand: Max Depth",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "default": "50",
@@ -461,7 +469,8 @@
    "fieldname": "auto_expand_min_ms",
    "fieldtype": "Float",
    "label": "Auto-Expand: Minimum Child Time (ms)",
-   "non_negative": 1
+   "non_negative": 1,
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\""
   },
   {
    "fieldname": "ai_tab",
@@ -579,6 +588,7 @@
    "depends_on": "eval:doc.ai_enabled && doc.ai_auto_suggest",
    "description": "Cap on how many findings get an automatic suggestion per session — the highest-severity, highest-impact ones first. 0 = every eligible finding (can be slow + costly on big sessions). Reference values — Strict: 10  ·  Recommended: 5  ·  Relaxed: 3.",
    "fieldname": "ai_auto_suggest_max",
+   "read_only_depends_on": "eval:doc.config_profile != \"Custom\"",
    "fieldtype": "Int",
    "label": "Max auto-suggested findings per session",
    "non_negative": 1

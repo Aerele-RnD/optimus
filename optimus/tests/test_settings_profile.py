@@ -34,13 +34,33 @@ _SETTINGS_JSON = os.path.join(
 	"optimus", "doctype", "optimus_settings", "optimus_settings.json",
 )
 _REFVAL_RE = re.compile(
-	r"Strict:\s*([\d.]+).*?Recommended:\s*([\d.]+).*?Relaxed:\s*([\d.]+)"
+	# ``\d+(?:\.\d+)?`` matches an optional decimal. The non-greedy
+	# ``[\d.]+`` form the v0.7.x test used greedily ate the trailing
+	# period from sentence-ending descriptions ("...Relaxed: 5.0.") and
+	# broke ``float()``.
+	r"Strict:\s*(\d+(?:\.\d+)?).*?Recommended:\s*(\d+(?:\.\d+)?).*?"
+	r"Relaxed:\s*(\d+(?:\.\d+)?)"
 )
 
-# The nine detection-sensitivity knobs the preset governs. Kept here
-# (not imported) so the test pins the contract independently of the
-# implementation's own tuple.
+# Every knob whose DocType description advertises a "Reference values —
+# Strict / Recommended / Relaxed" triplet is governed by the preset.
+# Kept here (not imported) so the test pins the contract independently
+# of the implementation's own tuple. v0.13.x expanded the set from 9
+# detection-sensitivity knobs to 19 — including capture caps,
+# retention, display filters, Phase-2 UI knobs, and the AI auto-suggest
+# cap — so the UI's "Reference values" promise is honored everywhere
+# it's advertised.
 SENSITIVITY_KEYS = (
+	# General → Session retention
+	"session_retention_days",
+	# Capture capacity
+	"max_queries_per_recording",
+	"pyinstrument_sampler_interval_ms",
+	"background_job_wait_seconds",
+	# Display filters
+	"min_action_duration_ms",
+	"large_duration_threshold_ms",
+	# Analyzer thresholds (the original nine)
 	"redundant_doc_threshold",
 	"redundant_cache_threshold",
 	"redundant_perm_threshold",
@@ -50,6 +70,12 @@ SENSITIVITY_KEYS = (
 	"slow_hot_path_min_ms",
 	"hot_line_high_pct",
 	"hot_line_high_min_ms",
+	# Phase-2 UI knobs
+	"phase2_max_runs_per_session",
+	"auto_expand_max_depth",
+	"auto_expand_min_ms",
+	# AI auto-suggest cap
+	"ai_auto_suggest_max",
 )
 
 
@@ -94,11 +120,70 @@ class TestProfileTable:
 		for key in SENSITIVITY_KEYS:
 			assert settings._PROFILES["Recommended"][key] == settings._DEFAULTS[key], key
 
-	def test_strict_catches_more_than_relaxed(self):
-		"""Sanity on the ordering: every Strict knob is <= its Relaxed
-		counterpart (lower threshold = catch more)."""
-		for key in SENSITIVITY_KEYS:
+	# ---- Strict-vs-Relaxed semantic ordering ---------------------------
+	#
+	# For DETECTION thresholds the rule is "lower = catch more" — Strict's
+	# number is at-or-below Relaxed's, so a redundant-call loop or a slow
+	# query fires under Strict at a hair lower a cost.
+	#
+	# For RESOURCE / RETENTION knobs the rule inverts — "higher = stricter
+	# data preservation" — Strict's number is at-or-above Relaxed's. A
+	# Strict deployment keeps sessions for 90 days vs Relaxed's 7,
+	# captures 5000 queries per recording vs 1000, allows 25 Phase-2 runs
+	# per session vs 5, etc. Stricter monitoring → more data.
+	#
+	# Categorize each key so the sanity check enforces the right ordering
+	# per group. Any new sensitivity key must join one of the two tuples
+	# below or this test will tell the engineer which side it falls on.
+
+	# Strict <= Relaxed (lower number = stricter)
+	_STRICT_LOWER_KEYS = (
+		"pyinstrument_sampler_interval_ms",
+		"min_action_duration_ms",
+		"large_duration_threshold_ms",
+		"auto_expand_min_ms",
+		"redundant_doc_threshold",
+		"redundant_cache_threshold",
+		"redundant_perm_threshold",
+		"n_plus_one_min_occurrences",
+		"slow_query_threshold_ms",
+		"slow_hot_path_pct_threshold",
+		"slow_hot_path_min_ms",
+		"hot_line_high_pct",
+		"hot_line_high_min_ms",
+	)
+	# Strict >= Relaxed (higher number = stricter, more data / more
+	# preservation / more visibility)
+	_STRICT_HIGHER_KEYS = (
+		"session_retention_days",
+		"max_queries_per_recording",
+		"background_job_wait_seconds",
+		"phase2_max_runs_per_session",
+		"auto_expand_max_depth",
+		"ai_auto_suggest_max",
+	)
+
+	def test_strict_catches_more_than_relaxed_on_detection_knobs(self):
+		"""Detection thresholds: every Strict knob is <= its Relaxed
+		counterpart (lower threshold = catch more findings)."""
+		for key in self._STRICT_LOWER_KEYS:
 			assert settings._PROFILES["Strict"][key] <= settings._PROFILES["Relaxed"][key], key
+
+	def test_strict_keeps_more_data_than_relaxed_on_resource_knobs(self):
+		"""Resource / retention knobs: every Strict value is >= its
+		Relaxed counterpart (higher = stricter monitoring posture)."""
+		for key in self._STRICT_HIGHER_KEYS:
+			assert settings._PROFILES["Strict"][key] >= settings._PROFILES["Relaxed"][key], key
+
+	def test_every_sensitivity_key_is_categorised(self):
+		"""Drift guard: a newly-added sensitivity key must land in one of
+		the two ordering groups above, or the test stops being meaningful."""
+		categorised = set(self._STRICT_LOWER_KEYS) | set(self._STRICT_HIGHER_KEYS)
+		uncategorised = set(SENSITIVITY_KEYS) - categorised
+		assert not uncategorised, (
+			f"new sensitivity key(s) need to join _STRICT_LOWER_KEYS or "
+			f"_STRICT_HIGHER_KEYS in this test: {uncategorised}"
+		)
 
 	def test_profiles_match_doctype_reference_values(self):
 		"""_PROFILES must equal the 'Reference values — Strict/Recommended/
