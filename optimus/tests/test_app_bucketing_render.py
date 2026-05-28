@@ -179,6 +179,8 @@ def test_finding_without_callsite_goes_to_other_bucket():
 def test_observations_also_bucketed_by_app():
 	"""The Observations subsection must get the same per-app wrapper
 	when it contains findings from multiple frameworks (frappe + erpnext)."""
+	from unittest.mock import patch as _patch
+
 	from optimus import renderer
 
 	# Framework N+1 (observational) findings from two different
@@ -197,7 +199,11 @@ def test_observations_also_bucketed_by_app():
 	)
 	doc = _fake_session_doc_with_findings(frappe_obs, erpnext_obs)
 
-	html = renderer.render(doc, recordings=[])
+	# v0.13.x: the default seed (frappe + erpnext in ignored_apps) would
+	# filter these test fixtures out. Override to () so the test exercises
+	# the multi-app bucket case independent of the new default.
+	with _patch("optimus.settings.get_ignored_apps", return_value=()):
+		html = renderer.render(doc, recordings=[])
 
 	# Both framework observations present.
 	assert "Framework loop in frappe" in html
@@ -229,7 +235,11 @@ class TestIgnoredAppsFilter:
 	def test_empty_ignored_apps_renders_all_findings(self):
 		from optimus import renderer
 
-		html = renderer.render(_three_apps_doc(), recordings=[])
+		# v0.13.x: the default seed (frappe + erpnext) would filter the
+		# fixture findings out. The test's intent is "empty ignored_apps
+		# = nothing filtered" — so override the setting to () explicitly.
+		with patch("optimus.settings.get_ignored_apps", return_value=()):
+			html = renderer.render(_three_apps_doc(), recordings=[])
 		assert "FrappeFinding" in html
 		assert "ErpnextFinding" in html
 		assert "MyappFinding" in html

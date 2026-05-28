@@ -57,7 +57,13 @@ class TestDefaults:
 		assert cfg.enabled is True
 		assert cfg.session_retention_days == 30
 		assert cfg.tracked_apps == ()
-		assert cfg.ignored_apps == ()  # v0.6.x: defaults empty (nothing dropped).
+		# v0.13.x: defaults seeded with every Frappe-organization-maintained
+		# app (was empty pre-v0.13.x). Install hook also writes these to the
+		# DocType on fresh installs. Sorted alphabetically for stability.
+		assert cfg.ignored_apps == (
+			"builder", "crm", "drive", "erpnext", "frappe",
+			"helpdesk", "hrms", "insights", "lms", "payments", "wiki",
+		)
 		assert cfg.hide_framework_tables is True  # v0.6.x: default on.
 		assert cfg.redundant_doc_threshold == 5
 		# v0.5.2 round 4: bumped from 10 → 50 to cut 0ms "cache
@@ -169,9 +175,18 @@ class TestIgnoredApps:
 	"""v0.6.x: 'Ignored Apps' — exclusion list whose findings are dropped from
 	the report. Mirrors the tracked_apps wiring."""
 
-	def test_default_is_empty_tuple(self):
-		assert settings.OptimusConfig().ignored_apps == ()
-		assert settings._DEFAULTS["ignored_apps"] == ()
+	def test_default_seeds_framework_apps(self):
+		# v0.13.x: default seeded with every Frappe-organization-maintained
+		# app so a typical custom-app operator doesn't see Frappe-org noise
+		# on day one. The dataclass default + _DEFAULTS must agree (the
+		# no-bench fallback path reads the dataclass; the resolve path
+		# reads _DEFAULTS).
+		_expected = (
+			"builder", "crm", "drive", "erpnext", "frappe",
+			"helpdesk", "hrms", "insights", "lms", "payments", "wiki",
+		)
+		assert settings.OptimusConfig().ignored_apps == _expected
+		assert settings._DEFAULTS["ignored_apps"] == _expected
 
 	def test_resolves_from_row(self, monkeypatch):
 		monkeypatch.setattr(
@@ -183,11 +198,17 @@ class TestIgnoredApps:
 		assert isinstance(cfg.ignored_apps, tuple)
 		assert cfg.ignored_apps == ("frappe", "optimus")
 
-	def test_resolves_to_empty_when_absent_in_row(self, monkeypatch):
-		# Pre-v0.6.x Single (field doesn't exist yet) → defaults to ().
+	def test_falls_through_to_defaults_when_absent_in_row(self, monkeypatch):
+		# v0.13.x: when the DocType row hasn't populated ignored_apps
+		# (pre-v0.6.x Single, or a row from before the install hook ran),
+		# resolve falls through to the seeded defaults so the no-bench /
+		# pre-migrate path matches the post-install behaviour.
 		monkeypatch.setattr(settings, "_read_doctype_row", lambda: {"enabled": True})
 		monkeypatch.setattr(settings, "_site_conf_fallback", lambda k: None)
-		assert settings._resolve().ignored_apps == ()
+		assert settings._resolve().ignored_apps == (
+			"builder", "crm", "drive", "erpnext", "frappe",
+			"helpdesk", "hrms", "insights", "lms", "payments", "wiki",
+		)
 
 	def test_get_ignored_apps_returns_empty_on_error(self, monkeypatch):
 		def _boom():

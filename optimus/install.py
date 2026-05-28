@@ -90,6 +90,87 @@ def after_install():
 		except Exception:
 			pass
 
+	# v0.13.x: pre-populate Optimus Settings ▸ Ignored Apps with the two
+	# framework apps operators most commonly can't (or won't) patch —
+	# ``frappe`` and ``erpnext``. Mirrors the tracked-apps seed: writes
+	# only when the table is empty (idempotent, never clobbers an
+	# operator's existing configuration). Operators who DO want frappe /
+	# erpnext findings (e.g. core contributors) can remove the rows
+	# after install.
+	try:
+		_seed_ignored_apps_with_framework_apps()
+	except Exception as exc:
+		try:
+			frappe.log_error(title="optimus after_install ignored-apps seed")
+		except Exception:
+			pass
+		try:
+			from optimus import telemetry
+			telemetry.emit_failure("install.after_install.ignored_apps_seed", exc)
+		except Exception:
+			pass
+
+
+# v0.13.x: the Frappe-organization-maintained apps seeded into Ignored
+# Apps on fresh install. Mirrors ``FRAMEWORK_APPS`` in
+# ``optimus.analyzers.base`` minus ``optimus`` itself (we're a third-
+# party app, not Frappe-org). Operators who actively contribute to one
+# of these (ERPNext core devs, HRMS maintainers, etc.) remove the rows
+# they care about post-install — the seed is a sensible default that
+# trades a tiny first-time setup step for a clean day-one report on
+# the typical custom-app stack.
+#
+# Kept hardcoded (not derived from ``FRAMEWORK_APPS`` at import time)
+# so future additions to FRAMEWORK_APPS don't silently change what's
+# hidden by default on every new install. The two lists overlap
+# heavily but track different intents: FRAMEWORK_APPS controls the
+# actionable-vs-observation routing inside the report (architectural
+# distinction); this tuple decides what to hide ENTIRELY on day one
+# (UX choice). Bump it together with FRAMEWORK_APPS only when a new
+# Frappe-org app is clearly noise for the typical custom-app
+# developer. Sorted alphabetically so the seeded rows have a stable,
+# predictable order in the Settings form.
+_DEFAULT_IGNORED_APPS = (
+	"builder",
+	"crm",
+	"drive",
+	"erpnext",
+	"frappe",
+	"helpdesk",
+	"hrms",
+	"insights",
+	"lms",
+	"payments",
+	"wiki",
+)
+
+
+def _seed_ignored_apps_with_framework_apps():
+	"""Populate Optimus Settings.ignored_apps with the Frappe-organization
+	apps operators most commonly can't (or won't) patch on day one — all
+	the apps in ``_DEFAULT_IGNORED_APPS`` (frappe + erpnext + the nine
+	other apps maintained by Frappe Technologies).
+
+	Idempotent: if ``ignored_apps`` already has any rows (either from a
+	previous install run on the same site, or from manual operator
+	configuration before re-running migrate), we do NOT touch it. The
+	seed is a fresh-install convenience, never a retroactive rewrite.
+	"""
+	if not frappe.db.exists("DocType", "Optimus Settings"):
+		# Migration hasn't created the Single yet — skip silently
+		# (mirror the tracked-apps seed's early-return).
+		return
+
+	settings = frappe.get_single("Optimus Settings")
+	if settings.ignored_apps:
+		# Respect existing config — never overwrite.
+		return
+
+	for app_name in _DEFAULT_IGNORED_APPS:
+		settings.append("ignored_apps", {"app_name": app_name})
+	settings.save(ignore_permissions=True)
+	safe_commit()
+
 
 def _seed_tracked_apps_from_installed_apps():
 	"""Populate Optimus Settings.tracked_apps with every installed

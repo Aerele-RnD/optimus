@@ -40,10 +40,31 @@ _DEFAULTS = {
 	"enabled": True,
 	"session_retention_days": 30,
 	"tracked_apps": (),  # tuple, not list — immutable for caching
-	# v0.6.x: exclusion list — findings whose blame app falls in this tuple
-	# are dropped from the report (both Findings and Observations sections).
-	# Default empty (nothing dropped). Typical use: ("frappe", "optimus").
-	"ignored_apps": (),
+	# Exclusion list — findings whose blame app falls in this tuple are
+	# dropped from the report (both Findings and Observations sections).
+	# v0.13.x: default seeded with every Frappe-organization-maintained
+	# app (frappe, erpnext, hrms, lms, helpdesk, insights, crm, builder,
+	# wiki, drive, payments). The install hook
+	# (``optimus.install._seed_ignored_apps_with_framework_apps``) writes
+	# these as initial rows into the Optimus Settings DocType on fresh
+	# installs (idempotent — never overwrites an existing configuration).
+	# Pre-v0.13.x sites stay at whatever they configured manually; only
+	# new sites pick up the seed. Operators who actively contribute to
+	# one of these apps (ERPNext core devs, HRMS maintainers, etc.)
+	# remove the rows they care about post-install.
+	"ignored_apps": (
+		"builder",
+		"crm",
+		"drive",
+		"erpnext",
+		"frappe",
+		"helpdesk",
+		"hrms",
+		"insights",
+		"lms",
+		"payments",
+		"wiki",
+	),
 	# v0.6.x: when True, the "Time spent per database table" section drops
 	# Frappe schema/meta tables, framework-internal tables (User, Has Role,
 	# DefaultValue, …), and information_schema.* — framework noise the app
@@ -215,7 +236,25 @@ class OptimusConfig:
 	session_retention_days: int = 30
 	tracked_apps: tuple[str, ...] = field(default_factory=tuple)
 	# v0.6.x: drop findings whose blame app is in this tuple (both sections).
-	ignored_apps: tuple[str, ...] = field(default_factory=tuple)
+	# v0.13.x: dataclass default mirrors ``_DEFAULTS`` — fresh installs
+	# get every Frappe-organization-maintained app seeded into the DocType,
+	# and the no-bench / pre-migrate fallback path returns the same tuple
+	# so pure-Python unit tests see the same behaviour as the bench.
+	ignored_apps: tuple[str, ...] = field(
+		default_factory=lambda: (
+			"builder",
+			"crm",
+			"drive",
+			"erpnext",
+			"frappe",
+			"helpdesk",
+			"hrms",
+			"insights",
+			"lms",
+			"payments",
+			"wiki",
+		)
+	)
 	# v0.6.x: drop framework/internal db tables from the "Time spent per
 	# database table" section. Default on.
 	hide_framework_tables: bool = True
@@ -500,7 +539,16 @@ def _resolve() -> OptimusConfig:
 			row.get("session_retention_days") or _DEFAULTS["session_retention_days"]
 		),
 		tracked_apps=tuple(row.get("tracked_apps") or ()),
-		ignored_apps=tuple(row.get("ignored_apps") or ()),
+		# v0.13.x: fall through to ``_DEFAULTS["ignored_apps"]`` (frappe +
+		# erpnext) when the DocType row hasn't populated this field —
+		# i.e. when ``_read_doctype_row`` returned ``None`` (fresh install
+		# / pre-migrate). On a real bench the install hook seeds the
+		# rows themselves, so the row read returns the configured tuple
+		# and this fallback is bypassed; the no-bench / pure-pytest path
+		# is what depends on this default.
+		ignored_apps=tuple(
+			row.get("ignored_apps") or _DEFAULTS["ignored_apps"]
+		),
 		hide_framework_tables=bool(
 			row.get("hide_framework_tables")
 			if "hide_framework_tables" in row
