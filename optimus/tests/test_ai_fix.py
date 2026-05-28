@@ -99,6 +99,29 @@ class TestBuildMessages:
 		for h in ("**Diagnosis**", "**Fix**", "**Why it works**", "**Verify**"):
 			assert h in system
 
+	def test_system_prompt_forbids_raw_sql_in_fix(self):
+		"""Defense-in-depth for the raw-SQL guardrail: the system prompt
+		must carry an explicit, emphatic NO RAW SQL rule (not just the
+		soft "never hand-built SQL strings" mention buried in the WRITE
+		IDIOMATIC FRAPPE paragraph). The post-processing detector in
+		``_flag_raw_sql_in_fix`` backstops the prompt — but cutting raw
+		SQL at the prompt layer is cheaper (the model never generates
+		it) and gives the reader a cleaner suggestion (no appended
+		profiler note to wade through).
+		"""
+		system, _ = ai_fix._build_messages(self._finding())
+		# Loud header so the rule is unmissable in the prompt.
+		assert "NO RAW SQL IN YOUR PROPOSED FIX" in system
+		# Lists every SQL verb the post-processing detector catches —
+		# prompt + post-processing scope must match.
+		low = system.lower()
+		for verb in ("select", "insert", "update", "delete", "replace"):
+			assert f"\"{verb} ...\"" in low or f'"{verb} ...' in low or verb in low
+		# Names the legitimate exception so the model knows when raw
+		# SQL is still acceptable (DDL for indexes when Customize Form
+		# isn't an option).
+		assert "alter table" in low or "create index" in low
+
 	def test_system_prompt_forbids_inventing_code(self):
 		system, _ = ai_fix._build_messages(self._finding())
 		low = system.lower()
@@ -609,6 +632,189 @@ class TestMetadataIndexGuardrail:
 			out = ai_fix.suggest_fix({"finding_type": "Missing Index", "title": "x", "technical_detail": {}})
 		assert "Profiler note" in out["suggestion"]
 		assert "docstatus" in out["suggestion"]
+
+
+# ---------------------------------------------------------------------------
+# Raw `frappe.db.sql` guardrail — the model is told via system prompt to
+# "never hand-built SQL strings" and use the Document API or frappe.qb
+# instead. This guardrail backstops that instruction: detect raw SQL in
+# the LLM's proposed fix and append an advisory profiler note. Append-
+# only, never rewrites — same posture as the metadata-column guardrail.
+# ---------------------------------------------------------------------------
+
+
+class TestRawSqlGuardrail:
+	# --- Clean inputs that must NOT trip the guardrail --------------------
+
+	def test_clean_qb_suggestion_returns_unchanged(self):
+		txt = (
+			"**Fix**\n\n"
+			"```python\n"
+			"User = frappe.qb.DocType('User')\n"
+			"rows = frappe.qb.from_(User).select(User.name).run(as_dict=True)\n"
+			"```"
+		)
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	def test_clean_get_all_suggestion_returns_unchanged(self):
+		txt = (
+			"**Fix**\n\n"
+			"```python\n"
+			"rows = frappe.get_all('User', fields=['name', 'email'])\n"
+			"```"
+		)
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	def test_empty_input_returns_unchanged(self):
+		assert ai_fix._flag_raw_sql_in_fix("") == ""
+
+	def test_text_with_no_code_blocks_returns_unchanged(self):
+		# No code fences anywhere — the guardrail must not fire on prose
+		# alone. (Real LLM output almost always has a code block, but a
+		# diagnosis-only response with no fix block is valid.)
+		txt = "**Diagnosis** — N+1 in the loop.\n**Fix** — batch the lookup."
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	# --- Inputs that SHOULD trip the guardrail ----------------------------
+
+	def test_raw_sql_select_in_addition_line_flagged(self):
+		txt = (
+			"**Fix**\n\n"
+			"```diff\n"
+			"-rows = frappe.get_all('User', fields=['name'])\n"
+			"+rows = frappe.db.sql(\"SELECT name FROM `tabUser`\", as_dict=True)\n"
+			"```"
+		)
+		out = ai_fix._flag_raw_sql_in_fix(txt)
+		assert out != txt
+		assert "Profiler note" in out
+		assert "`frappe.qb`" in out and "`frappe.get_all`" in out
+
+	def test_raw_sql_update_in_addition_line_flagged(self):
+		txt = (
+			"```diff\n"
+			"+frappe.db.sql(\"UPDATE `tabUser` SET enabled = 1 WHERE name = %s\", (n,))\n"
+			"```"
+		)
+		out = ai_fix._flag_raw_sql_in_fix(txt)
+		assert "Profiler note" in out
+
+	def test_raw_sql_insert_in_addition_line_flagged(self):
+		txt = (
+			"```diff\n"
+			"+frappe.db.sql(\"INSERT INTO `tabLog` (msg) VALUES (%s)\", (m,))\n"
+			"```"
+		)
+		assert "Profiler note" in ai_fix._flag_raw_sql_in_fix(txt)
+
+	def test_raw_sql_delete_in_addition_line_flagged(self):
+		txt = (
+			"```diff\n"
+			"+frappe.db.sql(\"DELETE FROM `tabLog` WHERE name = %s\", (n,))\n"
+			"```"
+		)
+		assert "Profiler note" in ai_fix._flag_raw_sql_in_fix(txt)
+
+	def test_raw_sql_case_insensitive_verb(self):
+		# Models often produce mixed-case keywords. The detector regex is
+		# case-insensitive on the verb — pin that.
+		txt = (
+			"```diff\n"
+			"+frappe.db.sql(\"select email from `tabUser` where name=%s\")\n"
+			"```"
+		)
+		assert "Profiler note" in ai_fix._flag_raw_sql_in_fix(txt)
+
+	def test_raw_sql_in_plain_python_code_block_flagged(self):
+		# Non-diff code block — every line is "proposed code".
+		txt = (
+			"```python\n"
+			"def replace_old_call():\n"
+			"    return frappe.db.sql(\"SELECT name FROM `tabUser`\")\n"
+			"```"
+		)
+		assert "Profiler note" in ai_fix._flag_raw_sql_in_fix(txt)
+
+	def test_raw_sql_in_untagged_code_block_flagged(self):
+		# Fence with no info string still treated as code.
+		txt = (
+			"```\n"
+			"frappe.db.sql(\"SELECT * FROM `tabUser`\")\n"
+			"```"
+		)
+		assert "Profiler note" in ai_fix._flag_raw_sql_in_fix(txt)
+
+	# --- Tricky cases: must NOT trip ---------------------------------------
+
+	def test_raw_sql_in_removal_line_NOT_flagged(self):
+		# The "-" lines are the BEFORE code being replaced. Flagging them
+		# would invert the guardrail (the model is rightly REMOVING the
+		# bad pattern).
+		txt = (
+			"```diff\n"
+			"-rows = frappe.db.sql(\"SELECT name FROM `tabUser`\", as_dict=True)\n"
+			"+rows = frappe.get_all('User', fields=['name'])\n"
+			"```"
+		)
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	def test_raw_sql_in_prose_NOT_flagged(self):
+		# Inline-code mention in a paragraph — the model is talking ABOUT
+		# the anti-pattern, not proposing it. Guardrail must stay silent.
+		txt = (
+			"**Diagnosis** — the code uses `frappe.db.sql(\"SELECT ...\")` "
+			"inside a loop. **Fix** — batch via `frappe.get_all`."
+		)
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	def test_diff_file_header_NOT_flagged(self):
+		# ``+++ filename`` is the unified-diff file header, not an
+		# addition line. Even if a fake header somehow contained the
+		# raw-SQL token, it must not trip.
+		txt = (
+			"```diff\n"
+			"+++ b/path/to/file.py\n"
+			"@@ -1,3 +1,3 @@\n"
+			" def x():\n"
+			"-    return None\n"
+			"+    return frappe.get_all('User', fields=['name'])\n"
+			"```"
+		)
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	def test_ddl_verb_NOT_flagged(self):
+		# CREATE / ALTER / DROP are intentionally outside scope —
+		# legit administrative use (e.g. ADD INDEX when Customize Form
+		# isn't an option).
+		txt = (
+			"```diff\n"
+			"+frappe.db.sql(\"ALTER TABLE `tabUser` ADD INDEX (`email`)\")\n"
+			"```"
+		)
+		assert ai_fix._flag_raw_sql_in_fix(txt) == txt
+
+	# --- End-to-end via suggest_fix --------------------------------------
+
+	def test_suggest_fix_appends_correction_note(self, monkeypatch):
+		bad = {"choices": [{"message": {"content":
+			"**Fix**\n\n"
+			"```diff\n"
+			"-for u in users:\n"
+			"-    e = frappe.db.get_value('User', u, 'email')\n"
+			"+rows = frappe.db.sql(\"SELECT name, email FROM `tabUser`\", as_dict=True)\n"
+			"```"
+		}}]}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, bad)))
+		prov = {"name": "OpenAI", "protocol": "openai",
+		        "base_url": "https://api.openai.com/v1",
+		        "model": "gpt-4.1-mini", "needs_key": True, "api_key": "sk-test"}
+		with patch("optimus.ai_fix._resolve_provider", return_value=prov):
+			out = ai_fix.suggest_fix({
+				"finding_type": "N+1 Query", "title": "x", "technical_detail": {},
+			})
+		assert "Profiler note" in out["suggestion"]
+		# The note carries the alternative-API hint.
+		assert "frappe.get_all" in out["suggestion"]
 
 
 class TestTemperature:
