@@ -99,6 +99,29 @@ class TestBuildMessages:
 		for h in ("**Diagnosis**", "**Fix**", "**Why it works**", "**Verify**"):
 			assert h in system
 
+	def test_system_prompt_forbids_raw_sql_in_fix(self):
+		"""Defense-in-depth for the raw-SQL guardrail: the system prompt
+		must carry an explicit, emphatic NO RAW SQL rule (not just the
+		soft "never hand-built SQL strings" mention buried in the WRITE
+		IDIOMATIC FRAPPE paragraph). The post-processing detector in
+		``_flag_raw_sql_in_fix`` backstops the prompt — but cutting raw
+		SQL at the prompt layer is cheaper (the model never generates
+		it) and gives the reader a cleaner suggestion (no appended
+		profiler note to wade through).
+		"""
+		system, _ = ai_fix._build_messages(self._finding())
+		# Loud header so the rule is unmissable in the prompt.
+		assert "NO RAW SQL IN YOUR PROPOSED FIX" in system
+		# Lists every SQL verb the post-processing detector catches —
+		# prompt + post-processing scope must match.
+		low = system.lower()
+		for verb in ("select", "insert", "update", "delete", "replace"):
+			assert f"\"{verb} ...\"" in low or f'"{verb} ...' in low or verb in low
+		# Names the legitimate exception so the model knows when raw
+		# SQL is still acceptable (DDL for indexes when Customize Form
+		# isn't an option).
+		assert "alter table" in low or "create index" in low
+
 	def test_system_prompt_forbids_inventing_code(self):
 		system, _ = ai_fix._build_messages(self._finding())
 		low = system.lower()
