@@ -160,16 +160,27 @@ def _stub_seeder_frappe(monkeypatch, *, settings, doctype_exists=True):
 
 
 class TestSeedIgnoredAppsWithFrameworkApps:
-	def test_empty_table_gets_seeded_with_frappe_and_erpnext(self, monkeypatch):
+	def test_empty_table_gets_seeded_with_frappe_org_apps(self, monkeypatch):
 		settings = _FakeSettings(ignored_apps_rows=[])
 		_stub_seeder_frappe(monkeypatch, settings=settings)
 
 		install._seed_ignored_apps_with_framework_apps()
 
-		# Both default apps appended in the documented order.
+		# All Frappe-organization-maintained apps appended in the
+		# documented (alphabetical) order so the seeded rows show up in
+		# a predictable order in the Settings form.
 		assert settings.appended == [
-			{"app_name": "frappe"},
+			{"app_name": "builder"},
+			{"app_name": "crm"},
+			{"app_name": "drive"},
 			{"app_name": "erpnext"},
+			{"app_name": "frappe"},
+			{"app_name": "helpdesk"},
+			{"app_name": "hrms"},
+			{"app_name": "insights"},
+			{"app_name": "lms"},
+			{"app_name": "payments"},
+			{"app_name": "wiki"},
 		]
 		# Single save call — the seeder must not save per-row.
 		assert settings.save_count == 1
@@ -203,5 +214,19 @@ class TestSeedIgnoredAppsWithFrameworkApps:
 	def test_default_list_matches_documented_constant(self):
 		# Locks the public-facing default. If a future change wants to
 		# add / remove an app, this assertion + the description text in
-		# optimus_settings.json must move together.
-		assert install._DEFAULT_IGNORED_APPS == ("frappe", "erpnext")
+		# optimus_settings.json + the ``ignored_apps`` defaults in
+		# ``settings.py`` (both ``_DEFAULTS`` and the dataclass default
+		# factory) must move together.
+		assert install._DEFAULT_IGNORED_APPS == (
+			"builder",
+			"crm",
+			"drive",
+			"erpnext",
+			"frappe",
+			"helpdesk",
+			"hrms",
+			"insights",
+			"lms",
+			"payments",
+			"wiki",
+		)

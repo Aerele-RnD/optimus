@@ -151,7 +151,7 @@
   {
    "fieldname": "apps_description_ignored",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\"><b>Ignored Apps</b> is an <i>exclusion list</i> — findings whose blame app falls in this list are <b>dropped from the report entirely</b> (both the \"Findings — what to fix\" and \"Framework-level observations\" sections). Use it for apps you can't (or won't) patch (typically <code>frappe</code>, <code>optimus</code>, sometimes <code>erpnext</code>). <b>Default on fresh install:</b> <code>frappe</code> and <code>erpnext</code> are seeded so a typical custom-app developer doesn't see framework noise on day one — remove them if you're actively patching framework code. The \"Issues found\" stat card shows the kept count plus a \"N findings hidden\" note, so the total stays honest.</p>"
+   "options": "<p class=\"text-muted small\"><b>Ignored Apps</b> is an <i>exclusion list</i> — findings whose blame app falls in this list are <b>dropped from the report entirely</b> (both the \"Findings — what to fix\" and \"Framework-level observations\" sections). Use it for apps you can't (or won't) patch. <b>Default on fresh install:</b> every Frappe-organization-maintained app is seeded — <code>frappe</code>, <code>erpnext</code>, <code>hrms</code>, <code>lms</code>, <code>helpdesk</code>, <code>insights</code>, <code>crm</code>, <code>builder</code>, <code>wiki</code>, <code>drive</code>, <code>payments</code> — so a typical custom-app developer doesn't see Frappe-org noise on day one. Remove the rows you actively contribute to (ERPNext core, HRMS, etc.). The \"Issues found\" stat card shows the kept count plus a \"N findings hidden\" note, so the total stays honest.</p>"
   },
   {
    "fieldname": "ignored_apps",

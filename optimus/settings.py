@@ -42,16 +42,29 @@ _DEFAULTS = {
 	"tracked_apps": (),  # tuple, not list — immutable for caching
 	# Exclusion list — findings whose blame app falls in this tuple are
 	# dropped from the report (both Findings and Observations sections).
-	# v0.13.x: default seeded with ``frappe`` + ``erpnext`` — the two apps
-	# operators most commonly can't (or won't) patch. The install hook
+	# v0.13.x: default seeded with every Frappe-organization-maintained
+	# app (frappe, erpnext, hrms, lms, helpdesk, insights, crm, builder,
+	# wiki, drive, payments). The install hook
 	# (``optimus.install._seed_ignored_apps_with_framework_apps``) writes
 	# these as initial rows into the Optimus Settings DocType on fresh
 	# installs (idempotent — never overwrites an existing configuration).
 	# Pre-v0.13.x sites stay at whatever they configured manually; only
-	# new sites pick up the seed. Operators who DO want frappe / erpnext
-	# findings (e.g. ERPNext core contributors) remove the rows after
-	# install.
-	"ignored_apps": ("frappe", "erpnext"),
+	# new sites pick up the seed. Operators who actively contribute to
+	# one of these apps (ERPNext core devs, HRMS maintainers, etc.)
+	# remove the rows they care about post-install.
+	"ignored_apps": (
+		"builder",
+		"crm",
+		"drive",
+		"erpnext",
+		"frappe",
+		"helpdesk",
+		"hrms",
+		"insights",
+		"lms",
+		"payments",
+		"wiki",
+	),
 	# v0.6.x: when True, the "Time spent per database table" section drops
 	# Frappe schema/meta tables, framework-internal tables (User, Has Role,
 	# DefaultValue, …), and information_schema.* — framework noise the app
@@ -224,11 +237,23 @@ class OptimusConfig:
 	tracked_apps: tuple[str, ...] = field(default_factory=tuple)
 	# v0.6.x: drop findings whose blame app is in this tuple (both sections).
 	# v0.13.x: dataclass default mirrors ``_DEFAULTS`` — fresh installs
-	# get ``frappe`` + ``erpnext`` seeded into the DocType, and the
-	# no-bench / pre-migrate fallback path returns the same tuple so
-	# pure-Python unit tests see the same behaviour as the bench.
+	# get every Frappe-organization-maintained app seeded into the DocType,
+	# and the no-bench / pre-migrate fallback path returns the same tuple
+	# so pure-Python unit tests see the same behaviour as the bench.
 	ignored_apps: tuple[str, ...] = field(
-		default_factory=lambda: ("frappe", "erpnext")
+		default_factory=lambda: (
+			"builder",
+			"crm",
+			"drive",
+			"erpnext",
+			"frappe",
+			"helpdesk",
+			"hrms",
+			"insights",
+			"lms",
+			"payments",
+			"wiki",
+		)
 	)
 	# v0.6.x: drop framework/internal db tables from the "Time spent per
 	# database table" section. Default on.

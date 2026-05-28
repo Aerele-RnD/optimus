@@ -111,18 +111,45 @@ def after_install():
 			pass
 
 
-# v0.13.x: the framework apps seeded into Ignored Apps on fresh install.
-# Kept module-level so tests can pin the exact list. Operators who run
-# only ERPNext (no further custom layer) often KEEP erpnext too — but
-# the seed sets up the common 95% case (frappe is uniformly noise for
-# any custom-app developer; erpnext is noise for everyone NOT actively
-# patching ERPNext core).
-_DEFAULT_IGNORED_APPS = ("frappe", "erpnext")
+# v0.13.x: the Frappe-organization-maintained apps seeded into Ignored
+# Apps on fresh install. Mirrors ``FRAMEWORK_APPS`` in
+# ``optimus.analyzers.base`` minus ``optimus`` itself (we're a third-
+# party app, not Frappe-org). Operators who actively contribute to one
+# of these (ERPNext core devs, HRMS maintainers, etc.) remove the rows
+# they care about post-install — the seed is a sensible default that
+# trades a tiny first-time setup step for a clean day-one report on
+# the typical custom-app stack.
+#
+# Kept hardcoded (not derived from ``FRAMEWORK_APPS`` at import time)
+# so future additions to FRAMEWORK_APPS don't silently change what's
+# hidden by default on every new install. The two lists overlap
+# heavily but track different intents: FRAMEWORK_APPS controls the
+# actionable-vs-observation routing inside the report (architectural
+# distinction); this tuple decides what to hide ENTIRELY on day one
+# (UX choice). Bump it together with FRAMEWORK_APPS only when a new
+# Frappe-org app is clearly noise for the typical custom-app
+# developer. Sorted alphabetically so the seeded rows have a stable,
+# predictable order in the Settings form.
+_DEFAULT_IGNORED_APPS = (
+	"builder",
+	"crm",
+	"drive",
+	"erpnext",
+	"frappe",
+	"helpdesk",
+	"hrms",
+	"insights",
+	"lms",
+	"payments",
+	"wiki",
+)
 
 
 def _seed_ignored_apps_with_framework_apps():
-	"""Populate Optimus Settings.ignored_apps with the two framework
-	apps operators most commonly can't (or won't) patch on day one.
+	"""Populate Optimus Settings.ignored_apps with the Frappe-organization
+	apps operators most commonly can't (or won't) patch on day one — all
+	the apps in ``_DEFAULT_IGNORED_APPS`` (frappe + erpnext + the nine
+	other apps maintained by Frappe Technologies).
 
 	Idempotent: if ``ignored_apps`` already has any rows (either from a
 	previous install run on the same site, or from manual operator
