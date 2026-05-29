@@ -192,14 +192,30 @@ class TestNumericFloorClamp:
 		# Silent clamp — no warning.
 		assert stub.msgprint_calls == []
 
-	def test_clamps_zero_session_retention_to_one(self, monkeypatch):
-		"""``session_retention_days = 0`` would make the janitor wipe
-		sessions immediately; clamp to 1 day minimum."""
+	def test_zero_session_retention_allowed(self, monkeypatch):
+		"""v0.13.x: ``session_retention_days = 0`` is the Strict-as-
+		unlimited sentinel — it tells the janitor to never sweep. The
+		floor dropped from 1 → 0 to admit it; the janitor's
+		``_sweep_old_sessions`` early-returns on ``retention_days <=
+		0``. Pre-v0.13.x the test asserted clamp-to-1 because the
+		janitor's ``or DEFAULT_RETENTION_DAYS`` silently overrode 0 →
+		90, making the field description's 'Set to 0 to keep forever'
+		promise a lie."""
 		OptimusSettings, _stub = _fresh_controller(monkeypatch)
 		doc = OptimusSettings()
 		doc.session_retention_days = 0
 		doc._clamp_numeric_floors()
-		assert doc.session_retention_days == 1
+		assert doc.session_retention_days == 0
+
+	def test_zero_max_queries_per_recording_allowed(self, monkeypatch):
+		"""v0.13.x: ``max_queries_per_recording = 0`` is the Strict-as-
+		unlimited sentinel — analyze enriches every query (no
+		truncation). Floor lowered 1 → 0 to admit it."""
+		OptimusSettings, _stub = _fresh_controller(monkeypatch)
+		doc = OptimusSettings()
+		doc.max_queries_per_recording = 0
+		doc._clamp_numeric_floors()
+		assert doc.max_queries_per_recording == 0
 
 	def test_preserves_valid_values(self, monkeypatch):
 		OptimusSettings, _stub = _fresh_controller(monkeypatch)

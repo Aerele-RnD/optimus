@@ -188,10 +188,25 @@ def _sweep_orphan_redis_state():
 
 
 def _sweep_old_sessions():
-	retention_days = (
-		frappe.conf.get("optimus_session_retention_days") or DEFAULT_RETENTION_DAYS
-	)
-	cutoff = add_to_date(now_datetime(), days=-int(retention_days))
+	# v0.13.x: settings precedence — DocType (via get_config) first,
+	# legacy site_config fallback second, hardcoded default last. The
+	# DocType wins when both are set so the operator's UI choice always
+	# takes precedence over a stale site_config knob.
+	try:
+		from optimus.settings import get_config
+		retention_days = int(get_config().session_retention_days)
+	except Exception:
+		retention_days = int(
+			frappe.conf.get("optimus_session_retention_days") or DEFAULT_RETENTION_DAYS
+		)
+	# v0.13.x: 0 = forever (Strict-as-unlimited semantics). The daily
+	# sweep becomes a no-op; sessions accumulate indefinitely. Honored
+	# here so the field description's "Set to 0 to keep forever" promise
+	# matches the runtime — pre-v0.13.x this was silently overridden by
+	# the legacy ``or DEFAULT_RETENTION_DAYS`` fallback.
+	if retention_days <= 0:
+		return
+	cutoff = add_to_date(now_datetime(), days=-retention_days)
 
 	old = frappe.db.get_all(
 		"Optimus Session",

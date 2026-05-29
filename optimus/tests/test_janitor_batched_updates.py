@@ -304,3 +304,58 @@ class TestSweepOldSessionsBulkFileFetch:
 		# delete with permissions + lifecycle events).
 		ps_delete_calls = [c for c in stub._delete_doc_calls if c[0][0] == "Optimus Session"]
 		assert len(ps_delete_calls) == 3
+
+
+# --------------------------------------------------------------------------
+# v0.13.x: ``session_retention_days = 0`` means keep forever — the daily
+# sweep early-returns without deleting anything. Closes the gap where the
+# pre-v0.13.x ``or DEFAULT_RETENTION_DAYS`` silently fell back to 90 and
+# made the field description's "Set to 0 to keep forever" promise a lie.
+# --------------------------------------------------------------------------
+
+class TestSweepOldSessionsForeverRetention:
+	def _stub_get_config(self, monkeypatch, retention_days):
+		"""Install a fake ``optimus.settings`` whose ``get_config()``
+		returns an object with the chosen ``session_retention_days``.
+		Wholesale-replaces the module so the janitor's lazy import
+		picks up the fake rather than the real settings reader (which
+		needs frappe.cache + DocType wiring this test deliberately
+		doesn't provide)."""
+		fake = types.ModuleType("optimus.settings")
+		fake.get_config = lambda: types.SimpleNamespace(
+			session_retention_days=retention_days,
+		)
+		monkeypatch.setitem(sys.modules, "optimus.settings", fake)
+
+	def test_zero_retention_is_a_silent_noop(self, monkeypatch):
+		"""``session_retention_days = 0`` → the sweep doesn't query
+		Optimus Session at all (early-return before the get_all). No
+		deletions, no File lookups."""
+		stub = _install_frappe_stub(monkeypatch)
+		self._stub_get_config(monkeypatch, retention_days=0)
+		janitor = _reload_janitor(monkeypatch)
+
+		janitor._sweep_old_sessions()
+
+		# No queries at all — the early-return fired before the
+		# Optimus Session get_all.
+		session_calls = [c for c in stub._get_all_calls if c[0] == "Optimus Session"]
+		assert session_calls == [], (
+			f"forever-retention must skip the session query, got {session_calls!r}"
+		)
+		# And no deletions.
+		assert stub._delete_doc_calls == []
+
+	def test_positive_retention_sweeps_normally(self, monkeypatch):
+		"""Sanity: a positive value still sweeps. Guards against an
+		over-eager ``<= 0`` check that would also skip the legit case."""
+		stub = _install_frappe_stub(monkeypatch)
+		stub._get_all_return["Optimus Session"] = []
+		self._stub_get_config(monkeypatch, retention_days=30)
+		janitor = _reload_janitor(monkeypatch)
+
+		janitor._sweep_old_sessions()
+
+		# get_all WAS called on Optimus Session this time.
+		session_calls = [c for c in stub._get_all_calls if c[0] == "Optimus Session"]
+		assert len(session_calls) >= 1

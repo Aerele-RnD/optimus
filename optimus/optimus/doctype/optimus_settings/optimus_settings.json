@@ -113,7 +113,7 @@
   },
   {
    "default": "30",
-   "description": "Optimus Session records older than this are eligible for automatic deletion by the daily housekeeping job. Set to 0 to keep forever. Reference values — Strict: 90  ·  Recommended: 30  ·  Relaxed: 7.",
+   "description": "Optimus Session records older than this are eligible for automatic deletion by the daily housekeeping job. Set to 0 to keep forever (the daily sweep becomes a no-op). Reference values — Strict: 1  ·  Recommended: 30  ·  Relaxed: 7.",
    "fieldname": "session_retention_days",
    "fieldtype": "Int",
    "label": "Session Retention (days)",
@@ -215,7 +215,7 @@
   },
   {
    "default": "2000",
-   "description": "Max queries per recording that get enriched (sqlparse format + EXPLAIN + normalization). Anything beyond this is truncated with a warning. Keep reasonable — each query costs one EXPLAIN round-trip. Reference values — Strict: 5000  ·  Recommended: 2000  ·  Relaxed: 1000.",
+   "description": "Max queries per recording that get enriched (sqlparse format + EXPLAIN + normalization). Anything beyond this is truncated with a warning. Keep reasonable — each query costs one EXPLAIN round-trip. Set to 0 for no cap (enrich every query — analyze time scales linearly with query volume, so reserve this for forensic deep-dives). Reference values — Strict: 0  ·  Recommended: 2000  ·  Relaxed: 1000.",
    "fieldname": "max_queries_per_recording",
    "fieldtype": "Int",
    "label": "Max Queries per Recording",
@@ -263,7 +263,7 @@
   },
   {
    "default": "0",
-   "description": "Drop actions shorter than this many milliseconds from the per-action breakdown in reports. 0 = show everything. Useful for declutter when a flow generates many sub-millisecond background polls. Reference values — Strict: 0  ·  Recommended: 0  ·  Relaxed: 50.",
+   "description": "Drop actions shorter than this many milliseconds from the per-action breakdown in reports. 0 = show everything. Useful for declutter when a flow generates many sub-millisecond background polls. Reference values — Strict: 1  ·  Recommended: 0  ·  Relaxed: 50.",
    "fieldname": "min_action_duration_ms",
    "fieldtype": "Float",
    "label": "Min Action Duration to Show (ms)",
@@ -427,7 +427,7 @@
   },
   {
    "default": "10",
-   "description": "Cap on how many phase-2 runs can be retained per Optimus Session. When exceeded, the oldest run's full results are archived to a private File and only the row metadata is kept in the DocType. Reference values — Strict: 25  ·  Recommended: 10  ·  Relaxed: 5.",
+   "description": "Cap on how many phase-2 runs can be retained per Optimus Session. When exceeded, the oldest run's full results are archived to a private File and only the row metadata is kept in the DocType. Set to 0 for no cap (every run keeps full results — watch DocType size on heavy users). Reference values — Strict: 0  ·  Recommended: 10  ·  Relaxed: 5.",
    "fieldname": "phase2_max_runs_per_session",
    "fieldtype": "Int",
    "label": "Phase 2: Max Runs per Session",
@@ -447,7 +447,7 @@
   },
   {
    "default": "10",
-   "description": "Maximum levels deep that auto-expand will follow into the call tree from a curated pick. Reference values — Strict: 15  ·  Recommended: 10  ·  Relaxed: 5.",
+   "description": "Maximum levels deep that auto-expand will follow into the call tree from a curated pick. Set to 0 for unlimited depth (walks to the leaf — pairs naturally with auto-expand min-ms 0 for the deepest possible instrumentation). Reference values — Strict: 0  ·  Recommended: 10  ·  Relaxed: 5.",
    "fieldname": "auto_expand_max_depth",
    "fieldtype": "Int",
    "label": "Auto-Expand: Max Depth",
@@ -456,7 +456,7 @@
   },
   {
    "default": "50",
-   "description": "Auto-expand stops descending when the next-hottest child consumes less than this many milliseconds. Lower = follow deeper into smaller hot spots; higher = stop earlier and instrument fewer functions. Reference values — Strict: 25  ·  Recommended: 50  ·  Relaxed: 100.",
+   "description": "Auto-expand stops descending when the next-hottest child consumes less than this many milliseconds. Lower = follow deeper into smaller hot spots; higher = stop earlier and instrument fewer functions. Set to 0 to follow into every measurable child (no minimum). Reference values — Strict: 10  ·  Recommended: 50  ·  Relaxed: 100.",
    "fieldname": "auto_expand_min_ms",
    "fieldtype": "Float",
    "label": "Auto-Expand: Minimum Child Time (ms)",
@@ -577,7 +577,7 @@
   {
    "default": "5",
    "depends_on": "eval:doc.ai_enabled && doc.ai_auto_suggest",
-   "description": "Cap on how many findings get an automatic suggestion per session — the highest-severity, highest-impact ones first. 0 = every eligible finding (can be slow + costly on big sessions). Reference values — Strict: 10  ·  Recommended: 5  ·  Relaxed: 3.",
+   "description": "Cap on how many findings get an automatic suggestion per session — the highest-severity, highest-impact ones first. 0 = every eligible finding (can be slow + costly on big sessions). Reference values — Strict: 0  ·  Recommended: 5  ·  Relaxed: 3.",
    "fieldname": "ai_auto_suggest_max",
    "read_only_depends_on": "eval:doc.config_profile != \"Custom\"",
    "fieldtype": "Int",

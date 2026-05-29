@@ -588,9 +588,11 @@ def _auto_arm_phase2(docname: str, context) -> None:
 		if not user:
 			return
 
-		# Guard: respect the per-session run cap.
-		cap = int(getattr(get_config(), "phase2_max_runs_per_session", 10) or 10)
-		if len(doc.get("phase_2_runs") or []) >= cap:
+		# Guard: respect the per-session run cap. v0.13.x: 0 = no cap
+		# (Strict-as-unlimited). Pre-v0.13.x the ``or 10`` swallowed 0
+		# and silently re-applied the default cap.
+		cap = int(getattr(get_config(), "phase2_max_runs_per_session", 10))
+		if cap > 0 and len(doc.get("phase_2_runs") or []) >= cap:
 			return
 
 		# Guard: don't arm over an active phase-1 or phase-2 pass for this user.
@@ -1194,13 +1196,18 @@ def _enrich_recordings(recordings: list[dict]) -> list[str]:
 		cap = int(get_config().max_queries_per_recording)
 	except Exception:
 		cap = MAX_QUERIES_ENRICHED_PER_RECORDING
-	if cap <= 0:
+	# v0.13.x: 0 = no cap (Strict-as-unlimited semantics). Pre-v0.13.x
+	# this fell back to MAX_QUERIES_ENRICHED_PER_RECORDING, silently
+	# overriding the operator's "I want every query enriched" intent.
+	# Negative values are still treated as a typo and fall back; only
+	# exactly 0 means "unlimited".
+	if cap < 0:
 		cap = MAX_QUERIES_ENRICHED_PER_RECORDING
 
 	for recording in recordings:
 		calls = recording.get("calls") or []
 		total_queries_seen += len(calls)
-		if len(calls) > cap:
+		if cap and len(calls) > cap:
 			truncated_queries += len(calls) - cap
 			calls = calls[:cap]
 			recording["calls"] = calls

@@ -471,6 +471,51 @@ class TestExpandHotChain:
 		assert len(chain) == 3
 		assert [c["depth"] for c in chain] == [0, 1, 2]
 
+	def test_max_depth_zero_walks_to_leaf(self):
+		"""v0.13.x: ``max_depth = 0`` means unbounded — walk to the leaf
+		instead of the legacy "0 = no descent" sentinel that the pre-
+		v0.13.x ``while depth < max_depth`` loop accidentally
+		implemented. The Strict Sensitivity Profile uses 0 here so
+		auto-expand follows the entire hot chain in one shot."""
+		# Same 5-deep linear chain as the cap test above.
+		leaf = _frame("level5", "apps/my_app/my_app/x.py", 5, 100.0)
+		l4 = _frame("level4", "apps/my_app/my_app/x.py", 4, 110.0, children=[leaf])
+		l3 = _frame("level3", "apps/my_app/my_app/x.py", 3, 120.0, children=[l4])
+		l2 = _frame("level2", "apps/my_app/my_app/x.py", 2, 130.0, children=[l3])
+		l1 = _frame("level1", "apps/my_app/my_app/x.py", 1, 140.0, children=[l2])
+		tree = _root(l1)
+
+		chain = picker.expand_hot_chain(
+			[tree], "my_app.x.level1", max_depth=0,
+		)
+
+		# 0 (pick) + 4 descendants — walked all the way to ``level5``.
+		assert len(chain) == 5
+		assert [c["depth"] for c in chain] == [0, 1, 2, 3, 4]
+
+	def test_min_ms_zero_includes_every_measurable_child(self):
+		"""v0.13.x: ``min_ms = 0`` means no minimum — every measurable
+		child is eligible. Closes the gap where pre-v0.13.x the
+		``or 50.0`` fallback in api.py silently re-applied the default
+		floor and skipped any child < 50ms even when the operator
+		wanted the deepest possible coverage."""
+		# Two-step chain where the second hop is below the legacy 50ms
+		# floor but still measurable. Under ``min_ms = 0`` it MUST be
+		# included.
+		tiny = _frame("tiny_helper", "apps/my_app/my_app/x.py", 5, 5.0)
+		root_fn = _frame(
+			"compute", "apps/my_app/my_app/x.py", 1, 100.0,
+			children=[tiny],
+		)
+		tree = _root(root_fn)
+
+		chain = picker.expand_hot_chain(
+			[tree], "my_app.x.compute", min_ms=0,
+		)
+
+		paths = [c["dotted_path"] for c in chain]
+		assert paths == ["my_app.x.compute", "my_app.x.tiny_helper"]
+
 	def test_picks_hottest_child_among_siblings(self):
 		# Two siblings; chain follows the slower one (we want the bigger
 		# time sink). Both above the min_ms floor.

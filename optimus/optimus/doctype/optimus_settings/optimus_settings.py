@@ -32,8 +32,17 @@ class OptimusSettings(Document):
 	# or render a useless report (sub-microsecond thresholds). Floors
 	# of 0 mean "0 is OK as a 'no filter' / 'always flag' sentinel".
 	_NUMERIC_FLOORS = {
-		"session_retention_days": 1,
-		"max_queries_per_recording": 1,
+		# v0.13.x: floor lowered 1 → 0 to admit the Strict-as-unlimited
+		# preset. ``_sweep_old_sessions`` in janitor.py treats <= 0 as
+		# "never sweep" (forever retention), so 0 is now a meaningful
+		# sentinel rather than a fatal typo. Pre-v0.13.x the janitor
+		# used ``or DEFAULT_RETENTION_DAYS`` and silently fell back to
+		# 90 on 0.
+		"session_retention_days": 0,
+		# v0.13.x: floor lowered 1 → 0. analyze.py's enrich loop now
+		# treats cap == 0 as "no cap" (enrich every query) instead of
+		# falling back to MAX_QUERIES_ENRICHED_PER_RECORDING.
+		"max_queries_per_recording": 0,
 		"pyinstrument_sampler_interval_ms": 0.1,
 		"min_action_duration_ms": 0,
 		"large_duration_threshold_ms": 0,

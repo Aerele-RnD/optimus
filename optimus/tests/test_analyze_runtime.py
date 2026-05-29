@@ -147,3 +147,55 @@ class TestEnrichThrottle:
 		results_on = [c.get("explain_result") for c in on["calls"]]
 
 		assert results_off == results_on
+
+
+class TestMaxQueriesPerRecordingZeroIsUnlimited:
+	"""v0.13.x: ``max_queries_per_recording = 0`` (Strict preset) means
+	no cap — every query gets enriched. Pre-v0.13.x the ``if cap <= 0:
+	cap = DEFAULT`` reset silently re-applied the 2000 default, so the
+	operator's "I want full coverage" intent was clobbered."""
+
+	def test_zero_cap_does_not_truncate_large_recording(self, enrich_env, monkeypatch):
+		# Override the fixture's max_queries default.
+		import optimus.settings as settings_mod
+		monkeypatch.setattr(
+			settings_mod, "get_config",
+			lambda: types.SimpleNamespace(max_queries_per_recording=0),
+			raising=False,
+		)
+
+		# A recording with 3000 queries (way over the legacy 2000 default).
+		# With cap = 0, every one must be enriched — nothing truncated.
+		big = _recording([
+			f"SELECT * FROM tab{i} WHERE x = {i}" for i in range(3000)
+		])
+		warnings = analyze._enrich_recordings([big])
+
+		# All 3000 calls remain in the recording (no slice off).
+		assert len(big["calls"]) == 3000
+		# No truncation warning emitted.
+		truncation_warnings = [w for w in warnings if "TRUNCATED" in w]
+		assert truncation_warnings == [], (
+			f"cap = 0 must not truncate, got {truncation_warnings!r}"
+		)
+
+	def test_positive_cap_still_truncates(self, enrich_env, monkeypatch):
+		"""Sanity: a positive cap still truncates as before. Guards
+		against an over-eager rewrite that accidentally unbounded
+		every deployment."""
+		import optimus.settings as settings_mod
+		monkeypatch.setattr(
+			settings_mod, "get_config",
+			lambda: types.SimpleNamespace(max_queries_per_recording=100),
+			raising=False,
+		)
+
+		big = _recording([
+			f"SELECT * FROM tab{i} WHERE x = {i}" for i in range(250)
+		])
+		warnings = analyze._enrich_recordings([big])
+
+		# Sliced to the cap.
+		assert len(big["calls"]) == 100
+		truncation_warnings = [w for w in warnings if "TRUNCATED" in w]
+		assert truncation_warnings, "positive cap must emit a truncation warning"
