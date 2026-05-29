@@ -136,8 +136,14 @@ class TestProfileTable:
 	# per group. Any new sensitivity key must join one of the two tuples
 	# below or this test will tell the engineer which side it falls on.
 
-	# Strict <= Relaxed (lower number = stricter)
+	# Strict <= Relaxed (lower number = stricter — for detection
+	# thresholds, lower = catch more; for ``auto_expand_min_ms``, lower
+	# = follow into smaller hot spots; Strict's 0 is the strictest
+	# possible value).
 	_STRICT_LOWER_KEYS = (
+		# v0.13.x: shorter retention = stricter housekeeping (Strict
+		# treats old session rows as a liability to clear fast).
+		"session_retention_days",
 		"pyinstrument_sampler_interval_ms",
 		"min_action_duration_ms",
 		"large_duration_threshold_ms",
@@ -155,9 +161,15 @@ class TestProfileTable:
 	# Strict >= Relaxed (higher number = stricter, more data / more
 	# preservation / more visibility)
 	_STRICT_HIGHER_KEYS = (
-		"session_retention_days",
-		"max_queries_per_recording",
 		"background_job_wait_seconds",
+	)
+	# v0.13.x: fields whose read site honors ``0 = unlimited``. Strict
+	# uses 0 (the strictest possible posture: don't cap, don't drop,
+	# don't truncate, don't expire). Relaxed uses a literal positive
+	# number, so ``Strict >= Relaxed`` doesn't hold here — the contract
+	# is "Strict is 0 AND Relaxed is positive AND Relaxed is positive".
+	_STRICT_UNBOUNDED_KEYS = (
+		"max_queries_per_recording",
 		"phase2_max_runs_per_session",
 		"auto_expand_max_depth",
 		"ai_auto_suggest_max",
@@ -175,14 +187,29 @@ class TestProfileTable:
 		for key in self._STRICT_HIGHER_KEYS:
 			assert settings._PROFILES["Strict"][key] >= settings._PROFILES["Relaxed"][key], key
 
+	def test_strict_uses_unlimited_sentinel_on_capped_knobs(self):
+		"""v0.13.x: every cap that honors 0-as-unlimited at its read site
+		uses 0 under Strict (the strictest posture). Relaxed always uses
+		a positive literal — the read site code that branches on ``cap
+		> 0`` would otherwise act unbounded under Relaxed too, defeating
+		the point of the preset."""
+		for key in self._STRICT_UNBOUNDED_KEYS:
+			assert settings._PROFILES["Strict"][key] == 0, f"{key} Strict must be 0"
+			assert settings._PROFILES["Relaxed"][key] > 0, f"{key} Relaxed must be > 0"
+
 	def test_every_sensitivity_key_is_categorised(self):
 		"""Drift guard: a newly-added sensitivity key must land in one of
-		the two ordering groups above, or the test stops being meaningful."""
-		categorised = set(self._STRICT_LOWER_KEYS) | set(self._STRICT_HIGHER_KEYS)
+		the three ordering groups above, or the test stops being meaningful."""
+		categorised = (
+			set(self._STRICT_LOWER_KEYS)
+			| set(self._STRICT_HIGHER_KEYS)
+			| set(self._STRICT_UNBOUNDED_KEYS)
+		)
 		uncategorised = set(SENSITIVITY_KEYS) - categorised
 		assert not uncategorised, (
-			f"new sensitivity key(s) need to join _STRICT_LOWER_KEYS or "
-			f"_STRICT_HIGHER_KEYS in this test: {uncategorised}"
+			f"new sensitivity key(s) need to join _STRICT_LOWER_KEYS, "
+			f"_STRICT_HIGHER_KEYS, or _STRICT_UNBOUNDED_KEYS in this "
+			f"test: {uncategorised}"
 		)
 
 	def test_profiles_match_doctype_reference_values(self):

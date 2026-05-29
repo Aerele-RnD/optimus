@@ -369,7 +369,12 @@ def expand_hot_chain(
 	    boundary (frappe ORM / recorder / typing wrappers / document.py),
 	  • the next hottest child has ``cumulative_ms < min_ms``,
 	  • there is no Python child remaining,
-	  • or the chain has reached ``max_depth``.
+	  • or the chain has reached ``max_depth`` (when > 0).
+
+	v0.13.x: ``max_depth = 0`` means unlimited — walks to the leaf in
+	the hot-chain direction. ``min_ms = 0`` means no minimum — every
+	measurable child is eligible. The Strict Sensitivity Profile uses
+	both as 0 so the operator gets the deepest possible auto-expansion.
 
 	Output rows::
 
@@ -397,7 +402,10 @@ def expand_hot_chain(
 
 	current = root
 	depth = 0
-	while depth < max_depth:
+	# v0.13.x: ``max_depth = 0`` → unbounded walk (stop on the other
+	# eligibility predicates instead). Any positive value is the hard
+	# cap on chain length.
+	while max_depth <= 0 or depth < max_depth:
 		eligible = _eligible_descent_children(current, min_ms)
 		if not eligible:
 			break

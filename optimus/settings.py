@@ -213,16 +213,29 @@ _SENSITIVITY_KEYS = (
 _PROFILES = {
 	"Strict": {
 		# General + capture + display + Phase-2 + AI extras (v0.13.x)
-		"session_retention_days": 90,
-		"max_queries_per_recording": 5000,
+		#
+		# Posture: "see everything, keep nothing longer than needed".
+		# Fields with a "0 = unlimited" sentinel that the read site
+		# honors use 0 where the user actually wants unbounded behavior
+		# (Strict catches the longest possible report by not capping
+		# the data) — but only when leaving zero around makes
+		# operational sense. Session retention isn't one of them: a
+		# Strict deployment treats old session rows as housekeeping
+		# liability, so we set it to 1 day instead of 0/forever. Same
+		# logic for the two display-style "min" timings — Strict's
+		# floor isn't literal-zero noise (sampler jitter, sub-ms
+		# children) but a small meaningful floor: 1ms for action
+		# visibility, 10ms for hot-chain expansion.
+		"session_retention_days": 1,
+		"max_queries_per_recording": 0,
 		"pyinstrument_sampler_interval_ms": 0.5,
 		"background_job_wait_seconds": 300,
-		"min_action_duration_ms": 0.0,
+		"min_action_duration_ms": 1.0,
 		"large_duration_threshold_ms": 500.0,
-		"phase2_max_runs_per_session": 25,
-		"auto_expand_max_depth": 15,
-		"auto_expand_min_ms": 25.0,
-		"ai_auto_suggest_max": 10,
+		"phase2_max_runs_per_session": 0,
+		"auto_expand_max_depth": 0,
+		"auto_expand_min_ms": 10.0,
+		"ai_auto_suggest_max": 0,
 		# Analyzer thresholds (the original nine)
 		"redundant_doc_threshold": 3,
 		"redundant_cache_threshold": 20,
@@ -404,7 +417,14 @@ def _read_doctype_row() -> dict | None:
 
 	return {
 		"enabled": bool(doc.get("enabled", 1)),
-		"session_retention_days": int(doc.get("session_retention_days") or 30),
+		# v0.13.x: 0 is legitimate (= keep forever — janitor early-returns).
+		# Was ``or 30`` which silently clobbered the operator's "forever"
+		# intent. Preserve the stored value; ``_sens_int_zero_ok`` does
+		# the missing-value fallback.
+		"session_retention_days": (
+			int(doc.get("session_retention_days"))
+			if doc.get("session_retention_days") is not None else None
+		),
 		"tracked_apps": tuple(
 			(row.app_name or "").strip()
 			for row in (doc.get("tracked_apps") or [])
@@ -416,7 +436,13 @@ def _read_doctype_row() -> dict | None:
 			if (row.app_name or "").strip()
 		),
 		"hide_framework_tables": bool(doc.get("hide_framework_tables", 1)),
-		"max_queries_per_recording": int(doc.get("max_queries_per_recording") or 0) or None,
+		# v0.13.x: 0 is legitimate (= no cap — enrich every query). Was
+		# ``or None`` which fell through to MAX_QUERIES_ENRICHED_PER_
+		# RECORDING. Coerce to int, preserve 0.
+		"max_queries_per_recording": (
+			int(doc.get("max_queries_per_recording"))
+			if doc.get("max_queries_per_recording") is not None else None
+		),
 		"redundant_doc_threshold": int(doc.get("redundant_doc_threshold") or 0) or None,
 		"redundant_cache_threshold": int(doc.get("redundant_cache_threshold") or 0) or None,
 		"redundant_perm_threshold": int(doc.get("redundant_perm_threshold") or 0) or None,
@@ -441,7 +467,12 @@ def _read_doctype_row() -> dict | None:
 			float(doc.get("large_duration_threshold_ms"))
 			if doc.get("large_duration_threshold_ms") else None
 		),
-		"phase2_max_runs_per_session": int(doc.get("phase2_max_runs_per_session") or 0) or None,
+		# v0.13.x: 0 is legitimate (= no cap on retained runs). Coerce,
+		# preserve 0.
+		"phase2_max_runs_per_session": (
+			int(doc.get("phase2_max_runs_per_session"))
+			if doc.get("phase2_max_runs_per_session") is not None else None
+		),
 		# 0 is legitimate (= don't wait) — don't fall through to the default.
 		"background_job_wait_seconds": int(
 			doc.get("background_job_wait_seconds", _DEFAULTS["background_job_wait_seconds"]) or 0
@@ -450,8 +481,17 @@ def _read_doctype_row() -> dict | None:
 		# 1/0 from Frappe's storage. We can't use ``or None`` here
 		# because False is a legitimate value.
 		"phase2_default_auto_expand": bool(doc.get("phase2_default_auto_expand", 1)),
-		"auto_expand_max_depth": int(doc.get("auto_expand_max_depth") or 0) or None,
-		"auto_expand_min_ms": float(doc.get("auto_expand_min_ms") or 0) or None,
+		# v0.13.x: 0 is legitimate for both. ``auto_expand_max_depth = 0``
+		# means walk to leaves; ``auto_expand_min_ms = 0`` means follow
+		# into every measurable child. Coerce, preserve 0.
+		"auto_expand_max_depth": (
+			int(doc.get("auto_expand_max_depth"))
+			if doc.get("auto_expand_max_depth") is not None else None
+		),
+		"auto_expand_min_ms": (
+			float(doc.get("auto_expand_min_ms"))
+			if doc.get("auto_expand_min_ms") is not None else None
+		),
 		"skip_request_paths": _parse_skip_list(doc.get("skip_request_paths")),
 		"skip_users": _parse_skip_list(doc.get("skip_users")),
 		"sensitive_sql_columns": _parse_skip_list(doc.get("sensitive_sql_columns")),
@@ -586,9 +626,9 @@ def _resolve() -> OptimusConfig:
 
 	return OptimusConfig(
 		enabled=bool(row.get("enabled", _DEFAULTS["enabled"])),
-		# v0.13.x: profile-aware. Was ``_threshold``-style truthy-check; the
-		# preset wins under Strict/Recommended/Relaxed.
-		session_retention_days=_sens_int("session_retention_days"),
+		# v0.13.x: profile-aware. 0 is legitimate (= forever — janitor
+		# treats it as "never sweep"), so use the zero-OK variant.
+		session_retention_days=_sens_int_zero_ok("session_retention_days"),
 		tracked_apps=tuple(row.get("tracked_apps") or ()),
 		# v0.13.x: fall through to ``_DEFAULTS["ignored_apps"]`` (frappe +
 		# erpnext) when the DocType row hasn't populated this field —
@@ -605,8 +645,9 @@ def _resolve() -> OptimusConfig:
 			if "hide_framework_tables" in row
 			else _DEFAULTS["hide_framework_tables"]
 		),
-		# v0.13.x: now profile-aware (was ``_threshold`` only).
-		max_queries_per_recording=_sens_int("max_queries_per_recording"),
+		# v0.13.x: profile-aware. 0 is legitimate (= no cap — analyze
+		# enriches every query); zero-OK variant preserves it.
+		max_queries_per_recording=_sens_int_zero_ok("max_queries_per_recording"),
 		# Original nine detection-sensitivity knobs — profile-aware
 		# (see _sens_* above). Still here for clarity.
 		redundant_doc_threshold=_sens_int("redundant_doc_threshold"),
@@ -627,8 +668,9 @@ def _resolve() -> OptimusConfig:
 		min_action_duration_ms=_sens_float_zero_ok("min_action_duration_ms"),
 		# v0.13.x: profile-aware (was ``_float``).
 		large_duration_threshold_ms=_sens_float("large_duration_threshold_ms"),
-		# v0.13.x: profile-aware (was ``_int_with_default``).
-		phase2_max_runs_per_session=_sens_int("phase2_max_runs_per_session"),
+		# v0.13.x: profile-aware. 0 is legitimate (= no cap on retained
+		# runs); zero-OK variant preserves it.
+		phase2_max_runs_per_session=_sens_int_zero_ok("phase2_max_runs_per_session"),
 		phase2_default_auto_expand=bool(
 			row.get("phase2_default_auto_expand")
 			if "phase2_default_auto_expand" in row
@@ -641,9 +683,10 @@ def _resolve() -> OptimusConfig:
 		background_job_wait_seconds=max(
 			0, min(300, _sens_int_zero_ok("background_job_wait_seconds"))
 		),
-		# v0.13.x: profile-aware (was ``_int_with_default`` / ``_float``).
-		auto_expand_max_depth=_sens_int("auto_expand_max_depth"),
-		auto_expand_min_ms=_sens_float("auto_expand_min_ms"),
+		# v0.13.x: profile-aware. 0 is legitimate for both — depth 0 =
+		# walk to leaves, min_ms 0 = no minimum. Zero-OK variants.
+		auto_expand_max_depth=_sens_int_zero_ok("auto_expand_max_depth"),
+		auto_expand_min_ms=_sens_float_zero_ok("auto_expand_min_ms"),
 		skip_request_paths=tuple(row.get("skip_request_paths") or ()),
 		skip_users=tuple(row.get("skip_users") or ()),
 		sensitive_sql_columns=tuple(row.get("sensitive_sql_columns") or ()),

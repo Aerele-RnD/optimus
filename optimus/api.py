@@ -2070,8 +2070,15 @@ def start_line_profile_pass(session_uuid: str, picks, auto_expand=True) -> dict:
 		from optimus.settings import get_config as _get_config
 		try:
 			_cfg = _get_config()
-			_max_depth = int(_cfg.auto_expand_max_depth or 10)
-			_min_ms = float(_cfg.auto_expand_min_ms or 50.0)
+			# v0.13.x: 0 is the "unlimited" sentinel (depth = walk to
+			# leaves; min_ms = no minimum to follow). The ``or DEFAULT``
+			# fallback only fires when the cfg attr is genuinely missing
+			# (legacy pickled OptimusConfig from a pre-v0.13.x bench), so
+			# read with a sentinel and check explicitly.
+			_max_depth = getattr(_cfg, "auto_expand_max_depth", None)
+			_max_depth = int(_max_depth) if _max_depth is not None else 10
+			_min_ms = getattr(_cfg, "auto_expand_min_ms", None)
+			_min_ms = float(_min_ms) if _min_ms is not None else 50.0
 		except Exception:
 			_max_depth, _min_ms = 10, 50.0
 

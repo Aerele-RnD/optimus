@@ -143,6 +143,23 @@ class TestAutoArmPhase2:
 		analyze._auto_arm_phase2("PS-1", _ctx())
 		assert arm_env.start_calls == []
 
+	def test_zero_cap_means_unlimited(self, arm_env, monkeypatch):
+		"""v0.13.x: ``phase2_max_runs_per_session = 0`` (Strict preset)
+		means no cap — auto-arm fires even with many existing runs.
+		Pre-v0.13.x the ``or 10`` swallowed 0 and silently re-applied
+		the default cap, so a Strict-profile deployment got the same
+		behavior as Recommended."""
+		import optimus.settings as settings_mod
+		monkeypatch.setattr(settings_mod, "get_config",
+			lambda: types.SimpleNamespace(phase2_max_runs_per_session=0))
+		# Way over the legacy default of 10 — would normally block.
+		arm_env.doc._tables["phase_2_runs"] = [
+			{"run_uuid": f"r{i}"} for i in range(25)
+		]
+		analyze._auto_arm_phase2("PS-1", _ctx())
+		# Arm fired — the cap didn't block.
+		assert arm_env.start_calls, "cap = 0 must let auto-arm fire"
+
 	def test_noop_when_user_busy(self, arm_env):
 		arm_env.cache.store["profiler:lp:active:u@x.com"] = "some-run"
 		analyze._auto_arm_phase2("PS-1", _ctx())
