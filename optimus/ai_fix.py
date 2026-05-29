@@ -94,16 +94,14 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
 		# Local endpoints (Ollama / LM Studio / vLLM) usually need no key.
 		"needs_key": False,
 	},
-	# v0.14.x: Aerele-managed AI provider. Rides the OpenAI wire format —
-	# Aerele's proxy returns the standard ``data.choices[0].message.content``
-	# shape PLUS an ``X-Aerele-Balance-Remaining: <int>`` response header
-	# that ``_persist_aerele_balance`` writes to ``Optimus Settings``. The
-	# pre-call gate (``_assert_aerele_balance``) reads the cached balance
-	# from ``OptimusConfig.aerele_balance_tokens`` and refuses fast if
-	# below ``aerele_balance_min_threshold``. Aerele's server is the
-	# authoritative gate — it returns HTTP 402 on insufficient balance
-	# (cache-stale race), which ``_http_post`` maps to an actionable
-	# message. See ``docs/AI-FIXING.md`` §10.
+	# v0.14.x: Aerele-managed AI provider. Architecturally identical to
+	# the Anthropic / OpenAI entries — just a hosted endpoint + an API
+	# key the customer pastes into ``ai_api_key``. The token balance,
+	# pre-call validation, and metering all live on Aerele's separate
+	# Frappe site (the URL below); Optimus is a dumb client. Aerele's
+	# proxy fronts an OpenAI-shaped wire so ``_call_openai_chat`` routes
+	# correctly without a new protocol handler. See
+	# ``docs/AI-FIXING.md`` §10.
 	"Aerele": {
 		"protocol": "openai",
 		"base_url": "https://api.aerele.in/optimus/v1",
@@ -112,11 +110,6 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
 	},
 }
 _DEFAULT_PROVIDER = "Anthropic"
-
-# v0.14.x: response header Aerele's proxy includes on every successful
-# call with the customer's remaining token balance. Kept as a module
-# constant so the value is testable + greppable.
-_AERELE_BALANCE_HEADER = "X-Aerele-Balance-Remaining"
 
 # Fallback timeout when settings can't be read (pure-pytest path with no
 # bench, or a settings cache miss during early bootstrap). v0.9.0+ the live
@@ -548,9 +541,6 @@ def suggest_fix(finding: dict) -> dict:
 			"No API key is configured for this AI provider — set it under "
 			"Optimus Settings ▸ AI Fix Suggestions."
 		)
-	# v0.14.x: Aerele pre-call balance gate. No-op for other providers.
-	_assert_aerele_balance(provider["name"])
-
 	system, messages = _build_messages(finding)
 
 	if provider["protocol"] == "anthropic":
@@ -595,9 +585,6 @@ def humanize_steps(actions: list[dict], *, session_title: str | None = None) -> 
 		)
 	if provider.get("needs_key") and not provider.get("api_key"):
 		raise AiFixError("No API key is configured for this AI provider.")
-	# v0.14.x: Aerele pre-call balance gate. No-op for other providers.
-	_assert_aerele_balance(provider["name"])
-
 	system, messages = _build_steps_messages(actions, session_title)
 	if provider["protocol"] == "anthropic":
 		text = _call_anthropic(
@@ -634,9 +621,6 @@ def suggest_index(table_payload: dict) -> dict:
 		)
 	if provider.get("needs_key") and not provider.get("api_key"):
 		raise AiFixError("No API key is configured for this AI provider.")
-	# v0.14.x: Aerele pre-call balance gate. No-op for other providers.
-	_assert_aerele_balance(provider["name"])
-
 	system, messages = _build_index_messages(table_payload)
 	if provider["protocol"] == "anthropic":
 		text = _call_anthropic(
@@ -720,113 +704,6 @@ def test_connection() -> dict:
 		"ok": True,
 		"message": f"Reachable. Model replied: {(text or '').strip()[:60]!r}",
 		"model": provider["model"],
-	}
-
-
-def refresh_aerele_balance() -> dict:
-	"""v0.14.x: GET ``{aerele_base_url}/balance`` with the customer's
-	Bearer key, persist the returned balance to Optimus Settings, and
-	return a summary dict for the form to render.
-
-	Returns ``{"ok": bool, "balance_tokens": int | None, "as_of":
-	str | None, "message": str}``. Never raises — the failure detail
-	(network error, 401, malformed response) goes in ``message`` so
-	the JS button can show an inline alert.
-
-	Auth: ``Authorization: Bearer <ai_api_key>``. Aerele's proxy
-	authenticates the same Bearer for both ``/chat/completions`` and
-	``/balance``, so there's no second key to manage.
-	"""
-	try:
-		provider = _resolve_provider()
-	except AiFixError as e:
-		return {"ok": False, "balance_tokens": None, "as_of": None, "message": str(e)}
-
-	if provider["name"] != "Aerele":
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": (
-				"The configured provider is not Aerele — switch the AI "
-				"Provider to 'Aerele' in Optimus Settings to use this."
-			),
-		}
-	if not provider.get("api_key"):
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": (
-				"No API key is configured. Paste the key Aerele issued "
-				"into Optimus Settings ▸ AI Fix Suggestions ▸ API Key."
-			),
-		}
-
-	url = (provider["base_url"] or "").rstrip("/") + "/balance"
-	headers = {
-		"accept": "application/json",
-		"authorization": f"Bearer {provider['api_key']}",
-	}
-	timeout = _resolve_timeout_seconds()
-	try:
-		resp = requests.get(url, headers=headers, timeout=timeout)
-	except requests.exceptions.Timeout:
-		_log_http_error("Aerele", "balance", None, "timeout")
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": f"Aerele didn't respond within {timeout}s.",
-		}
-	except requests.exceptions.RequestException as e:
-		_log_http_error("Aerele", "balance", None, type(e).__name__)
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": f"Couldn't reach Aerele: {type(e).__name__}.",
-		}
-
-	status = resp.status_code
-	if status in (401, 403):
-		_log_http_error("Aerele", "balance", status)
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": (
-				"Aerele rejected the API key — check Optimus Settings ▸ "
-				"AI Fix Suggestions ▸ API Key."
-			),
-		}
-	if status >= 400:
-		_log_http_error("Aerele", "balance", status)
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": f"Aerele returned HTTP {status}.",
-		}
-
-	try:
-		data = resp.json()
-	except ValueError:
-		_log_http_error("Aerele", "balance", status, "non-JSON body")
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": "Aerele returned a non-JSON balance response.",
-		}
-
-	balance = data.get("balance_tokens")
-	if balance is None:
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": "Aerele's balance response didn't include balance_tokens.",
-		}
-	try:
-		balance_int = int(balance)
-	except (TypeError, ValueError):
-		return {
-			"ok": False, "balance_tokens": None, "as_of": None,
-			"message": "Aerele returned a non-integer balance.",
-		}
-
-	as_of_remote = data.get("as_of")
-	_persist_aerele_balance(balance_int)
-	return {
-		"ok": True,
-		"balance_tokens": balance_int,
-		"as_of": as_of_remote,
-		"message": f"Balance refreshed: {balance_int:,} tokens.",
 	}
 
 
@@ -1314,115 +1191,6 @@ def _log_http_error(provider: str, where: str, status: int | None, detail: str =
 		pass
 
 
-# ---------------------------------------------------------------------------
-# v0.14.x: Aerele managed AI provider — balance gate + balance persistence.
-#
-# Token bookkeeping flow:
-#
-#   1. Pre-call: ``_assert_aerele_balance`` checks the cached balance against
-#      ``aerele_balance_min_threshold``. Fast-fail with a "Top up" message
-#      when below — no network round-trip wasted.
-#   2. The HTTP call goes through ``_call_openai_chat`` (Aerele rides the
-#      OpenAI-compatible wire protocol).
-#   3. On success: Aerele's proxy returns ``X-Aerele-Balance-Remaining``
-#      in the response headers. ``_maybe_persist_aerele_balance`` reads it
-#      and writes the cached balance + sync timestamp to Optimus Settings.
-#   4. On HTTP 402: ``_http_post`` maps to the same "Top up" message
-#      (covers the cache-stale race where the bench cached "enough" but
-#      Aerele's authoritative state says otherwise).
-#
-# The bench cache is a HINT for fast-fail UX; Aerele's server is the
-# authoritative source. Manual ``api.refresh_aerele_balance`` and the
-# daily background sync (``hooks.scheduler_events.daily``) keep the
-# cache fresh when the customer tops up without an intervening AI call.
-# ---------------------------------------------------------------------------
-
-_AERELE_TOP_UP_HINT = (
-	"Top up at https://aerele.in/optimus/billing then click "
-	"'Refresh Balance' in Optimus Settings."
-)
-
-
-def _assert_aerele_balance(provider_name: str) -> None:
-	"""Pre-call gate for the Aerele provider. Fast-fails when the cached
-	balance is below ``aerele_balance_min_threshold``. No-op for any
-	other provider — Anthropic / OpenAI / Kimi / OpenAI-compatible all
-	skip this check.
-
-	Settings-unreadable degrades silently (let the call go through; the
-	server gate will catch us). Same posture as the existing AI privacy
-	helpers — a settings hiccup never blocks an AI call.
-	"""
-	if provider_name != "Aerele":
-		return
-	try:
-		from optimus.settings import get_config
-		cfg = get_config()
-	except Exception:
-		return
-	balance = int(getattr(cfg, "aerele_balance_tokens", 0) or 0)
-	min_balance = int(getattr(cfg, "aerele_balance_min_threshold", 100) or 100)
-	if balance < min_balance:
-		raise AiFixError(
-			f"Aerele token balance is {balance:,} — below the "
-			f"{min_balance:,}-token minimum. {_AERELE_TOP_UP_HINT}"
-		)
-
-
-def _persist_aerele_balance(remaining: int, *, sync_at: str | None = None) -> None:
-	"""Write the cached balance + sync timestamp to Optimus Settings.
-	Best-effort — a DB hiccup here MUST NOT break the AI call's return
-	path. Invalidates the OptimusConfig cache so the next ``get_config``
-	read sees the new balance.
-
-	Stores the sync timestamp as a naive datetime in system tz (the
-	Frappe Datetime convention; see
-	[[feedback_mariadb_datetime_no_tz_offset]] in user memory for why
-	tz-aware strings break MariaDB DATETIME).
-	"""
-	try:
-		import frappe
-		from frappe.utils import get_datetime_str, now_datetime
-		if sync_at is None:
-			sync_at = get_datetime_str(now_datetime())
-		frappe.db.set_value(
-			"Optimus Settings", "Optimus Settings",
-			{
-				"aerele_balance_tokens": int(remaining),
-				"aerele_last_balance_sync": sync_at,
-			},
-			update_modified=False,
-		)
-		from optimus import redis_keys
-		frappe.cache.delete_value(redis_keys.settings_cache())
-	except Exception:
-		try:
-			import frappe
-			frappe.log_error(title="optimus aerele balance persist")
-		except Exception:
-			pass
-
-
-def _maybe_persist_aerele_balance(headers: Any) -> None:
-	"""If the response carries ``X-Aerele-Balance-Remaining``, persist
-	the value. Provider-agnostic — only Aerele's proxy emits the
-	header, so the no-op for non-Aerele providers is automatic.
-	"""
-	if not headers:
-		return
-	try:
-		raw = headers.get(_AERELE_BALANCE_HEADER)
-	except Exception:
-		return
-	if raw is None:
-		return
-	try:
-		remaining = int(raw)
-	except (TypeError, ValueError):
-		return
-	_persist_aerele_balance(remaining)
-
-
 def _http_post(url: str, headers: dict, body: dict, *, provider: str, where: str) -> dict:
 	"""POST JSON, return the parsed response dict. Maps transport / HTTP /
 	decode errors to ``AiFixError`` with operator-friendly messages."""
@@ -1440,29 +1208,6 @@ def _http_post(url: str, headers: dict, body: dict, *, provider: str, where: str
 	if status in (401, 403):
 		_log_http_error(provider, where, status)
 		raise AiFixError("The AI provider rejected the API key — check it in Optimus Settings.")
-	if status == 402:
-		# v0.14.x: Aerele's authoritative "insufficient balance"
-		# response. Covers the cache-stale race where the bench cached
-		# "enough" but the customer's actual balance dropped below the
-		# call's cost. Parse Aerele's JSON body for the current balance
-		# if present, so the error message names the exact number.
-		_log_http_error(provider, where, status)
-		balance_info = ""
-		try:
-			body_data = resp.json()
-			bal = body_data.get("balance_tokens")
-			if bal is not None:
-				balance_info = f" (current balance: {int(bal):,} tokens)"
-			# Persist the authoritative balance even on refusal — the cache
-			# was stale and Aerele just told us the truth.
-			if bal is not None:
-				_persist_aerele_balance(int(bal))
-		except Exception:
-			pass
-		raise AiFixError(
-			f"Aerele refused the call — insufficient token balance"
-			f"{balance_info}. {_AERELE_TOP_UP_HINT}"
-		)
 	if status == 404:
 		# Almost always a wrong Base URL — the path segment is missing.
 		# OpenAI-compatible servers (Ollama, LM Studio, vLLM, OpenRouter,
@@ -1495,17 +1240,10 @@ def _http_post(url: str, headers: dict, body: dict, *, provider: str, where: str
 		raise AiFixError(f"The AI provider returned an error (HTTP {status}){detail}")
 
 	try:
-		data = resp.json()
+		return resp.json()
 	except ValueError:
 		_log_http_error(provider, where, status, "non-JSON body")
 		raise AiFixError("The AI provider returned an unexpected (non-JSON) response.")
-	# v0.14.x: Aerele's proxy returns ``X-Aerele-Balance-Remaining`` on
-	# every successful call. Provider-agnostic — the header is absent
-	# from Anthropic / OpenAI / Kimi / OpenAI-compatible responses, so
-	# this is a no-op for them. ``getattr`` so a minimal stub response
-	# (existing tests) without a ``headers`` attribute doesn't break.
-	_maybe_persist_aerele_balance(getattr(resp, "headers", None))
-	return data
 
 
 def _call_anthropic(

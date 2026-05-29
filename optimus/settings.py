@@ -149,15 +149,6 @@ _DEFAULTS = {
 	# inventory and local-LLM recipes.
 	"ai_excluded_finding_types": (),
 	"ai_request_timeout_seconds": 60,
-	# v0.14.x: Aerele managed AI provider (pay-as-you-go tokens). Balance
-	# cache + sync time are written by ``ai_fix._persist_aerele_balance``
-	# on every successful Aerele call, by the manual "Refresh Balance"
-	# button (``api.refresh_aerele_balance``), and by the daily background
-	# sync. The pre-call gate refuses when balance < min_threshold. See
-	# docs/AI-FIXING.md §10.
-	"aerele_balance_tokens": 0,
-	"aerele_last_balance_sync": None,
-	"aerele_balance_min_threshold": 100,
 }
 
 # v0.13.x: every knob whose DocType description advertises a
@@ -387,15 +378,6 @@ class OptimusConfig:
 	# Timeout default matches the pre-v0.9.0 hardcoded constant.
 	ai_excluded_finding_types: tuple[str, ...] = field(default_factory=tuple)
 	ai_request_timeout_seconds: int = 60
-	# v0.14.x: Aerele managed AI provider. ``aerele_balance_tokens`` is
-	# the cached "last-known" balance (the authoritative source is
-	# Aerele's server). ``aerele_last_balance_sync`` is the wall-clock
-	# timestamp of the last refresh — string form so the cached
-	# OptimusConfig stays JSON-serialisable across the cache envelope.
-	# ``aerele_balance_min_threshold`` is the pre-call refuse-threshold.
-	aerele_balance_tokens: int = 0
-	aerele_last_balance_sync: str | None = None
-	aerele_balance_min_threshold: int = 100
 
 
 # v0.12.0: key centralized in optimus.redis_keys. The module-level
@@ -539,24 +521,6 @@ def _read_doctype_row() -> dict | None:
 		# to _DEFAULTS via _int_with_default.
 		"ai_excluded_finding_types": _parse_skip_list(doc.get("ai_excluded_finding_types")),
 		"ai_request_timeout_seconds": int(doc.get("ai_request_timeout_seconds") or 0) or None,
-		# v0.14.x: Aerele managed provider. Balance fields preserve 0 as
-		# legitimate (= no tokens left), so the explicit ``is not None``
-		# coerce form rather than ``or 0`` collapsing 0 to None. Datetime
-		# is passed through as a stringified value (Frappe's serializer
-		# already returns ISO 8601 strings for Datetime fields). Min
-		# threshold uses ``_int_with_default`` semantics via _resolve.
-		"aerele_balance_tokens": (
-			int(doc.get("aerele_balance_tokens"))
-			if doc.get("aerele_balance_tokens") is not None else None
-		),
-		"aerele_last_balance_sync": (
-			str(doc.get("aerele_last_balance_sync"))
-			if doc.get("aerele_last_balance_sync") else None
-		),
-		"aerele_balance_min_threshold": (
-			int(doc.get("aerele_balance_min_threshold"))
-			if doc.get("aerele_balance_min_threshold") is not None else None
-		),
 	}
 
 
@@ -765,15 +729,6 @@ def _resolve() -> OptimusConfig:
 		# longer than the time budget is willing to tolerate anyway.
 		ai_excluded_finding_types=tuple(row.get("ai_excluded_finding_types") or ()),
 		ai_request_timeout_seconds=max(10, min(600, _int_with_default("ai_request_timeout_seconds"))),
-		# v0.14.x: Aerele managed provider. Balance + sync are read
-		# verbatim from the stored row (the bench's hot cache of
-		# Aerele's authoritative state); 0 is preserved as the
-		# legitimate "no tokens" sentinel rather than collapsed to the
-		# default. Min threshold falls through to _DEFAULTS = 100 on
-		# missing / None / 0.
-		aerele_balance_tokens=int(row.get("aerele_balance_tokens") or 0),
-		aerele_last_balance_sync=row.get("aerele_last_balance_sync") or None,
-		aerele_balance_min_threshold=_int_with_default("aerele_balance_min_threshold"),
 	)
 
 

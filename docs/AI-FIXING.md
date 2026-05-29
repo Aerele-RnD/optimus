@@ -280,59 +280,36 @@ This means: if you're worried about a profile shared with a third party leaking 
 | On-demand entry point | `optimus/api.py` | `suggest_fix`, `suggest_index`, `humanize_steps` |
 | Auto-suggest entry point | `optimus/analyze.py` | `_enrich_findings_with_ai_suggestions`, `_enrich_table_breakdown_with_ai_suggestions` |
 | Settings dataclass | `optimus/settings.py` | `OptimusConfig` |
-| Aerele balance gate | `optimus/ai_fix.py` | `_assert_aerele_balance`, `_persist_aerele_balance`, `_maybe_persist_aerele_balance` |
-| Aerele balance endpoints | `optimus/api.py` | `refresh_aerele_balance`, `refresh_aerele_balance_silent` |
-| Aerele balance daily sync | `optimus/hooks.py` | `scheduler_events.daily` |
 
 ---
 
 ## 10. Aerele Managed Provider (v0.14.x+)
 
-`Aerele` is a hosted pay-as-you-go option for customers who don't want to bring their own Anthropic / OpenAI key. The wire format is OpenAI-compatible — Aerele's proxy fronts the actual upstream LLM, meters the customer's token bucket per call, and bills.
+`Aerele` is a hosted pay-as-you-go option for customers who don't want to bring their own Anthropic / OpenAI key. **Architecturally it is identical to the Anthropic / OpenAI / Kimi entries:** the operator picks `Aerele` as the provider, pastes the key Aerele issued into **API Key**, and every call hits Aerele's URL. There is no Optimus-side bookkeeping — no balance cache, no pre-call gate, no Refresh button, no daily sync. **All token validation and metering happens on Aerele's separate Frappe site** (the URL in the provider matrix above). The bench is a dumb client.
 
 ### 10.1 Onboarding
 
-1. Visit [aerele.in/optimus/signup](https://aerele.in/optimus/signup), create an account, top up the initial token bucket at [aerele.in/optimus/billing](https://aerele.in/optimus/billing).
-2. Copy the issued API key. In Optimus Settings ▸ AI Fix Suggestions:
+1. Sign up at [aerele.in/optimus/signup](https://aerele.in/optimus/signup) and top up tokens at [aerele.in/optimus/billing](https://aerele.in/optimus/billing).
+2. In Optimus Settings ▸ AI Fix Suggestions:
    - Set **Provider** to `Aerele`.
-   - Paste the key into **API Key**.
+   - Paste the issued key into **API Key**.
    - Save.
-3. Click **Refresh Balance** in the form's button bar. The bench fetches the current balance from Aerele's `/balance` endpoint and renders it in the new **Aerele Account** section.
 
-`ai_base_url` and `ai_model` are pre-populated by Aerele's defaults (`https://api.aerele.in/optimus/v1` + `claude-sonnet-4-6` upstream). Leave them blank to track Aerele's recommended values; override only when Aerele explicitly tells you to.
+That is the entire integration. `ai_base_url` and `ai_model` use Aerele's defaults (`https://api.aerele.in/optimus/v1` + the upstream model Aerele has provisioned for the customer); leave them blank unless Aerele tells you otherwise.
 
-### 10.2 Token bookkeeping flow
+### 10.2 Where balance lives
 
-Aerele's server is the **authoritative** source for the balance. The bench keeps a hot cache (`Optimus Settings.aerele_balance_tokens`) refreshed three ways:
+The customer manages their bucket entirely on `aerele.in` — sign-ups, top-ups, balance history, usage analytics. Optimus never sees, displays, or caches the balance. Each AI call is validated server-side on every request by Aerele's Frappe site; insufficient-balance and rate-limit refusals surface through `_http_post`'s existing 4xx handling with the response body's error text.
 
-| Trigger | Mechanism | Cost |
-|---|---|---|
-| Every successful AI call | Aerele's response includes `X-Aerele-Balance-Remaining: <int>` header; `_maybe_persist_aerele_balance` writes it to Settings via `frappe.db.set_value` | Free (rides the call) |
-| Manual **Refresh Balance** button | `api.refresh_aerele_balance` calls `GET /balance` with the same Bearer key | One HTTPS round-trip |
-| Daily background sync | `scheduler_events.daily` → `api.refresh_aerele_balance_silent` (no-op when provider isn't Aerele) | One HTTPS round-trip per day |
+### 10.3 What additionally leaves the host
 
-### 10.3 Pre-call gate
-
-Before each AI call, `_assert_aerele_balance` checks `aerele_balance_tokens >= aerele_balance_min_threshold` (default `100`). On failure: an actionable `AiFixError` ("Top up at …") returns immediately — no network round-trip wasted.
-
-Aerele's server is the **authoritative** gate — it returns HTTP `402 Payment Required` on insufficient balance regardless of what the bench cache says. `_http_post` maps `402` to the same message and persists the authoritative balance from the response body, so the cache-stale race converges quickly.
-
-### 10.4 What additionally leaves the host
-
-Compared to the per-pathway data inventory in § 2, picking `Aerele` adds:
+Compared to the per-pathway data inventory in § 2, picking `Aerele` adds nothing structural over what the other hosted providers already send:
 
 - The customer's Aerele API key as `Authorization: Bearer <key>` on every call to `api.aerele.in`.
-- Standard OpenAI-shaped request body — same prompt + finding payload as § 2.1–2.3.
+- The same OpenAI-shaped finding / steps / index payload from § 2.1–2.3.
 
 What is **NOT** sent (matches § 3):
 
 - The bench's `encryption_key` or any other site secret beyond the Aerele key itself.
 - Cross-session correlation IDs, recording UUIDs, schema, or DocType names beyond what the finding-specific payload already includes.
-
-Aerele's billing system meters from the call response (input + output tokens). No separate metering telemetry leaves the host.
-
-### 10.5 Sample queries / data the operator can see
-
-The Optimus Settings form renders the cached balance + last sync time inline. Click **Refresh Balance** to force an immediate refresh after a top-up; the next AI call will write the post-call balance regardless.
-
-To force-test the pre-call gate: temporarily set **Pre-call Minimum Balance** higher than the cached balance, then trigger any AI suggestion. The refusal carries the "Top up at …" message with the actual balance and the threshold the operator can see + tune.
+- Heartbeat / metering / usage-counting calls. Aerele's billing meters from the actual `/chat/completions` traffic; the bench never pings out otherwise.

@@ -74,12 +74,6 @@
   "column_break_ai",
   "ai_model",
   "ai_api_key",
-  "aerele_section",
-  "aerele_intro",
-  "aerele_balance_tokens",
-  "column_break_aerele",
-  "aerele_balance_min_threshold",
-  "aerele_last_balance_sync",
   "ai_sections_break",
   "ai_suggest_findings",
   "ai_suggest_indexes",
@@ -524,48 +518,6 @@
    "fieldname": "ai_api_key",
    "fieldtype": "Password",
    "label": "API Key"
-  },
-  {
-   "depends_on": "eval:doc.ai_enabled && doc.ai_provider == 'Aerele'",
-   "fieldname": "aerele_section",
-   "fieldtype": "Section Break",
-   "label": "Aerele Account"
-  },
-  {
-   "depends_on": "eval:doc.ai_enabled && doc.ai_provider == 'Aerele'",
-   "fieldname": "aerele_intro",
-   "fieldtype": "HTML",
-   "options": "<p class=\"text-muted small\"><b>Aerele Managed AI</b> is the pay-as-you-go option for AI fix suggestions — no Anthropic / OpenAI key needed. <a href=\"https://aerele.in/optimus/signup\" target=\"_blank\" rel=\"noopener\"><b>Sign up</b></a>, top up tokens at <a href=\"https://aerele.in/optimus/billing\" target=\"_blank\" rel=\"noopener\">aerele.in/optimus/billing</a>, paste the issued key into the <b>API Key</b> field above, save, then click <b>Refresh Balance</b> to fetch the current balance. Aerele's proxy meters tokens per call; the bench caches the remaining balance for fast-fail pre-call gating.</p>"
-  },
-  {
-   "depends_on": "eval:doc.ai_enabled && doc.ai_provider == 'Aerele'",
-   "description": "Last-known token balance on this Aerele account, refreshed on every successful AI call (from the X-Aerele-Balance-Remaining response header), by the Refresh Balance button, and by the daily background sync. The bench's view, not the authoritative source — Aerele's server is.",
-   "fieldname": "aerele_balance_tokens",
-   "fieldtype": "Int",
-   "label": "Available Tokens",
-   "non_negative": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_aerele",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "100",
-   "depends_on": "eval:doc.ai_enabled && doc.ai_provider == 'Aerele'",
-   "description": "Pre-call refuse-threshold. AI calls are refused with a clear \"Top up\" message when the cached balance is below this many tokens — typical fix request budget is ~80–150 tokens. Aerele's server is the authoritative gate (HTTP 402 on insufficient balance); this is a fast-fail safety net so the bench doesn't waste a network round-trip. Increase to refuse earlier (conservative); decrease to keep calls flowing closer to 0.",
-   "fieldname": "aerele_balance_min_threshold",
-   "fieldtype": "Int",
-   "label": "Pre-call Minimum Balance",
-   "non_negative": 1
-  },
-  {
-   "depends_on": "eval:doc.ai_enabled && doc.ai_provider == 'Aerele'",
-   "description": "When the Available Tokens cache was last refreshed. Updated on every successful AI call, Refresh Balance click, and daily background sync.",
-   "fieldname": "aerele_last_balance_sync",
-   "fieldtype": "Datetime",
-   "label": "Last Balance Sync",
-   "read_only": 1
   },
   {
    "depends_on": "eval:doc.ai_enabled",
