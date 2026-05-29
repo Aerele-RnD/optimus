@@ -131,7 +131,7 @@ These items are **never** sent in any AI request body:
 | `Anthropic` | Messages | `https://api.anthropic.com` | Yes | Default model: `claude-sonnet-4-6`. |
 | `OpenAI` | Chat completions | `https://api.openai.com/v1` | Yes | Default model: `gpt-4.1-mini`. |
 | `Kimi (Moonshot)` | Chat completions | `https://api.moonshot.ai/v1` | Yes | Default model: `kimi-k2-0905-preview`. |
-| `Aerele` | Chat completions | `https://api.aerele.in/optimus/v1` | Yes | Managed pay-as-you-go service. See § 10. |
+| `Aerele` | Chat completions | `https://api.aerele.in/optimus/v1` | Yes | Managed service — buy a fixed token pack up front. See § 10. |
 | `OpenAI-compatible` | Chat completions | (you set it) | No (configurable) | Use this for local LLMs and any other OpenAI-shaped server. |
 
 `ai_base_url`, `ai_model`, and `ai_api_key` (Password) all override the provider defaults. The HTTP timeout is `ai_request_timeout_seconds` (v0.9.0+, default 60s, clamped 10–600s).
@@ -285,11 +285,13 @@ This means: if you're worried about a profile shared with a third party leaking 
 
 ## 10. Aerele Managed Provider (v0.14.x+)
 
-`Aerele` is a hosted pay-as-you-go option for customers who don't want to bring their own Anthropic / OpenAI key. **Architecturally it is identical to the Anthropic / OpenAI / Kimi entries:** the operator picks `Aerele` as the provider, pastes the key Aerele issued into **API Key**, and every call hits Aerele's URL. There is no Optimus-side bookkeeping — no balance cache, no pre-call gate, no Refresh button, no daily sync. **All token validation and metering happens on Aerele's separate Frappe site** (the URL in the provider matrix above). The bench is a dumb client.
+`Aerele` is a hosted option for customers who don't want to bring their own Anthropic / OpenAI key. The customer purchases a **fixed token pack** (e.g. "10,000 tokens for ₹X") up front; AI fix calls draw from that pack until it's exhausted, at which point the customer buys another pack. There is no subscription, no monthly reset, and no overage — when the pack runs out, calls are refused until a new pack is purchased.
+
+**Architecturally the Optimus side is identical to the Anthropic / OpenAI / Kimi entries:** the operator picks `Aerele` as the provider, pastes the key Aerele issued into **API Key**, and every call hits Aerele's URL. There is no Optimus-side bookkeeping — no balance cache, no pre-call gate, no Refresh button, no daily sync. **All token accounting and pack validation happens on Aerele's separate Frappe site** (the URL in the provider matrix above). The bench is a dumb client.
 
 ### 10.1 Onboarding
 
-1. Sign up at [aerele.in/optimus/signup](https://aerele.in/optimus/signup) and top up tokens at [aerele.in/optimus/billing](https://aerele.in/optimus/billing).
+1. Sign up at [aerele.in/optimus/signup](https://aerele.in/optimus/signup) and purchase a token pack at [aerele.in/optimus/billing](https://aerele.in/optimus/billing).
 2. In Optimus Settings ▸ AI Fix Suggestions:
    - Set **Provider** to `Aerele`.
    - Paste the issued key into **API Key**.
@@ -297,9 +299,11 @@ This means: if you're worried about a profile shared with a third party leaking 
 
 That is the entire integration. `ai_base_url` and `ai_model` use Aerele's defaults (`https://api.aerele.in/optimus/v1` + the upstream model Aerele has provisioned for the customer); leave them blank unless Aerele tells you otherwise.
 
-### 10.2 Where balance lives
+### 10.2 Where the token pack lives
 
-The customer manages their bucket entirely on `aerele.in` — sign-ups, top-ups, balance history, usage analytics. Optimus never sees, displays, or caches the balance. Each AI call is validated server-side on every request by Aerele's Frappe site; insufficient-balance and rate-limit refusals surface through `_http_post`'s existing 4xx handling with the response body's error text.
+The customer manages their pack entirely on `aerele.in` — sign-ups, purchases, remaining-balance display, usage history. Optimus never sees, displays, or caches the remaining balance. Each AI call is validated server-side on every request by Aerele's Frappe site; pack-exhausted and rate-limit refusals surface through `_http_post`'s existing 4xx handling with the response body's error text.
+
+When a pack runs out, the next AI fix attempt from Optimus surfaces Aerele's "pack exhausted — purchase a new one" message as an inline `AiFixError` alert. The operator then visits aerele.in, buys another pack, and the existing API key automatically draws from the new pack — no Optimus re-configuration needed.
 
 ### 10.3 What additionally leaves the host
 
@@ -312,4 +316,4 @@ What is **NOT** sent (matches § 3):
 
 - The bench's `encryption_key` or any other site secret beyond the Aerele key itself.
 - Cross-session correlation IDs, recording UUIDs, schema, or DocType names beyond what the finding-specific payload already includes.
-- Heartbeat / metering / usage-counting calls. Aerele's billing meters from the actual `/chat/completions` traffic; the bench never pings out otherwise.
+- Heartbeat / pack-status / usage-counting calls. Aerele tracks consumption from the actual `/chat/completions` traffic; the bench never pings out otherwise.

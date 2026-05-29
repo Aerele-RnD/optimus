@@ -488,7 +488,7 @@
   {
    "default": "Anthropic",
    "depends_on": "eval:doc.ai_enabled",
-   "description": "Wire format / hosted defaults. \"Aerele\" is the managed pay-as-you-go option — sign up at aerele.in/optimus/signup and paste the issued key into API Key below. \"OpenAI-compatible\" requires a Base URL and Model — use it for Ollama, LM Studio, vLLM, OpenRouter, Together, Groq, etc.",
+   "description": "Wire format / hosted defaults. \"Aerele\" is the managed option — purchase a token pack at aerele.in/optimus/signup and paste the issued key into API Key below. Each pack is a fixed quantity of tokens; calls draw from the pack until it's exhausted, then you buy another. \"OpenAI-compatible\" requires a Base URL and Model — use it for Ollama, LM Studio, vLLM, OpenRouter, Together, Groq, etc.",
    "fieldname": "ai_provider",
    "fieldtype": "Select",
    "label": "Provider",
