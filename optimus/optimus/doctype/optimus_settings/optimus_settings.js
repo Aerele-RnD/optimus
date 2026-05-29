@@ -9,11 +9,25 @@
 // which Frappe re-creates whenever the form rebinds. Setting options
 // on refresh survives reloads and "refresh" Ctrl-S cycles.
 
-// The nine detection-sensitivity threshold fields the Sensitivity Profile
-// governs. Kept in sync with optimus.settings._SENSITIVITY_KEYS — the preset
-// numbers themselves are NOT duplicated here; they're fetched at runtime from
+// The full set of fields the Sensitivity Profile governs. Kept in sync with
+// optimus.settings._SENSITIVITY_KEYS — the preset numbers themselves are NOT
+// duplicated here; they're fetched at runtime from
 // optimus.api.get_config_profiles (single source of truth in settings.py).
+// Fields missing from this list are silently NOT updated by the JS preset-
+// write, even though the backend would still apply the preset at config-
+// resolve time — they'd appear locked under a non-Custom profile but show
+// stale values. So this MUST match _SENSITIVITY_KEYS exactly.
 const OPTIMUS_SENSITIVITY_FIELDS = [
+	// General → Session retention
+	"session_retention_days",
+	// Capture capacity
+	"max_queries_per_recording",
+	"pyinstrument_sampler_interval_ms",
+	"background_job_wait_seconds",
+	// Display filters
+	"min_action_duration_ms",
+	"large_duration_threshold_ms",
+	// Analyzer thresholds (detection — the original nine)
 	"redundant_doc_threshold",
 	"redundant_cache_threshold",
 	"redundant_perm_threshold",
@@ -23,6 +37,12 @@ const OPTIMUS_SENSITIVITY_FIELDS = [
 	"slow_hot_path_min_ms",
 	"hot_line_high_pct",
 	"hot_line_high_min_ms",
+	// Phase-2 UI knobs
+	"phase2_max_runs_per_session",
+	"auto_expand_max_depth",
+	"auto_expand_min_ms",
+	// AI auto-suggest cap
+	"ai_auto_suggest_max",
 ];
 
 frappe.ui.form.on("Optimus Settings", {

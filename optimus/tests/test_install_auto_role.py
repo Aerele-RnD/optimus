@@ -128,14 +128,20 @@ class _FakeSettings:
 		self.save_count += 1
 
 
-def _stub_seeder_frappe(monkeypatch, *, settings, doctype_exists=True):
+def _stub_seeder_frappe(monkeypatch, *, settings, doctype_exists=True, installed_apps=None):
 	"""Wire just enough frappe surface for ``_seed_ignored_apps_with_framework_apps``
 	to run end-to-end without a real bench.
 
 	``frappe.db`` is a Werkzeug ``LocalProxy`` ([[feedback_frappe_db_local_proxy]])
 	— patching attributes on it raises ``RuntimeError: object is not bound``
 	outside a request context. Replace it wholesale with a SimpleNamespace
-	carrying just the ``exists`` method the seeder calls."""
+	carrying just the ``exists`` method the seeder calls.
+
+	``installed_apps`` defaults to the full ``_DEFAULT_IGNORED_APPS`` tuple
+	so the "all defaults installed" seeded-rows test stays meaningful
+	without spelling the list out twice. Pass an explicit list to exercise
+	the intersection filter introduced when the seeder stopped blindly
+	appending apps that aren't installed."""
 	import types
 
 	import frappe
@@ -152,6 +158,13 @@ def _stub_seeder_frappe(monkeypatch, *, settings, doctype_exists=True):
 	monkeypatch.setattr(
 		frappe, "get_single",
 		lambda doctype: settings if doctype == "Optimus Settings" else None,
+		raising=False,
+	)
+	if installed_apps is None:
+		installed_apps = list(install._DEFAULT_IGNORED_APPS)
+	monkeypatch.setattr(
+		frappe, "get_installed_apps",
+		lambda: list(installed_apps),
 		raising=False,
 	)
 	# safe_commit is imported into install.py at module top — patch the
@@ -210,6 +223,61 @@ class TestSeedIgnoredAppsWithFrameworkApps:
 
 		assert settings.appended == []
 		assert settings.save_count == 0
+
+	def test_only_installed_apps_get_seeded(self, monkeypatch):
+		# The seeder intersects _DEFAULT_IGNORED_APPS with what's actually
+		# installed — seeding an app that isn't installed is pure UI
+		# clutter (it can't produce findings). Typical custom-app stack:
+		# frappe + the operator's own app.
+		settings = _FakeSettings(ignored_apps_rows=[])
+		_stub_seeder_frappe(
+			monkeypatch, settings=settings,
+			installed_apps=["frappe", "ugly_code"],
+		)
+
+		install._seed_ignored_apps_with_framework_apps()
+
+		# Only frappe (the only _DEFAULT_IGNORED_APPS member that's
+		# installed) lands. The custom app ``ugly_code`` is not in the
+		# defaults so it's left alone — that's the tracked-apps seeder's
+		# job.
+		assert settings.appended == [{"app_name": "frappe"}]
+		assert settings.save_count == 1
+
+	def test_no_default_apps_installed_is_a_silent_noop(self, monkeypatch):
+		# Bench installed only custom apps (none of the Frappe-org ones).
+		# Nothing in the intersection → no save, no rows.
+		settings = _FakeSettings(ignored_apps_rows=[])
+		_stub_seeder_frappe(
+			monkeypatch, settings=settings,
+			installed_apps=["ugly_code", "another_custom_app"],
+		)
+
+		install._seed_ignored_apps_with_framework_apps()
+
+		assert settings.appended == []
+		assert settings.save_count == 0
+
+	def test_partial_install_preserves_alphabetical_order(self, monkeypatch):
+		# A handful of defaults installed — the seeded rows preserve the
+		# _DEFAULT_IGNORED_APPS tuple order (alphabetical), not the order
+		# of frappe.get_installed_apps's return value.
+		settings = _FakeSettings(ignored_apps_rows=[])
+		_stub_seeder_frappe(
+			monkeypatch, settings=settings,
+			# Deliberately scrambled to prove the seed re-sorts via the
+			# _DEFAULT_IGNORED_APPS iteration order.
+			installed_apps=["hrms", "erpnext", "frappe", "wiki"],
+		)
+
+		install._seed_ignored_apps_with_framework_apps()
+
+		assert settings.appended == [
+			{"app_name": "erpnext"},
+			{"app_name": "frappe"},
+			{"app_name": "hrms"},
+			{"app_name": "wiki"},
+		]
 
 	def test_default_list_matches_documented_constant(self):
 		# Locks the public-facing default. If a future change wants to

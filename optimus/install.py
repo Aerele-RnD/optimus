@@ -89,14 +89,9 @@ def after_install():
 	# after install.
 	try:
 		_seed_ignored_apps_with_framework_apps()
-	except Exception as exc:
+	except Exception:
 		try:
 			frappe.log_error(title="optimus after_install ignored-apps seed")
-		except Exception:
-			pass
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("install.after_install.ignored_apps_seed", exc)
 		except Exception:
 			pass
 
@@ -136,10 +131,13 @@ _DEFAULT_IGNORED_APPS = (
 
 
 def _seed_ignored_apps_with_framework_apps():
-	"""Populate Optimus Settings.ignored_apps with the Frappe-organization
-	apps operators most commonly can't (or won't) patch on day one — all
-	the apps in ``_DEFAULT_IGNORED_APPS`` (frappe + erpnext + the nine
-	other apps maintained by Frappe Technologies).
+	"""Populate Optimus Settings.ignored_apps with the subset of
+	``_DEFAULT_IGNORED_APPS`` that's actually installed on this bench.
+
+	An app that isn't installed can't produce findings, so seeding it is
+	pure UI clutter. The intersection with ``frappe.get_installed_apps()``
+	mirrors what ``_seed_tracked_apps_from_installed_apps`` does for the
+	tracked-apps table — keep the seeded rows grounded in reality.
 
 	Idempotent: if ``ignored_apps`` already has any rows (either from a
 	previous install run on the same site, or from manual operator
@@ -156,7 +154,15 @@ def _seed_ignored_apps_with_framework_apps():
 		# Respect existing config — never overwrite.
 		return
 
-	for app_name in _DEFAULT_IGNORED_APPS:
+	installed = set(frappe.get_installed_apps() or [])
+	# Preserve _DEFAULT_IGNORED_APPS's alphabetical order in the seeded
+	# rows — iterate the tuple, not the set, so the resulting table is
+	# stable + predictable.
+	to_seed = [app for app in _DEFAULT_IGNORED_APPS if app in installed]
+	if not to_seed:
+		return
+
+	for app_name in to_seed:
 		settings.append("ignored_apps", {"app_name": app_name})
 	settings.save(ignore_permissions=True)
 	safe_commit()
