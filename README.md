@@ -12,6 +12,7 @@
 - [What it isn't](#what-it-isnt)
 - [Install](#install)
 - [60-second quickstart](#60-second-quickstart)
+- [Using Optimus](#using-optimus)
 - [The customer → partner handoff](#the-customer--partner-handoff)
 - [Finding types](#finding-types)
 - [How it works](#how-it-works)
@@ -19,7 +20,11 @@
 - [Comparison with alternatives](#comparison-with-alternatives)
 - [Production safety](#production-safety)
 - [Scheduler-disabled sites](#scheduler-disabled-sites)
-- [Configuration](#configuration)
+- [Configuration — Optimus Settings (DocType)](#configuration--optimus-settings-doctype)
+  - [General tab](#general-tab)
+  - [Analysis tab](#analysis-tab)
+  - [AI Fix Suggestions tab](#ai-fix-suggestions-tab)
+- [Configuration — site_config.json (operator knobs)](#configuration--site_configjson-operator-knobs)
 - [Runtime flags](#runtime-flags)
 - [Custom analyzers](#custom-analyzers)
 - [Verification checklist](#verification-checklist)
@@ -74,6 +79,157 @@ After install, an **Optimus User** role is created automatically. All existing S
 7. Click **Download Safe Report** or **Download Safe Report (PDF)**. Email it to whoever needs it.
 
 That's the whole workflow. No configuration required.
+
+---
+
+## Using Optimus
+
+### The floating widget
+
+The bottom-right widget is the only control surface a regular user needs.
+Its color reflects state:
+
+| Color | State | Meaning |
+|---|---|---|
+| Red | Idle | No active session for this user. Click to start one. |
+| Green | Recording | A session is live. Elapsed timer is shown. Click to stop. |
+| Orange | Analyzing | Stop was clicked; the analyze worker is generating the report. |
+| Blue | Report ready | Analyze finished. Click to jump to the Optimus Session form. |
+| Gray | Disabled | The master kill-switch in Optimus Settings is off, or your user lacks the Optimus User role. |
+
+The widget is only shown to users with the **Optimus User** role. System
+Managers receive it automatically; you can grant it to other users via
+**User → Roles**.
+
+The Start dialog lets you set:
+
+- **Label** — what shows up in the session list. Pick something
+  searchable (`SI submit, 100 items` beats `test`).
+- **Steps to Reproduce / Notes** — a rich-text block. Rendered at the
+  top of both reports. Use it to give context to whoever reads the
+  report ("Customer says save takes 8s; happens on every SI ≥ 50
+  items").
+- **Capture Python call tree** — leave on for actionable findings.
+  Turning it off gives you the v0.2.0 SQL-only behavior (~10–30%
+  overhead instead of 1.5–2×), useful only when you specifically
+  want to verify a SQL-level hypothesis without Python overhead.
+
+### The Optimus Session form
+
+Every session lands as an **Optimus Session** row. The form has three
+read-only sections:
+
+1. **Status + timing** — Recording / Analyzing / Ready / Failed; start
+   time; analyze wall-clock duration; counts of actions and findings.
+2. **Reports** — two file links plus action buttons:
+   - **Download Safe Report** / **Open Safe Report** — the customer-
+     safe HTML. Email-shareable.
+   - **Download Raw Report** / **Open Raw Report** — the un-redacted
+     version. Hidden from non-admins; the link itself is permission-
+     gated server-side, so guessing the file name does not bypass it.
+   - **Re-analyze** — re-runs the analyze pipeline from the captured
+     recordings (which live in Redis for 10 minutes after Stop).
+     Useful when a session ends `Failed` because of a transient
+     error. After 10 minutes the recordings are gone — re-analyze
+     can still re-render reports from the persisted DocType data,
+     but cannot recompute findings.
+   - **Regenerate Reports** — re-renders both HTML files from the
+     persisted Action/Finding rows. Cheaper than a full re-analyze;
+     useful after an Optimus upgrade that improves the renderer.
+   - **Phase 2 → Line Profile** — opens the picker dialog (see
+     below).
+   - **Pin as Baseline** / **Unpin Baseline** — see _Baseline
+     comparison_ below.
+3. **Captured actions + findings** — child tables you can drill into
+   without opening the report.
+
+### Report modes — Safe vs Raw
+
+| Aspect | Safe Report | Raw Report |
+|---|---|---|
+| Audience | Customer, third-party dev shop, any external party | Internal engineers with prod access |
+| SQL literals | Replaced with `?` | Preserved verbatim |
+| URLs | `/app/sales-invoice/SI-2026-00123/edit` becomes `/app/sales-invoice/<name>/edit`; filters / source_name redacted | Preserved verbatim |
+| Headers + form data | `Authorization`, `Cookie`, CSRF, anything matching `password\|secret\|token\|api[-_]?key\|...` → `[REDACTED]` | Preserved verbatim |
+| User notes | bleach-sanitized HTML (strips `<script>`, `onclick`, `javascript:` URLs) | Same — bleach runs in both modes for XSS safety |
+| Custom-app function names | Hashed to `<app>:<short>` | Preserved verbatim |
+| Permission gate | None (anyone with the URL can open) | System Manager or the user who recorded the session |
+| Self-contained | Yes — no CDN fonts, no external scripts, no `@import` (canary test in CI) | Yes |
+
+Both reports render from the same `templates/report.html` and the same
+persisted data — Safe mode is a renderer-time redaction pass, not a
+separate capture.
+
+### Phase 2 — Line profiling
+
+The default capture (Phase 1) tells you _which functions_ are hot. Phase
+2 tells you _which lines inside those functions_ are hot. Use it when
+Phase 1 surfaces a hot path and you can't tell from reading the function
+which line is doing the work.
+
+Workflow:
+
+1. Open a Ready session, click **Phase 2 → Line Profile**.
+2. The picker dialog shows curated candidates from Phase 1's call tree.
+   Functions consuming ≥ 50 ms are pre-ticked as `recommended`.
+3. **Auto-expand hot chain** (ticked by default) walks each pick down
+   the call tree to instrument the full chain, not just the entry
+   frame.
+4. Click **Start Phase 2** — the widget switches back to recording mode.
+5. Re-execute the same flow you profiled in Phase 1.
+6. Click Stop. Phase 2 analyze runs; the report adds a **Line-Level
+   Drilldown** section with per-line hit-count and time.
+
+Phase 2 has a per-request overhead budget (default 10s; tunable via
+`optimus_phase2_overhead_budget_seconds` in site_config). If the budget
+expires mid-request, line profiling disengages so the request finishes
+at natural speed, and the run is flagged "partial data". This stops a
+hot-loop pick from freezing the UI.
+
+### AI fix suggestions (optional)
+
+Optimus can call an LLM (Anthropic, OpenAI, Kimi, or any OpenAI-
+compatible endpoint including local ones like Ollama or LM Studio) to
+suggest concrete fixes for each finding. Off by default — no traffic
+leaves your bench until you enable it.
+
+Three feature toggles, all under **Optimus Settings → AI Fix
+Suggestions → Use the LLM for**:
+
+- **Fix suggestions on findings** — adds a "Suggest a fix (AI)" button
+  per finding and an auto-suggest pass during analyze (when the
+  auto-suggest checkbox below is on).
+- **Index recommendations** — adds a "Suggest an index (AI)" button to
+  the per-table breakdown.
+- **Humanized "Steps to Reproduce"** — rewrites the auto-captured
+  action list into a friendly flow ("Open Sales Invoice list, click
+  New, …").
+
+Turning any one of these off is a hard disable — the button is hidden,
+the API refuses, and re-rendered reports omit the AI block. See
+[`docs/AI-FIXING.md`](./docs/AI-FIXING.md) for the per-pathway data
+inventory and local-LLM recipes.
+
+### Baseline comparison
+
+You're not done until the customer agrees the fix worked. Optimus's
+baseline comparison gives you a side-by-side report:
+
+1. On a Ready "before" session, click **Pin as Baseline**.
+2. Capture a "after" session of the same flow (same label is
+   convenient but not required — the comparison matches actions by
+   label, falling back to path).
+3. Open the after-session's Safe or Raw report. Three new sections
+   appear at the top:
+   - **Session-level delta** — total wall time, query count, SQL/Python
+     ms, with old → new.
+   - **Per-action comparison** — matched actions with before/after
+     stats.
+   - **Findings compared to baseline** — Fixed / New / Unchanged with
+     delta.
+4. The customer signs off on concrete numbers, not "it feels faster".
+
+To swap the baseline, unpin the old one and pin the new one.
 
 ---
 
@@ -312,55 +468,249 @@ Consequences:
 
 ---
 
-## Configuration
+## Configuration — Optimus Settings (DocType)
 
-All knobs live in `sites/<your-site>/site_config.json`. Every value is optional; defaults are sensible for most deployments.
+Almost every knob a regular admin needs lives in the **Optimus Settings**
+Single doc (go to **Desk → search "Optimus Settings"**, or
+`/app/optimus-settings`). Three tabs: **General**, **Analysis**, **AI Fix
+Suggestions**. The two ops-only knobs not in the UI (memory caps, lock
+behaviour, etc.) live in `site_config.json` — see the next section.
 
-### Recording & analyze
+Resolution order for any field with both a DocType row and a
+site_config fallback (n+1, redundant-call, sampler-interval): **DocType
+row → site_config.json → hardcoded default**. The DocType wins if
+populated.
+
+### General tab
+
+#### General section
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Profiler Enabled** | ✓ on | Master kill-switch. When off, no requests or background jobs are profiled even when users have active sessions. Use it to pause site-wide instrumentation without touching individual widgets. |
+| **Session Retention (days)** | `30` | Optimus Session rows older than this — only in `Ready` or `Failed` state — are deleted by the daily housekeeping job, along with their attached HTML reports and `File` rows. `0` = keep forever. _Reference: Strict 90 · Recommended 30 · Relaxed 7._ |
+
+#### Apps section
+
+Two child tables that control which Frappe apps Optimus treats as
+"user code" (actionable) vs framework noise.
+
+| Field | Purpose |
+|---|---|
+| **Tracked Apps** | Allowlist. When populated, **only** these apps' findings are actionable; everything else routes to the report's _Framework-level observations_ block. Leave it empty to keep the built-in defaults (`frappe`, `erpnext`, `hrms`, `lms`, `helpdesk`, `insights`, `crm`, `builder`, `wiki`, `drive`, `payments` + pip libs are framework code). **Do NOT add `frappe` or `erpnext` here** — that flips them to "user code" and floods actionable findings with framework noise. |
+| **Ignored Apps** | Exclusion list. Findings whose blame-app is in this list are **dropped entirely** (both Findings and Observations sections). Use it for apps you can't or won't patch — typically `frappe`, `optimus`, sometimes `erpnext`. The "Issues found" stat card surfaces a "N findings hidden" note so the total stays honest. |
+
+#### Skip Rules section
+
+Patterns and users to exclude from instrumentation entirely (no
+recording captured in the first place — cheaper than dropping at
+analyze time).
+
+| Field | Format | Purpose |
+|---|---|---|
+| **Skip Request Paths** | One URL prefix per line. `#` starts a comment. | Requests starting with any of these prefixes are not profiled even with an active session. Useful for healthcheck endpoints, polling APIs. The profiler's own admin endpoints are always skipped — these extend the built-in list. |
+| **Skip Users** | One user email per line. `#` comments. | Requests / jobs running as one of these users are not profiled. Useful for system bot users (scheduler, health-checks). |
+
+#### Redaction section
+
+Optimus redacts sensitive values **at capture time** — passwords, API
+keys, tokens, CSRF, cookies, authorization headers never reach Redis or
+the persisted report. Defaults cover 12 canonical patterns. The fields
+below extend the defaults — they are **never removed**. Substring match,
+case-insensitive.
+
+| Field | Format | Purpose |
+|---|---|---|
+| **Sensitive SQL Columns** | One name per line, `#` comments | Extra column names whose literal values in `WHERE` / `LIKE` / `IN` clauses are redacted to `<REDACTED>`. Example: `recovery_code`, `bank_account`, `otp_seed`. |
+| **Sensitive Form / Header Keys** | One name per line, `#` comments | Extra key names whose values in `form_dict` / headers are replaced with `<REDACTED:keyname>`. Example: `x-customer-id`, `recovery_code`. |
+
+#### Capture Capacity section
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Max Queries per Recording** | `2000` | Per-recording cap on queries enriched (`sqlparse` + `EXPLAIN` + normalization) by analyze. Anything beyond is truncated with a banner at the top of the report. Each query costs one `EXPLAIN` round-trip — raising the cap scales analyze time roughly linearly. Raise to `5000` / `10000` for legitimately heavy flows (e.g. Manufacturing Plan Submit creating 100+ child orders). _Reference: Strict 5000 · Recommended 2000 · Relaxed 1000._ |
+| **Sampler Interval (ms)** | `1.0` | pyinstrument statistical-sampler interval. Lower = finer call-tree resolution but higher overhead. `1ms` is recommended; raise to `5–10ms` for prod-like profiling. Floor: `0.1`. _Reference: Strict 0.5 · Recommended 1.0 · Relaxed 5.0._ |
+| **Hide framework / internal database tables** | ✓ on | When on, the "Time spent per database table" section drops Frappe schema/meta tables (`tabDocType`, `tabSingles`, `tabPatch Log`, etc.), framework-internal tables, and `information_schema.*`. Touched by every request via framework machinery — not user-actionable. Other sections (top-queries leaderboard, per-action drill-down, recordings) are unaffected. Uncheck to see them all. |
+| **Wait for Background Jobs (seconds)** | `300` | How long the analyze job watches the bg jobs the profiled flow enqueued, waiting for each to reach a terminal state (Completed / Failed / Timeout). Hard-capped at `300`. `0` = don't wait. On a single-worker bench the analyze job yields the worker between checks so those jobs can run; if the scheduler is disabled, the wait is skipped. Jobs still running at the ceiling appear as `Running` in the report — click _Retry Analyze_ once they finish to capture their data. _Reference: Strict 300 · Recommended 300 · Relaxed 60._ |
+
+#### Display Filters section
+
+These shape how reports **render** — they don't change what's captured
+or analyzed.
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Min Action Duration to Show (ms)** | `0` | Drop actions shorter than this from the per-action breakdown. `0` = show everything. Useful for declutter when a flow generates many sub-millisecond background polls. _Reference: Strict 0 · Recommended 0 · Relaxed 50._ |
+| **Render durations in seconds above (ms)** | `1000` | Durations above this render as seconds (e.g. `5234ms` → `5.23s`); below it, ms is preserved. Set to a very large value (e.g. `99999999`) to effectively disable. _Reference: Strict 500 · Recommended 1000 · Relaxed 99999999._ |
+
+---
+
+### Analysis tab
+
+#### Sensitivity Profile section
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Sensitivity Profile** | `Recommended` | One-knob preset for the 9 detection thresholds below. **Strict** catches more (lower thresholds, more findings, more noise). **Relaxed** catches less. **Recommended** is the shipped default and automatically tracks future tuning across upgrades. **Custom** lets you hand-tune the individual fields — they stay locked under the named presets. Display filters, Phase-2, capture, retention, and AI settings are **not** affected by the profile. |
+
+#### Analyzer Thresholds section
+
+Repetition thresholds for the redundancy + N+1 analyzers. Lower = more
+findings (and more noise); higher = fewer findings.
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Redundant `get_doc` Threshold** | `5` | Min `get_doc(doctype, name)` calls from the same callsite before a Redundant Call finding is emitted. _Strict 3 · Recommended 5 · Relaxed 10._ |
+| **Redundant Cache Lookup Threshold** | `50` | Min cache lookups for the same key from the same callsite. Cache lookups aren't individually timed; `50` matches the high-severity threshold and cuts 0ms noise. _Strict 20 · Recommended 50 · Relaxed 100._ |
+| **Redundant Permission Check Threshold** | `10` | Min `has_permission(doctype, name, ptype)` calls from the same callsite. _Strict 5 · Recommended 10 · Relaxed 25._ |
+| **N+1 Minimum Occurrences** | `10` | Min identical queries from the same callsite before an N+1 finding is emitted. _Strict 5 · Recommended 10 · Relaxed 25._ |
+
+#### Severity Thresholds section
+
+Tune what counts as a high-severity finding. Sites with intentionally
+slow analytical flows want higher numbers (suppress false positives);
+sites with strict latency budgets want lower numbers.
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Slow Query Threshold (ms)** | `200` | A single query slower than this is flagged as a Slow Query finding. _Strict 100 · Recommended 200 · Relaxed 500._ |
+| **Slow Hot Path Threshold (% of action wall time)** | `25` | A Python subtree consuming ≥ this % AND ≥ the min-ms below qualifies. _Strict 15 · Recommended 25 · Relaxed 40._ |
+| **Slow Hot Path Minimum (ms)** | `200` | Absolute minimum for Slow Hot Path. _Strict 100 · Recommended 200 · Relaxed 500._ |
+| **Hot Line High Severity (% of function time)** | `50` | Phase 2: a single line consuming ≥ this % of the function's total AND ≥ the min-ms below is High. _Strict 35 · Recommended 50 · Relaxed 70._ |
+| **Hot Line High Severity Min (ms)** | `100` | Phase 2 Hot Line absolute minimum for High. _Strict 50 · Recommended 100 · Relaxed 250._ |
+
+#### Phase 2 Defaults section
+
+Defaults for the line-profile picker dialog. The dialog still lets the
+user override these per run.
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Max Runs per Session** | `10` | Cap on how many Phase 2 runs are retained per Optimus Session. When exceeded, the oldest run's full results are archived to a private `File` and only row metadata is kept. _Strict 25 · Recommended 10 · Relaxed 5._ |
+| **Default Auto-Expand Hot Chain** | ✓ on | When on, the picker dialog's `Auto-expand hot chain` checkbox starts ticked. Auto-expansion walks each pick down phase-1's call tree to instrument the full hot chain in one shot. |
+| **Auto-Expand: Max Depth** | `10` | How many levels deep auto-expand will follow. _Strict 15 · Recommended 10 · Relaxed 5._ |
+| **Auto-Expand: Minimum Child Time (ms)** | `50` | Auto-expand stops descending when the next-hottest child consumes less than this. Lower = follow deeper into smaller hot spots. _Strict 25 · Recommended 50 · Relaxed 100._ |
+
+---
+
+### AI Fix Suggestions tab
+
+Off by default — no traffic leaves your bench until you turn it on.
+
+#### AI Fix Suggestions section (provider wiring)
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Enable AI Fix Suggestions** | ✗ off | Master switch for the entire AI feature. When off, every AI button on the Session form is hidden and the API refuses. |
+| **Provider** | `Anthropic` | Wire format. `Anthropic`, `OpenAI`, `Kimi`, and `OpenAI-compatible` (which requires Base URL + Model — covers Ollama, LM Studio, vLLM, OpenRouter, Together, Groq). |
+| **Base URL** | _empty_ | Leave blank to use the hosted default. Required for `OpenAI-compatible` — e.g. `http://localhost:11434/v1` (Ollama), `http://localhost:1234/v1` (LM Studio). |
+| **Model** | _empty_ | Leave blank for the provider default. Examples: `claude-sonnet-4-6` (Anthropic), `gpt-4.1-mini` (OpenAI), `kimi-k2-0905-preview` (Kimi), or your local model name. |
+| **API Key** | _empty_ | Per-site, stored encrypted (Frappe `Password` field). Most local OpenAI-compatible endpoints don't need one; hosted ones do. |
+
+#### Use the LLM for (section toggles)
+
+Three independent on/off switches. Turning any one off is a **hard
+disable** — the section is never auto-generated, the matching button is
+hidden, the API refuses, and re-rendered reports omit the block.
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Fix suggestions on findings** | ✓ on | "Suggest a fix (AI)" / "Generate AI fixes" / "Re-evaluate AI fixes" buttons on findings. |
+| **Index recommendations (DB-tables breakdown)** | ✓ on | "Suggest an index (AI)" button in the per-table breakdown. |
+| **Humanized "Steps to Reproduce"** | ✓ on | LLM rewrites the auto-captured action list into a friendly flow at analyze time (and on demand). Falls back to the raw action list on any failure. |
+
+#### Automatic Suggestions section
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Suggest AI fixes in the report by default** | ✗ off | When on, the analyze pipeline auto-generates a fix for each eligible finding so suggestions are already in the report — no need to click per finding. Costs LLM tokens (and a little analyze time) on every session. Keep off unless you want suggestions baked in. |
+| **Max auto-suggested findings per session** | `5` | Cap on how many findings get an automatic suggestion — highest-severity, highest-impact first. `0` = every eligible finding (can be slow + costly on big sessions). _Strict 10 · Recommended 5 · Relaxed 3._ |
+
+#### Privacy & Operations section
+
+| Field | Default | Purpose |
+|---|---|---|
+| **Excluded finding types** | _empty_ | One finding type per line. Those types are skipped in both auto-suggest and on-demand — the payload is never built (no data ever sent for them). Exact-match, case-sensitive. `#` comments. Canonical names: `Filesort`, `Framework N+1`, `Full Table Scan`, `Hot Line`, `Low Filter Ratio`, `Missing Index`, `N+1 Query`, `Redundant Call`, `Slow Query`, `Temporary Table`. |
+| **Request timeout (seconds)** | `60` | HTTP timeout for outbound LLM calls. `60s` fits hosted providers (Anthropic / OpenAI reply in 2–10s typically). For local LLMs (Ollama / LM Studio / vLLM) first-token cold-start can exceed 60s — start at `180` and tune once warm-call P99 is known. Clamped to `10–600`. |
+
+---
+
+## Configuration — site_config.json (operator knobs)
+
+Knobs that don't have a UI yet — usually because they're emergency
+levers, performance trade-offs, or security hardening that an admin
+should not be flipping casually. All live in
+`sites/<your-site>/site_config.json`; all are optional; defaults are
+inert.
+
+A handful of them (the threshold ones — `optimus_redundant_*_threshold`,
+`optimus_n_plus_one_threshold`, `optimus_sampler_interval_ms`) also work
+as pre-DocType fallbacks. The DocType row wins if both are set.
+
+### Recording capacity
 
 | Key | Default | Purpose |
 |---|---|---|
-| `optimus_max_recordings_per_session` | `200` | Soft cap on HTTP requests + background jobs per session. When hit, further recordings are silently dropped and the report shows an `analyzer_warnings` banner. |
-| `optimus_session_retention_days` | `90` | Sessions in `Ready` / `Failed` state older than this are deleted by the daily janitor, along with attached HTML report files. |
-| `optimus_inline_analyze_limit` | `50` | Max recordings allowed for inline analyze on scheduler-disabled sites. Sessions larger than this are refused with an actionable error. |
-| `optimus_explain_cache_ttl_seconds` | `3600` | How long EXPLAIN results are cached in Redis across analyze runs. Set `0` to disable cross-session cache. |
+| `optimus_max_recordings_per_session` | `200` | Soft cap on HTTP requests + bg jobs per session. When hit, further recordings are silently dropped and the report shows a truncation banner. |
+| `optimus_inline_analyze_limit` | `50` | Max recordings allowed for inline analyze on scheduler-disabled sites. Sessions larger than this are refused with an actionable error pointing at `bench enable-scheduler` + the Retry Analyze button. |
 
-### N+1 detection
+### Analyze pipeline knobs
 
 | Key | Default | Purpose |
 |---|---|---|
-| `optimus_n_plus_one_threshold` | `10` | Minimum repetition count before a group is flagged as N+1. Bump higher on legacy ERPNext codebases with many legitimate N-ish patterns. |
-| `optimus_n_plus_one_min_total_ms` | `20` | Minimum cumulative time a group must consume before it becomes a finding. Prevents `10 × 0.1 ms` noise. |
+| `optimus_explain_cache_ttl_seconds` | `3600` | How long `EXPLAIN` results are cached in Redis across analyze runs. `0` disables the cross-session cache. |
+| `optimus_analyze_gc_collect` | `True` | After analyze frees the pyinstrument session blob, call `gc.collect()` to return RAM to the OS. Safe-on default. Set `False` only if you've measured and the collect pause matters. |
+| `optimus_analyze_nice` | `5` | `os.nice` increment for the async analyze worker — lower CPU priority so it doesn't fight live requests. `0` disables. Linux only; ignored on macOS. |
+| `optimus_singleflight_max_wait_seconds` | `600` | When two re-analyzes race for the same session, the second waits up to this long (with polite re-enqueue) for the first to finish. `0` disables single-flight. |
+| `optimus_enrich_throttle_every` | `0` | Sleep every N enriched queries during analyze (for EXPLAIN). `0` = no throttle (default). Raise to e.g. `200` on shared MariaDB instances where back-to-back EXPLAINs cause noisy-neighbor issues. |
+| `optimus_enrich_throttle_sleep_ms` | `5` | Sleep length when the throttle above fires. |
 
-### Python call tree (v0.3.0+)
-
-| Key | Default | Purpose |
-|---|---|---|
-| `optimus_sampler_interval_ms` | `1` | pyinstrument sampling interval in ms. Higher = less overhead, lower fidelity. |
-| `optimus_tree_prune_threshold_pct` | `0.005` | Drop frames below this % of action wall time. `0.005` = 0.5%. |
-| `optimus_tree_node_cap` | `500` | Max nodes per persisted tree (hot path always preserved). |
-
-### Redundant-call detection (v0.3.0+)
+### Phase 2
 
 | Key | Default | Purpose |
 |---|---|---|
-| `optimus_redundant_doc_threshold` | `5` | Min repetitions of `frappe.get_doc(doctype, name)` from the same callsite. |
-| `optimus_redundant_cache_threshold` | `10` | Min repetitions of `frappe.cache.get_value(key)`. |
-| `optimus_redundant_perm_threshold` | `10` | Min repetitions of `has_permission(...)`. |
-| `optimus_redundant_high_multiplier` | `5` | Multiplier above which severity escalates to High. |
-| `optimus_safe_extra_allowed_apps` | `[]` | Extra app prefixes whose function names stay un-redacted in Safe mode. |
+| `optimus_phase2_overhead_budget_seconds` | `10` | Per-request line-profile overhead budget. On expiry, line tracing disengages and the run is flagged "partial data". Stops a hot-loop pick from freezing the UI. `0` = unbounded (NOT recommended on production). |
+| `optimus_phase2_auto_arm` | `False` | When set, after each Ready session the analyze pipeline auto-arms a Phase 2 pass on the recommended hot paths. Opt-in + admin-only by design (the next user-flow gets instrumented automatically). |
 
-### Infra pressure (v0.5.0+)
+### Security / signing
 
 | Key | Default | Purpose |
 |---|---|---|
-| `optimus_infra_cpu_high_pct` | `85` | CPU% threshold for Resource Contention finding. |
-| `optimus_infra_cpu_critical_pct` | `95` | CPU% at which severity escalates to High. |
-| `optimus_infra_rss_delta_high_mb` | `200` | Worker RSS growth threshold for Memory Pressure. |
+| `optimus_allow_unsigned_pickles` | `True` | Whether to accept legacy un-signed pyinstrument blobs in Redis during analyze. Defaults to `True` to keep pre-v0.7 sessions analyzable. Set `False` on hardened sites to refuse unsigned blobs entirely (requires `encryption_key` in site_config). |
+
+### Infra-pressure analyzer
+
+| Key | Default | Purpose |
+|---|---|---|
+| `optimus_infra_cpu_high_pct` | `85` | CPU % at which Resource Contention is Medium. |
+| `optimus_infra_cpu_critical_pct` | `95` | CPU % at which severity escalates to High. |
+| `optimus_infra_rss_delta_high_mb` | `200` | Worker RSS growth threshold for Memory Pressure (Medium). |
 | `optimus_infra_rss_delta_critical_mb` | `500` | RSS delta for High severity. |
-| `optimus_infra_swap_warn_mb` | `100` | Swap usage threshold. Any active swap is a yellow flag. |
+| `optimus_infra_swap_warn_mb` | `100` | Swap-active threshold. Any active swap is a yellow flag. |
 | `optimus_infra_db_pool_high_ratio` | `0.9` | `threads_connected / max_connections` ratio for DB Pool Saturation. |
 | `optimus_infra_rq_backlog_warn` | `50` | RQ queue depth threshold for Background Queue Backlog. |
+
+### N+1 / redundancy fallbacks (DocType wins if set)
+
+These are pre-DocType compatibility — the DocType field with the same
+purpose is the recommended surface. Listed here for sites still tuned
+through site_config.
+
+| Key | Default | Maps to DocType field |
+|---|---|---|
+| `optimus_n_plus_one_threshold` | `10` | N+1 Minimum Occurrences |
+| `optimus_n_plus_one_min_total_ms` | `20` | _(no DocType equivalent — min cumulative ms for an N+1 group)_ |
+| `optimus_redundant_doc_threshold` | `5` | Redundant `get_doc` Threshold |
+| `optimus_redundant_cache_threshold` | `50` | Redundant Cache Lookup Threshold |
+| `optimus_redundant_perm_threshold` | `10` | Redundant Permission Check Threshold |
+| `optimus_redundant_high_multiplier` | `5` | _(no DocType equivalent — multiplier above which severity escalates to High)_ |
+| `optimus_sampler_interval_ms` | `1` | Sampler Interval (ms) |
+
+### Retention (DocType wins)
+
+| Key | Default | Maps to DocType field |
+|---|---|---|
+| `optimus_session_retention_days` | `30` | Session Retention (days) |
 
 ---
 
