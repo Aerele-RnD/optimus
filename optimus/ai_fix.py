@@ -1178,21 +1178,6 @@ def _log_http_error(provider: str, where: str, status: int | None, detail: str =
 		)
 	except Exception:
 		pass
-	# v0.8.0: aggregate LLM transport health into the opt-in failure telemetry
-	# DocType so the operator can tell intermittent flapping from always-down.
-	# Provider name + endpoint label + status only — never payload, never key.
-	try:
-		from optimus import telemetry
-		telemetry.emit_failure(
-			"ai_fix.http_error",
-			context={
-				"provider": provider,
-				"where": where,
-				"status": str(status) if status is not None else "",
-			},
-		)
-	except Exception:
-		pass
 
 
 def _http_post(url: str, headers: dict, body: dict, *, provider: str, where: str) -> dict:

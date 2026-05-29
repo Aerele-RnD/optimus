@@ -11,8 +11,7 @@ hard cap of ``MAX_DELETIONS_PER_RUN`` (100) prevents a single sweep
 from locking up MariaDB on a large backlog.
 
 The unit suite covers individual sweep functions in isolation
-(`test_janitor.py`, `test_janitor_telemetry.py`) but mocks the actual
-deletion. It cannot prove:
+(`test_janitor.py`) but mocks the actual deletion. It cannot prove:
 
   * That the cron does, in fact, delete the underlying DocType row
     (not just mark or move it).

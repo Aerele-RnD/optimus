@@ -60,14 +60,9 @@ def after_install():
 	# Wrapped in try/except so a failure can't abort the install.
 	try:
 		_assign_profiler_user_to_system_managers()
-	except Exception as exc:
+	except Exception:
 		try:
 			frappe.log_error(title="optimus after_install auto-role")
-		except Exception:
-			pass
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("install.after_install.auto_role", exc)
 		except Exception:
 			pass
 
@@ -79,14 +74,9 @@ def after_install():
 	# their mental model of "user code".
 	try:
 		_seed_tracked_apps_from_installed_apps()
-	except Exception as exc:
+	except Exception:
 		try:
 			frappe.log_error(title="optimus after_install tracked-apps seed")
-		except Exception:
-			pass
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("install.after_install.tracked_apps_seed", exc)
 		except Exception:
 			pass
 
@@ -252,17 +242,9 @@ def on_user_role_change(doc, method=None):
 		if PROFILER_USER_ROLE in role_names:
 			return
 		doc.append("roles", {"role": PROFILER_USER_ROLE})
-	except Exception as exc:
+	except Exception:
 		try:
 			frappe.log_error(title="optimus on_user_role_change")
-		except Exception:
-			pass
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure(
-				"install.on_user_role_change", exc,
-				context={"user": getattr(doc, "name", "") or ""},
-			)
 		except Exception:
 			pass
 
@@ -288,27 +270,17 @@ def before_uninstall():
 		from optimus import capture
 
 		capture.uninstall_wraps()
-	except Exception as exc:
+	except Exception:
 		try:
 			frappe.log_error(title="optimus before_uninstall capture")
-		except Exception:
-			pass
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("install.before_uninstall.capture", exc)
 		except Exception:
 			pass
 
 	try:
 		_clear_redis_state()
-	except Exception as exc:
+	except Exception:
 		# Never fail the uninstall on a Redis hiccup.
 		frappe.log_error(title="optimus uninstall cleanup")
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("install.uninstall.cleanup", exc)
-		except Exception:
-			pass
 
 
 def _clear_redis_state():

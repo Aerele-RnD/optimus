@@ -464,14 +464,6 @@ def analyze(recordings: list[dict], context) -> AnalyzerResult:
 						title="optimus optimizer failure",
 						message=f"{type(e).__name__}: {e}\n\nQuery: {scrubbed}",
 					)
-					try:
-						from optimus import telemetry
-						telemetry.emit_failure(
-							"analyzers.index_suggestions.optimizer_failure", e,
-							context={"exception_type": type(e).__name__},
-						)
-					except Exception:
-						pass
 				except Exception:
 					pass
 				logged_real += 1
@@ -686,14 +678,6 @@ def analyze(recordings: list[dict], context) -> AnalyzerResult:
 					title="optimus index_suggestions dropped",
 					message=reason,
 				)
-				try:
-					from optimus import telemetry
-					telemetry.emit_failure(
-						"analyzers.index_suggestions.dropped",
-						context={"reason": (reason or "")[:200]},
-					)
-				except Exception:
-					pass
 		except Exception:
 			pass
 

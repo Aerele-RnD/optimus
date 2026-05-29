@@ -219,12 +219,10 @@ class TestWrapUnwrap:
 		assert version is None
 
 	def test_unwrap_unknown_version_returns_default(self):
-		"""A future schema version → ``default`` + telemetry emit."""
-		from optimus import redis_schema, telemetry
-
-		# Snapshot the telemetry buffer before, then assert at least
-		# one ``redis.schema_drift`` event landed after.
-		telemetry.drain_for_test()  # start clean
+		"""A future schema version → caller's ``default`` so the host code
+		path degrades gracefully instead of crashing on a shape it can't
+		read."""
+		from optimus import redis_schema
 
 		future_value = {"_v": 99, "data": {"future_field": True}}
 		unwrapped, version = redis_schema.unwrap_value(
@@ -232,12 +230,6 @@ class TestWrapUnwrap:
 		)
 		assert unwrapped == "MISSING"
 		assert version == 99
-
-		buffer = telemetry.drain_for_test()
-		assert any(rec.get("event_name") == "redis.schema_drift" for rec in buffer), (
-			"expected a redis.schema_drift telemetry event; "
-			f"buffer contained: {[r.get('event_name') for r in buffer]!r}"
-		)
 
 	def test_unwrap_none_value_returns_default(self):
 		"""Missing key (``get_value`` returned ``None``) → default."""

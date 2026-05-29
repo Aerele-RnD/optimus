@@ -292,14 +292,6 @@ def analyze(recordings: list[dict], context) -> AnalyzerResult:
 					title="optimus explain_flags row parse",
 					message=reason,
 				)
-				try:
-					from optimus import telemetry
-					telemetry.emit_failure(
-						"analyzers.explain_flags.row_parse",
-						context={"reason": (reason or "")[:200]},
-					)
-				except Exception:
-					pass
 		except Exception:
 			pass
 

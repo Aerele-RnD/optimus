@@ -67,58 +67,28 @@ def snapshot() -> dict:
     out = {k: None for k in _EXPECTED_KEYS}
     try:
         _read_process(out)
-    except Exception as exc:
+    except Exception:
         frappe.log_error(title="optimus infra_capture process")
-        try:
-            from optimus import telemetry
-            telemetry.emit_failure("infra_capture.process_metrics", exc)
-        except Exception:
-            pass
     try:
         _read_system(out)
-    except Exception as exc:
+    except Exception:
         frappe.log_error(title="optimus infra_capture system")
-        try:
-            from optimus import telemetry
-            telemetry.emit_failure("infra_capture.system_metrics", exc)
-        except Exception:
-            pass
     try:
         _read_loadavg(out)
-    except Exception as exc:
+    except Exception:
         frappe.log_error(title="optimus infra_capture loadavg")
-        try:
-            from optimus import telemetry
-            telemetry.emit_failure("infra_capture.loadavg", exc)
-        except Exception:
-            pass
     try:
         _read_db(out)
-    except Exception as exc:
+    except Exception:
         frappe.log_error(title="optimus infra_capture db")
-        try:
-            from optimus import telemetry
-            telemetry.emit_failure("infra_capture.db_metrics", exc)
-        except Exception:
-            pass
     try:
         _read_redis(out)
-    except Exception as exc:
+    except Exception:
         frappe.log_error(title="optimus infra_capture redis")
-        try:
-            from optimus import telemetry
-            telemetry.emit_failure("infra_capture.redis_metrics", exc)
-        except Exception:
-            pass
     try:
         _read_rq(out)
-    except Exception as exc:
+    except Exception:
         frappe.log_error(title="optimus infra_capture rq")
-        try:
-            from optimus import telemetry
-            telemetry.emit_failure("infra_capture.rq_metrics", exc)
-        except Exception:
-            pass
     return out
 
 

@@ -282,7 +282,7 @@ class TestTimeoutHonored:
 
 
 def _settings_stub(monkeypatch):
-	"""Install a minimal frappe stub (mirrors test_telemetry.py /
+	"""Install a minimal frappe stub (mirrors
 	test_profiler_settings_validation.py) and return the OptimusSettings
 	controller class freshly re-imported."""
 	stub = types.ModuleType("frappe")

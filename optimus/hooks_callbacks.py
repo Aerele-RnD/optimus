@@ -315,13 +315,8 @@ def before_request(*args, **kwargs):
 		try:
 			from optimus import infra_capture
 			frappe.local.optimus_infra_start = infra_capture.snapshot()
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus infra start snapshot")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure("before_request.infra_start", exc)
-			except Exception:
-				pass
 
 		# v0.3.0: gate the new pyinstrument + sidecar capture on the
 		# session's capture_python_tree flag. Setting
@@ -335,14 +330,9 @@ def before_request(*args, **kwargs):
 				local_proxy=frappe.local,
 				interval_ms=_resolve_sampler_interval_ms(),
 			)
-	except Exception as exc:
+	except Exception:
 		# Never let a profiler bug break a customer request. Log and move on.
 		frappe.log_error(title="optimus before_request")
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("before_request", exc)
-		except Exception:
-			pass
 
 
 def after_request(*args, **kwargs):
@@ -380,13 +370,8 @@ def after_request(*args, **kwargs):
 				f"optimus: recording cap hit for session "
 				f"{session_uuid}, dropped {recording_uuid}"
 			)
-	except Exception as exc:
+	except Exception:
 		frappe.log_error(title="optimus after_request")
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("after_request", exc)
-		except Exception:
-			pass
 	finally:
 		# v0.3.0: dump pyinstrument session and sidecar log to Redis under
 		# per-recording-UUID keys. Best-effort — failures here log but
@@ -409,13 +394,8 @@ def after_request(*args, **kwargs):
 					infra_capture.diff(start_snap, end_snap),
 					expires_in_sec=session.SESSION_TTL_SECONDS,
 				)
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus infra end snapshot")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure("after_request.infra_end", exc)
-			except Exception:
-				pass
 
 		# v0.5.0: correlation header for optimus_frontend.js. Must set
 		# Access-Control-Expose-Headers or browsers will refuse to surface
@@ -445,13 +425,8 @@ def after_request(*args, **kwargs):
 					recording_uuid_for_dump,
 					response=kwargs.get("response"),
 				)
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus header injection")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure("after_request.header_injection", exc)
-			except Exception:
-				pass
 
 		# Clear the per-request markers so they don't leak across requests
 		# (frappe.local is per-request anyway, but explicit is good).
@@ -527,14 +502,6 @@ def before_job(method=None, kwargs=None, **rest):
 				title="optimus before_job unexpected kwargs",
 				message=f"kwargs type: {type(kwargs).__name__}, method: {method}",
 			)
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure(
-					"before_job.unexpected_kwargs",
-					context={"kwargs_type": type(kwargs).__name__, "method": str(method)},
-				)
-			except Exception:
-				pass
 			return
 
 		# Pop our marker so the user's method doesn't see it. This MUST
@@ -602,13 +569,8 @@ def before_job(method=None, kwargs=None, **rest):
 		try:
 			from optimus import infra_capture
 			frappe.local.optimus_infra_start = infra_capture.snapshot()
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus infra start snapshot (job)")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure("before_job.infra_start", exc)
-			except Exception:
-				pass
 
 		# v0.3.0: gate the new pyinstrument + sidecar capture on the
 		# session's capture_python_tree flag. Mirrors before_request.
@@ -619,13 +581,8 @@ def before_job(method=None, kwargs=None, **rest):
 				local_proxy=frappe.local,
 				interval_ms=_resolve_sampler_interval_ms(),
 			)
-	except Exception as exc:
+	except Exception:
 		frappe.log_error(title="optimus before_job")
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("before_job", exc)
-		except Exception:
-			pass
 
 
 def after_job(method=None, kwargs=None, result=None, **rest):
@@ -652,13 +609,8 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 				f"optimus: recording cap hit for session "
 				f"{session_uuid}, dropped job {recording_uuid}"
 			)
-	except Exception as exc:
+	except Exception:
 		frappe.log_error(title="optimus after_job")
-		try:
-			from optimus import telemetry
-			telemetry.emit_failure("after_job", exc)
-		except Exception:
-			pass
 	finally:
 		recording_uuid_for_dump = getattr(
 			getattr(frappe.local, "_recorder", None), "uuid", None
@@ -679,13 +631,8 @@ def after_job(method=None, kwargs=None, result=None, **rest):
 					infra_capture.diff(start_snap, end_snap),
 					expires_in_sec=session.SESSION_TTL_SECONDS,
 				)
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus infra end snapshot (job)")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure("after_job.infra_end", exc)
-			except Exception:
-				pass
 
 		# v0.6.0: this job ran — drop its RQ id from the session's
 		# pending-jobs set so analyze.run's wait can end early. Best-effort.
@@ -789,16 +736,8 @@ def _dump_capture_state_to_redis(recording_uuid: str | None) -> None:
 				tree_blob,
 				expires_in_sec=SESSION_TTL_SECONDS,
 			)
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus pyi dump")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure(
-					"after_request.pyi_dump", exc,
-					context={"recording_uuid": recording_uuid or ""},
-				)
-			except Exception:
-				pass
 
 	sidecar = getattr(frappe.local, "optimus_sidecar", None)
 	if sidecar:
@@ -815,16 +754,8 @@ def _dump_capture_state_to_redis(recording_uuid: str | None) -> None:
 				payload,
 				expires_in_sec=SESSION_TTL_SECONDS,
 			)
-		except Exception as exc:
+		except Exception:
 			frappe.log_error(title="optimus sidecar dump")
-			try:
-				from optimus import telemetry
-				telemetry.emit_failure(
-					"after_request.sidecar_dump", exc,
-					context={"recording_uuid": recording_uuid or ""},
-				)
-			except Exception:
-				pass
 
 	_clear_capture_locals()
 
