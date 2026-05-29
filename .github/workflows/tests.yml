@@ -33,15 +33,15 @@ jobs:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
-      # Keep going on a single Python-version failure so we see the full
-      # picture across versions in one run instead of cancelling siblings.
       fail-fast: false
       matrix:
-        # 3.12: the broad-compat baseline most production benches run.
-        # 3.13: current stable release; the upgrade target for benches
-        #       moving off 3.12.
-        # 3.14: matches the dev bench's interpreter (Python 3.14.2 locally).
-        python-version: ['3.12', '3.13', '3.14']
+        # 3.14 is the only target. It matches the dev bench's interpreter
+        # (Python 3.14.2 locally) and the deployment target for every
+        # bench in scope. The sys.monitoring / line_profiler tool-2
+        # handling that diverges across Python 3.12+ is exercised
+        # natively on 3.14, so multi-version coverage added CI minutes
+        # without adding signal.
+        python-version: ['3.14']
 
     steps:
       - name: Checkout
@@ -56,9 +56,9 @@ jobs:
 
       - name: Install build prerequisites
         # ``line_profiler`` ships a C extension. Pre-built wheels exist for
-        # most 3.12 / 3.14 cpython targets, but if pip falls back to a
-        # source build we want the headers/toolchain ready so the failure
-        # mode is "slow" not "broken".
+        # 3.14 cpython, but if pip falls back to a source build we want
+        # the headers/toolchain ready so the failure mode is "slow" not
+        # "broken".
         run: |
           python -m pip install --upgrade pip wheel setuptools
 
@@ -122,10 +122,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: 'pip'
 
       - name: Install ruff
@@ -148,10 +148,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: 'pip'
 
       - name: Install project + pip-audit

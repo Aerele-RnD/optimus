@@ -2,7 +2,7 @@
 
 **A flow-aware performance profiler for Frappe and ERPNext.** Records a real business workflow (Sales Invoice save → submit → Delivery Note → submit → …), joins it with server resource state and browser-side timings, and produces two downloadable HTML reports you can actually act on: a **Safe Report** to share with a third-party dev shop without leaking customer data, and a **Raw Report** for internal debugging with full stack traces and SQL literals.
 
-> **Status:** `v0.7.0` — production-ready. MIT-licensed. 1281 tests in CI on every push (ruff + pytest matrix on Python 3.12 / 3.14). See the [CHANGELOG](./CHANGELOG.md) for the full feature history, including the v0.7.0 rename from `frappe_profiler` → `optimus`.
+> **Status:** `v0.12.26` — production-ready. MIT-licensed. 1820 unit tests + 39 integration tests in CI on every push (ruff + pytest on Python 3.14; bench-driven integration suite on Frappe v16). See the [CHANGELOG](./CHANGELOG.md) for the full feature history, including the v0.7.0 rename from `frappe_profiler` → `optimus`.
 
 ---
 
@@ -58,8 +58,6 @@ bench restart
 Tested on **Frappe v16** with MariaDB and Redis. The app declares `required_apps = ["frappe"]`. Runtime dependencies (installed automatically by `bench get-app`) are listed in [`pyproject.toml`](./pyproject.toml) — currently `pyinstrument`, `line_profiler`, `requests`, `sqlparse`, and `Jinja2`, all pure-Python with no compiled extensions (`line_profiler` ships a small C extension; pre-built wheels exist for cpython 3.10–3.14).
 
 After install, an **Optimus User** role is created automatically. All existing System Managers are granted this role, and new System Managers get it automatically via a `User.validate` hook.
-
-> **Note for v0.5.x / v0.6.x users:** no in-place upgrade path is supported. `optimus` 0.7.0 is fresh-deploy only — see the CHANGELOG's `Install` section under the v0.7.0 entry.
 
 > **After every upgrade:** run `bench restart` so the new sign / verify code loads. Sessions captured **before** the restart have null call trees on their actions — their Phase-2 picker dialog opens with a yellow "No curated functions available" callout pointing this out. Capture a fresh session after the restart for a working picker.
 
@@ -446,7 +444,7 @@ After `bench migrate`, verify in this order:
    bench --site <site> console
    >>> import optimus
    >>> optimus.__version__
-   '0.5.1'
+   '0.12.26'
    ```
    If this returns an older version, `bench restart` didn't land — workers are stale.
 
@@ -529,7 +527,9 @@ cd ~/frappe-bench/apps/optimus
 python -m pytest optimus/tests/ -v
 ```
 
-326+ tests run in ~5 seconds on a laptop. The suite is **decoupled from Frappe** — most tests use JSON fixtures and mocked `frappe.cache` / `frappe.db`, so you can run them without a site. Tests that do need Frappe import guards are gated via `pytest.importorskip` or stubbed at module level.
+1820+ unit tests run in ~7 seconds on a laptop. The suite is **decoupled from Frappe** — most tests use JSON fixtures and mocked `frappe.cache` / `frappe.db`, so you can run them without a site. Tests that do need Frappe import guards are gated via `pytest.importorskip` or stubbed at module level.
+
+A second tier of 39 **integration tests** under `optimus/tests_integration/` exercises a real Frappe v16 bench provisioned by `.github/helper/install.sh` and runs via `bench --site <site> run-tests --app optimus`. These cover install-time invariants, scheduler/cron paths, the atomic Lua merge under multi-worker load, and other behaviors that can't be proven from pure-pytest stubs. See `optimus/tests_integration/README.md` for the local-run recipe.
 
 ### Test organization
 
@@ -556,7 +556,7 @@ MIT-licensed Frappe app. Contributions welcome via PR.
 
 **Before submitting:**
 
-- Run `pytest optimus/tests/ -v` — all 326+ tests must pass.
+- Run `pytest optimus/tests/ -v` — all 1820+ unit tests must pass.
 - Run `node --check` on any JS changes.
 - Bump `__version__` in `optimus/__init__.py` for any user-visible change so the asset cache-buster rotates.
 - Add a CHANGELOG entry under the current unreleased section.
