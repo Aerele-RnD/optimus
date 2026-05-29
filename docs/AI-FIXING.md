@@ -131,6 +131,7 @@ These items are **never** sent in any AI request body:
 | `Anthropic` | Messages | `https://api.anthropic.com` | Yes | Default model: `claude-sonnet-4-6`. |
 | `OpenAI` | Chat completions | `https://api.openai.com/v1` | Yes | Default model: `gpt-4.1-mini`. |
 | `Kimi (Moonshot)` | Chat completions | `https://api.moonshot.ai/v1` | Yes | Default model: `kimi-k2-0905-preview`. |
+| `Aerele` | Chat completions | `https://api.aerele.in/optimus/v1` | Yes | Managed pay-as-you-go service. See § 10. |
 | `OpenAI-compatible` | Chat completions | (you set it) | No (configurable) | Use this for local LLMs and any other OpenAI-shaped server. |
 
 `ai_base_url`, `ai_model`, and `ai_api_key` (Password) all override the provider defaults. The HTTP timeout is `ai_request_timeout_seconds` (v0.9.0+, default 60s, clamped 10–600s).
@@ -279,4 +280,59 @@ This means: if you're worried about a profile shared with a third party leaking 
 | On-demand entry point | `optimus/api.py` | `suggest_fix`, `suggest_index`, `humanize_steps` |
 | Auto-suggest entry point | `optimus/analyze.py` | `_enrich_findings_with_ai_suggestions`, `_enrich_table_breakdown_with_ai_suggestions` |
 | Settings dataclass | `optimus/settings.py` | `OptimusConfig` |
-| Failure telemetry | `optimus/telemetry.py` | `emit_failure` |
+| Aerele balance gate | `optimus/ai_fix.py` | `_assert_aerele_balance`, `_persist_aerele_balance`, `_maybe_persist_aerele_balance` |
+| Aerele balance endpoints | `optimus/api.py` | `refresh_aerele_balance`, `refresh_aerele_balance_silent` |
+| Aerele balance daily sync | `optimus/hooks.py` | `scheduler_events.daily` |
+
+---
+
+## 10. Aerele Managed Provider (v0.14.x+)
+
+`Aerele` is a hosted pay-as-you-go option for customers who don't want to bring their own Anthropic / OpenAI key. The wire format is OpenAI-compatible — Aerele's proxy fronts the actual upstream LLM, meters the customer's token bucket per call, and bills.
+
+### 10.1 Onboarding
+
+1. Visit [aerele.in/optimus/signup](https://aerele.in/optimus/signup), create an account, top up the initial token bucket at [aerele.in/optimus/billing](https://aerele.in/optimus/billing).
+2. Copy the issued API key. In Optimus Settings ▸ AI Fix Suggestions:
+   - Set **Provider** to `Aerele`.
+   - Paste the key into **API Key**.
+   - Save.
+3. Click **Refresh Balance** in the form's button bar. The bench fetches the current balance from Aerele's `/balance` endpoint and renders it in the new **Aerele Account** section.
+
+`ai_base_url` and `ai_model` are pre-populated by Aerele's defaults (`https://api.aerele.in/optimus/v1` + `claude-sonnet-4-6` upstream). Leave them blank to track Aerele's recommended values; override only when Aerele explicitly tells you to.
+
+### 10.2 Token bookkeeping flow
+
+Aerele's server is the **authoritative** source for the balance. The bench keeps a hot cache (`Optimus Settings.aerele_balance_tokens`) refreshed three ways:
+
+| Trigger | Mechanism | Cost |
+|---|---|---|
+| Every successful AI call | Aerele's response includes `X-Aerele-Balance-Remaining: <int>` header; `_maybe_persist_aerele_balance` writes it to Settings via `frappe.db.set_value` | Free (rides the call) |
+| Manual **Refresh Balance** button | `api.refresh_aerele_balance` calls `GET /balance` with the same Bearer key | One HTTPS round-trip |
+| Daily background sync | `scheduler_events.daily` → `api.refresh_aerele_balance_silent` (no-op when provider isn't Aerele) | One HTTPS round-trip per day |
+
+### 10.3 Pre-call gate
+
+Before each AI call, `_assert_aerele_balance` checks `aerele_balance_tokens >= aerele_balance_min_threshold` (default `100`). On failure: an actionable `AiFixError` ("Top up at …") returns immediately — no network round-trip wasted.
+
+Aerele's server is the **authoritative** gate — it returns HTTP `402 Payment Required` on insufficient balance regardless of what the bench cache says. `_http_post` maps `402` to the same message and persists the authoritative balance from the response body, so the cache-stale race converges quickly.
+
+### 10.4 What additionally leaves the host
+
+Compared to the per-pathway data inventory in § 2, picking `Aerele` adds:
+
+- The customer's Aerele API key as `Authorization: Bearer <key>` on every call to `api.aerele.in`.
+- Standard OpenAI-shaped request body — same prompt + finding payload as § 2.1–2.3.
+
+What is **NOT** sent (matches § 3):
+
+- The bench's `encryption_key` or any other site secret beyond the Aerele key itself.
+- Cross-session correlation IDs, recording UUIDs, schema, or DocType names beyond what the finding-specific payload already includes.
+
+Aerele's billing system meters from the call response (input + output tokens). No separate metering telemetry leaves the host.
+
+### 10.5 Sample queries / data the operator can see
+
+The Optimus Settings form renders the cached balance + last sync time inline. Click **Refresh Balance** to force an immediate refresh after a top-up; the next AI call will write the post-call balance regardless.
+
+To force-test the pre-call gate: temporarily set **Pre-call Minimum Balance** higher than the cached balance, then trigger any AI suggestion. The refusal carries the "Top up at …" message with the actual balance and the threshold the operator can see + tune.

@@ -57,6 +57,10 @@ class OptimusSettings(Document):
 		"redundant_perm_threshold": 1,
 		"n_plus_one_min_occurrences": 1,
 		"ai_auto_suggest_max": 0,
+		# v0.14.x: Aerele pre-call refuse-threshold. Floor 1 — a 0 would
+		# defeat the gate entirely (refuses nothing). Operator can still
+		# set it as low as 1 token for an effectively-off posture.
+		"aerele_balance_min_threshold": 1,
 		# v0.9.0: AI request timeout. Below 10s breaks the LLM round-trip
 		# entirely; the ceiling 600s is applied in settings.py:_resolve
 		# (we can't enforce it from a floor). Clamping below pairs with

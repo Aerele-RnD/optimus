@@ -1362,6 +1362,58 @@ def test_ai_connection() -> dict:
 
 
 @frappe.whitelist()
+def refresh_aerele_balance() -> dict:
+	"""v0.14.x: fetch the current Aerele token balance from Aerele's
+	``/v1/balance`` endpoint and persist it to ``Optimus Settings``.
+	System-Manager-only (Optimus Settings is SysMgr-gated).
+
+	Returns ``{"ok": bool, "balance_tokens": int | None, "as_of":
+	str | None, "message": str}``. Never raises on a network /
+	auth failure — the detail lands in ``message`` so the form can
+	render an inline alert.
+
+	Auth: ``Authorization: Bearer <ai_api_key>`` (the same field the
+	customer pasted Aerele's issued key into). The key is read on
+	demand via ``get_decrypted_password`` — never cached, never logged.
+	"""
+	user = _require_profiler_user()
+	roles = set(frappe.get_roles(user))
+	if "System Manager" not in roles and user != "Administrator":
+		frappe.throw(
+			"Only a System Manager can refresh the Aerele balance.",
+			frappe.PermissionError,
+		)
+	from optimus import ai_fix
+	return ai_fix.refresh_aerele_balance()
+
+
+def refresh_aerele_balance_silent() -> None:
+	"""Daily background-sync wrapper around ``refresh_aerele_balance``.
+	Logs any failure to the Error Log so the operator can find it, then
+	swallows — a transient network blip MUST NOT break the daily cron
+	or strand the scheduler. Not whitelisted (cron-callable only).
+
+	Skips silently when the configured provider isn't Aerele — the
+	endpoint Aerele's proxy serves only meaningfully responds when the
+	customer is actually on the Aerele plan.
+	"""
+	try:
+		from optimus.settings import get_config
+		cfg = get_config()
+		if getattr(cfg, "ai_provider", None) != "Aerele":
+			return
+		if not getattr(cfg, "ai_enabled", False):
+			return
+		from optimus import ai_fix
+		ai_fix.refresh_aerele_balance()
+	except Exception:
+		try:
+			frappe.log_error(title="optimus aerele balance daily sync")
+		except Exception:
+			pass
+
+
+@frappe.whitelist()
 def ai_capabilities() -> dict:
 	"""The per-section LLM toggles, for the Optimus Session form to decide
 	which AI buttons to show. Any logged-in profiler user — no Profiler

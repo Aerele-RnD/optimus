@@ -119,6 +119,52 @@ frappe.ui.form.on("Optimus Settings", {
 				});
 			});
 		}
+
+		// v0.14.x: "Refresh Balance" — only when Aerele is the active
+		// provider AND the AI master toggle is on. Calls Aerele's
+		// /balance endpoint, persists the result, and reloads the doc
+		// so the new balance + sync time render immediately.
+		if (frm.doc.ai_enabled && frm.doc.ai_provider === "Aerele") {
+			frm.add_custom_button(__("Refresh Balance"), () => {
+				if (frm.is_dirty()) {
+					frappe.msgprint(
+						__("Save your settings first, then refresh the balance.")
+					);
+					return;
+				}
+				frappe.show_alert({
+					message: __("Fetching balance from Aerele…"),
+					indicator: "blue",
+				});
+				frappe.call({
+					method: "optimus.api.refresh_aerele_balance",
+					callback(r) {
+						const m = (r && r.message) || {};
+						if (m.ok) {
+							frappe.show_alert({
+								message: __("Balance: {0} tokens", [
+									(m.balance_tokens || 0).toLocaleString(),
+								]),
+								indicator: "green",
+							});
+							frm.reload_doc();
+						} else {
+							frappe.msgprint({
+								title: __("Couldn't refresh Aerele balance"),
+								indicator: "red",
+								message: frappe.utils.escape_html(m.message || ""),
+							});
+						}
+					},
+					error() {
+						frappe.show_alert({
+							message: __("Aerele balance refresh failed"),
+							indicator: "red",
+						});
+					},
+				});
+			});
+		}
 	},
 
 	config_profile(frm) {
@@ -153,6 +199,21 @@ frappe.ui.form.on("Optimus Settings", {
 				refresh_fields();
 			},
 		});
+	},
+
+	ai_provider(frm) {
+		// v0.14.x: re-run refresh() so the "Refresh Balance" button
+		// (Aerele-only) appears / disappears immediately when the
+		// operator switches the provider, without requiring a save +
+		// reload. Also re-evaluates depends_on for the aerele_section
+		// fields.
+		frm.refresh_field("aerele_section");
+		frm.refresh_field("aerele_intro");
+		frm.refresh_field("aerele_balance_tokens");
+		frm.refresh_field("aerele_last_balance_sync");
+		frm.refresh_field("aerele_balance_min_threshold");
+		frm.clear_custom_buttons();
+		frm.trigger("refresh");
 	},
 
 	ai_enabled(frm) {

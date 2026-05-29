@@ -136,6 +136,11 @@ scheduler_events = {
 	},
 	"daily": [
 		"optimus.janitor.sweep_old_sessions",
+		# v0.14.x: Aerele managed AI provider — daily background sync so
+		# tokens top-ups made on aerele.in (without an intervening AI
+		# call) reflect on the bench within 24h. No-ops when the
+		# configured provider isn't Aerele. See docs/AI-FIXING.md §10.
+		"optimus.api.refresh_aerele_balance_silent",
 	],
 }
 
