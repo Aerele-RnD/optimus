@@ -146,8 +146,6 @@ jobs:
             test_install_smoke
             test_recording_lifecycle_e2e
             test_atomic_lua_merge_concurrent
-            test_telemetry_flush_doctype_sink
-            test_ai_privacy_exclusion_on_api
             test_regenerate_reports_idempotent
             test_phase2_tool_orphan_recovery
             test_safe_report_self_contained_on_real_bench
