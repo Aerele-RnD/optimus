@@ -69,6 +69,37 @@ class TestDeriveModulePath:
 	def test_empty_returns_empty(self):
 		assert picker._derive_module_path("") == ""
 
+	def test_relative_dotdot_segments_stripped(self):
+		# pyinstrument's file_path_short is os.path.relpath(file, <sys.path
+		# entry>); on some benches that yields leading "../" segments. They
+		# are relpath artifacts, NOT module components — if left in,
+		# ".".join turns ".." into a leading dot ("...pkg"), which then
+		# resolves as a (broken) relative import and 500'd the line-profile
+		# pass. They must be stripped so a clean, importable-shaped path
+		# falls out.
+		path = picker._derive_module_path(
+			"../../acme/acme/acme/report/sales_register/sales_register.py"
+		)
+		assert not path.startswith(".")
+		assert path == "acme.acme.report.sales_register.sales_register"
+
+	def test_single_dot_segment_stripped(self):
+		path = picker._derive_module_path("./apps/erpnext/erpnext/utils/__init__.py")
+		assert path == "erpnext.utils"
+
+	def test_build_dotted_path_from_relative_filename_resolvable_shape(self):
+		# End-to-end regression for the reported crash: a curated pick whose
+		# file_path_short carried "../" segments made _build_dotted_path
+		# emit "...acme.acme.acme.report...execute" — a relative-import path
+		# that crashed. It must now emit a clean, importable-shaped dotted
+		# path.
+		dotted = picker._build_dotted_path(
+			"../../acme/acme/acme/report/sales_register/sales_register.py",
+			"execute",
+		)
+		assert not dotted.startswith(".")
+		assert dotted == "acme.acme.report.sales_register.sales_register.execute"
+
 
 class TestDeriveApp:
 	def test_extracts_app_from_apps_prefix(self):
