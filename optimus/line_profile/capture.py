@@ -115,7 +115,12 @@ def _resolve_attr(dotted_path: str):
 			module = importlib.import_module(".".join(parts[:i]))
 			module_parts = i
 			break
-		except ImportError:
+		except (ImportError, TypeError, ValueError):
+			# Mirror picker._resolve_freeform_exact: a malformed prefix —
+			# a relative "...pkg" name (TypeError) or an empty name
+			# (ValueError) — is just "not importable". Honour this
+			# function's documented "None on any resolution failure"
+			# contract instead of letting it escape as a 500.
 			continue
 	if module is None:
 		return None

@@ -69,6 +69,37 @@ class TestDeriveModulePath:
 	def test_empty_returns_empty(self):
 		assert picker._derive_module_path("") == ""
 
+	def test_relative_dotdot_segments_stripped(self):
+		# pyinstrument's file_path_short is os.path.relpath(file, <sys.path
+		# entry>); on some benches that yields leading "../" segments. They
+		# are relpath artifacts, NOT module components — if left in,
+		# ".".join turns ".." into a leading dot ("...pkg"), which then
+		# resolves as a (broken) relative import and 500'd the line-profile
+		# pass. They must be stripped so a clean, importable-shaped path
+		# falls out.
+		path = picker._derive_module_path(
+			"../../acme/acme/acme/report/sales_register/sales_register.py"
+		)
+		assert not path.startswith(".")
+		assert path == "acme.acme.report.sales_register.sales_register"
+
+	def test_single_dot_segment_stripped(self):
+		path = picker._derive_module_path("./apps/erpnext/erpnext/utils/__init__.py")
+		assert path == "erpnext.utils"
+
+	def test_build_dotted_path_from_relative_filename_resolvable_shape(self):
+		# End-to-end regression for the reported crash: a curated pick whose
+		# file_path_short carried "../" segments made _build_dotted_path
+		# emit "...acme.acme.acme.report...execute" — a relative-import path
+		# that crashed. It must now emit a clean, importable-shaped dotted
+		# path.
+		dotted = picker._build_dotted_path(
+			"../../acme/acme/acme/report/sales_register/sales_register.py",
+			"execute",
+		)
+		assert not dotted.startswith(".")
+		assert dotted == "acme.acme.report.sales_register.sales_register.execute"
+
 
 class TestDeriveApp:
 	def test_extracts_app_from_apps_prefix(self):
@@ -312,6 +343,25 @@ class TestResolveFreeform:
 	def test_top_level_module_only_raises(self):
 		with pytest.raises(picker.PickerError):
 			picker.resolve_freeform("json")
+
+	def test_leading_dot_path_degrades_to_picker_error(self):
+		# Regression: a stored/curated dotted_path with a leading "..."
+		# (so split(".") yields empty leading segments) made the import
+		# loop call importlib.import_module("...pkg...") — a RELATIVE
+		# import — which raises TypeError ("the 'package' argument is
+		# required to perform a relative import"), NOT ImportError. That
+		# escaped the loop's narrow except and 500'd the request. It must
+		# now degrade to a clean PickerError the caller already handles.
+		with pytest.raises(picker.PickerError):
+			picker.resolve_freeform(
+				"...nonexistent_pkg_xyz.report.foo.foo.execute"
+			)
+
+	def test_empty_segment_path_degrades_to_picker_error(self):
+		# An interior empty segment ("a..b") yields an empty module name →
+		# importlib raises ValueError; must also degrade to PickerError.
+		with pytest.raises(picker.PickerError):
+			picker.resolve_freeform("nonexistent_pkg_xyz..foo")
 
 	def test_doubled_app_prefix_fallback(self, monkeypatch):
 		# Apps importable only via the doubled app name (e.g.

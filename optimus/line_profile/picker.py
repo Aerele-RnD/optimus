@@ -61,10 +61,22 @@ def _derive_module_path(filename: str) -> str:
 
 	Returns "" when the filename can't be parsed (synthetic frames,
 	stdlib paths, etc.).
+
+	The filename usually comes from pyinstrument's ``file_path_short``,
+	which is ``os.path.relpath(file, <a sys.path entry>)`` — on some
+	benches that yields leading ``../`` segments. Those are relative-path
+	artifacts, NOT module components: left in, ``".".join`` turns ``..``
+	into a leading dot (``"...pkg"``), and the curated pick then tries to
+	resolve as a broken relative import. So drop ``.`` / ``..`` segments
+	(and empties) up front.
 	"""
 	if not filename:
 		return ""
-	parts = [p for p in filename.replace("\\", "/").split("/") if p]
+	parts = [
+		p
+		for p in filename.replace("\\", "/").split("/")
+		if p and p not in (".", "..")
+	]
 	if not parts:
 		return ""
 	# Strip leading "apps" (or "/apps") — Frappe convention. Subsequent
@@ -562,7 +574,16 @@ def _resolve_freeform_exact(dotted_path: str) -> dict:
 			module = importlib.import_module(candidate)
 			module_parts = i
 			break
-		except ImportError as exc:
+		except (ImportError, TypeError, ValueError) as exc:
+			# A non-importable prefix just means "try a shorter one". Besides
+			# ImportError (module not found), importlib raises TypeError for a
+			# relative name — a stored/curated dotted_path with a leading
+			# "..." makes ".".join(parts[:i]) start with a dot ("...pkg"),
+			# which importlib treats as a relative import requiring a package
+			# — and ValueError for an empty name. Treat all three as "this
+			# prefix doesn't import" so a malformed path degrades to the clean
+			# PickerError below (which the caller handles) rather than
+			# escaping as a 500.
 			last_import_error = str(exc)
 			continue
 
