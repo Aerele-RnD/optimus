@@ -562,7 +562,16 @@ def _resolve_freeform_exact(dotted_path: str) -> dict:
 			module = importlib.import_module(candidate)
 			module_parts = i
 			break
-		except ImportError as exc:
+		except (ImportError, TypeError, ValueError) as exc:
+			# A non-importable prefix just means "try a shorter one". Besides
+			# ImportError (module not found), importlib raises TypeError for a
+			# relative name — a stored/curated dotted_path with a leading
+			# "..." makes ".".join(parts[:i]) start with a dot ("...pkg"),
+			# which importlib treats as a relative import requiring a package
+			# — and ValueError for an empty name. Treat all three as "this
+			# prefix doesn't import" so a malformed path degrades to the clean
+			# PickerError below (which the caller handles) rather than
+			# escaping as a 500.
 			last_import_error = str(exc)
 			continue
 
