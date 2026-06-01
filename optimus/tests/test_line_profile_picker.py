@@ -313,6 +313,25 @@ class TestResolveFreeform:
 		with pytest.raises(picker.PickerError):
 			picker.resolve_freeform("json")
 
+	def test_leading_dot_path_degrades_to_picker_error(self):
+		# Regression: a stored/curated dotted_path with a leading "..."
+		# (so split(".") yields empty leading segments) made the import
+		# loop call importlib.import_module("...pkg...") — a RELATIVE
+		# import — which raises TypeError ("the 'package' argument is
+		# required to perform a relative import"), NOT ImportError. That
+		# escaped the loop's narrow except and 500'd the request. It must
+		# now degrade to a clean PickerError the caller already handles.
+		with pytest.raises(picker.PickerError):
+			picker.resolve_freeform(
+				"...nonexistent_pkg_xyz.report.foo.foo.execute"
+			)
+
+	def test_empty_segment_path_degrades_to_picker_error(self):
+		# An interior empty segment ("a..b") yields an empty module name →
+		# importlib raises ValueError; must also degrade to PickerError.
+		with pytest.raises(picker.PickerError):
+			picker.resolve_freeform("nonexistent_pkg_xyz..foo")
+
 	def test_doubled_app_prefix_fallback(self, monkeypatch):
 		# Apps importable only via the doubled app name (e.g.
 		# ajanta_bottles.ajanta_bottles.custom...): the picker derives the
