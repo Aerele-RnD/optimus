@@ -193,9 +193,9 @@ class TestSweepStaleStopping:
 		stub._get_all_return["Optimus Session"] = []
 		janitor = _reload_janitor(monkeypatch)
 		janitor._sweep_stale_stopping()
-		# Selected by status="Stopping".
+		# Selected by status IN (Stopping, Capturing Background Jobs).
 		ga = [c for c in stub._get_all_calls if c[0] == "Optimus Session"]
-		assert ga and ga[0][1].get("status") == "Stopping"
+		assert ga and ga[0][1].get("status") == ["in", ["Stopping", "Capturing Background Jobs"]]
 		assert stub._enqueue_calls == []
 
 	def test_wired_into_sweep_stale_sessions(self, monkeypatch):

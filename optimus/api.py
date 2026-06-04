@@ -302,6 +302,14 @@ def _stop_session(user: str, session_uuid: str) -> tuple[str | None, bool]:
 		wait_seconds = int(getattr(get_config(), "background_job_wait_seconds", 0) or 0)
 		if wait_seconds > 0 and session.get_pending_jobs(session_uuid):
 			session.set_draining(session_uuid, time.time() + wait_seconds + 60)
+			# v0.13: surface the post-stop background-job capture as its own
+			# status — otherwise the session sits at "Stopping" for the whole
+			# drain window (up to background_job_wait_seconds, default 300s) and
+			# looks stuck. analyze.run flips it to "Analyzing" once the jobs
+			# finish / the window closes.
+			frappe.db.set_value(
+				"Optimus Session", docname, "status", "Capturing Background Jobs"
+			)
 	except Exception:
 		frappe.log_error(title="optimus set draining window")
 
@@ -543,6 +551,23 @@ def get_active_session() -> dict | None:
 	if not active:
 		return None
 	return session.get_session_meta(active)
+
+
+@frappe.whitelist()
+def drain_progress(session_uuid: str) -> dict:
+	"""Live progress of the post-Stop background-job capture, for the form's
+	"Capturing Background Jobs (N left)" headline. Returns the current session
+	status plus the number of the flow's jobs still pending in Redis; ``pending``
+	drops to 0 as they finish and ``status`` flips to ``Analyzing`` once
+	``analyze.run`` takes over the drained recordings."""
+	_require_session_permission(session_uuid)
+	status = frappe.db.get_value(
+		"Optimus Session", {"session_uuid": session_uuid}, "status"
+	)
+	return {
+		"status": status,
+		"pending": len(session.get_pending_jobs(session_uuid)),
+	}
 
 
 # ---------------------------------------------------------------------------

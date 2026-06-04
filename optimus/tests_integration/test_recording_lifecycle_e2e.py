@@ -131,7 +131,9 @@ class TestRecordingLifecycleE2E(FrappeTestCase):
 			{"session_uuid": session_uuid},
 			"status",
 		)
-		assert status in ("Stopping", "Analyzing", "Ready", "Failed"), (
+		assert status in (
+			"Stopping", "Capturing Background Jobs", "Analyzing", "Ready", "Failed"
+		), (
 			f"unexpected post-stop status: {status!r}"
 		)
 

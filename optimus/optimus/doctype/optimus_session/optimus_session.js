@@ -11,6 +11,7 @@
 frappe.ui.form.on("Optimus Session", {
 	refresh(frm) {
 		render_status_indicator(frm);
+		render_drain_progress(frm);
 		render_download_buttons(frm);
 		render_retry_button(frm);
 		render_regenerate_report_button(frm);
@@ -799,11 +800,52 @@ function render_status_indicator(frm) {
 	const colors = {
 		Recording: "green",
 		Stopping: "orange",
+		"Capturing Background Jobs": "orange",
 		Analyzing: "orange",
 		Ready: "blue",
 		Failed: "red",
 	};
 	frm.page.set_indicator(status, colors[status] || "gray");
+}
+
+// While the session drains the flow's background jobs after Stop, poll the
+// pending count and show a live "Capturing background jobs… N still running"
+// headline so it doesn't look stuck at "Stopping". Reloads the form once the
+// status moves on (analyze.run takes over → Analyzing).
+function render_drain_progress(frm) {
+	if (frm._optimus_drain_timer) {
+		clearInterval(frm._optimus_drain_timer);
+		frm._optimus_drain_timer = null;
+	}
+	if (frm.is_new()) return;
+	if (frm.doc.status !== "Capturing Background Jobs") return;
+
+	const tick = () => {
+		frappe.call({
+			method: "optimus.api.drain_progress",
+			args: { session_uuid: frm.doc.session_uuid },
+			callback: (r) => {
+				const d = (r && r.message) || {};
+				if (d.status && d.status !== "Capturing Background Jobs") {
+					clearInterval(frm._optimus_drain_timer);
+					frm._optimus_drain_timer = null;
+					frm.dashboard.clear_headline();
+					frm.reload_doc();
+					return;
+				}
+				const n = d.pending != null ? d.pending : 0;
+				frm.dashboard.set_headline(
+					'<span class="text-muted">' +
+						'<i class="fa fa-spinner fa-spin" style="margin-right:6px;"></i>' +
+						__("Capturing background jobs… {0} still running", [n]) +
+						"</span>"
+				);
+			},
+			error: () => {},
+		});
+	};
+	tick();
+	frm._optimus_drain_timer = setInterval(tick, 4000);
 }
 
 function render_download_buttons(frm) {

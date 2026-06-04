@@ -406,8 +406,8 @@ def _sweep_stuck_analyzing():
 
 
 def _sweep_stale_stopping():
-	"""Find rows stuck in ``Stopping`` longer than STALE_RECORDING_MINUTES and
-	re-enqueue analyze.
+	"""Find rows stuck in ``Stopping`` / ``Capturing Background Jobs`` longer than
+	STALE_RECORDING_MINUTES and re-enqueue analyze.
 
 	``Stopping`` is meant to last only the instant between ``api._mark_stopping``
 	and ``analyze.run`` setting ``Analyzing``. Lingering there means the analyze
@@ -421,7 +421,10 @@ def _sweep_stale_stopping():
 	cutoff = add_to_date(now_datetime(), minutes=-STALE_RECORDING_MINUTES)
 	stale = frappe.db.get_all(
 		"Optimus Session",
-		filters={"status": "Stopping", "modified": ["<", cutoff]},
+		filters={
+			"status": ["in", ["Stopping", "Capturing Background Jobs"]],
+			"modified": ["<", cutoff],
+		},
 		fields=["name", "session_uuid"],
 	)
 	if not stale:

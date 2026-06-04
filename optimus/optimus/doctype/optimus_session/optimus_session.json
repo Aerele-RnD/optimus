@@ -84,7 +84,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Recording\nStopping\nAnalyzing\nReady\nFailed",
+   "options": "Recording\nStopping\nCapturing Background Jobs\nAnalyzing\nReady\nFailed",
    "read_only": 1,
    "reqd": 1,
    "search_index": 1
