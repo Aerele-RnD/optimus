@@ -667,3 +667,55 @@ class TestRecommendedFlag:
 		for c in candidates:
 			if c["is_framework"]:
 				assert c["recommended"] is False
+
+
+class TestMultiTreePicker:
+	"""v0.13: the picker walks the top-N hottest action trees, not just the
+	single hottest — so a flow with several slow actions surfaces them all
+	(previously only the one dominant tree's frames appeared)."""
+
+	def test_surfaces_frames_from_multiple_trees(self):
+		hot = _root(
+			_frame("bg_long_running_job", "ugly_code/python/common.py", 10, 60000.0, children=[
+				_frame("compute_aggregates", "ugly_code/python/common.py", 20, 2400.0),
+			]),
+		)
+		mid = _root(
+			_frame("process_invoice", "ugly_code/python/sales.py", 30, 18000.0, children=[
+				_frame("apply_taxes", "ugly_code/python/sales.py", 40, 1200.0),
+			]),
+		)
+		small = _root(_frame("recompute_stock", "ugly_code/python/stock.py", 50, 2500.0))
+
+		cands = picker._build_tree_indented_candidates([hot, mid, small])
+		fns = {c["qualname"] for c in cands}
+		# All three actions' hot frames surface, not just the hottest tree.
+		assert "bg_long_running_job" in fns
+		assert "process_invoice" in fns  # MISSING under the old single-tree walk
+		assert "recompute_stock" in fns
+		# Each tree's top frame is its own depth-0 root.
+		assert len([c for c in cands if c["depth"] == 0]) >= 3
+
+	def test_skips_trivially_fast_trees(self):
+		hot = _root(_frame("real_work", "ugly_code/python/common.py", 10, 5000.0))
+		noise = _root(_frame("blip", "ugly_code/python/common.py", 20, 1.0))  # < _MIN_TREE_MS
+		fns = {c["qualname"] for c in picker._build_tree_indented_candidates([hot, noise])}
+		assert "real_work" in fns
+		assert "blip" not in fns
+
+	def test_per_tree_budget_keeps_one_giant_tree_from_starving_others(self):
+		giant = _root(
+			_frame("root_fn", "ugly_code/python/common.py", 1, 60000.0, children=[
+				_frame(f"fn_{i}", "ugly_code/python/common.py", i, 1000.0 - i)
+				for i in range(40)
+			]),
+		)
+		other = _root(_frame("other_action", "ugly_code/python/sales.py", 2, 5000.0))
+
+		cands = picker._build_tree_indented_candidates([giant, other])
+		fns = {c["qualname"] for c in cands}
+		# The giant tree is budget-limited so the smaller action still surfaces.
+		assert "other_action" in fns
+		# Per-tree cap honored — the giant tree contributes <= _PER_TREE_CAP frames.
+		giant_frames = [c for c in cands if c["file"].endswith("common.py")]
+		assert len(giant_frames) <= picker._PER_TREE_CAP
