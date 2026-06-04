@@ -15,6 +15,8 @@
   "top_severity",
   "notes",
   "ai_steps_tokens",
+  "ai_tokens_spent",
+  "ai_refresh_count",
   "timing_section",
   "started_at",
   "stopped_at",
@@ -109,6 +111,24 @@
    "fieldtype": "Int",
    "hidden": 1,
    "label": "AI Steps Tokens",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Cumulative LLM tokens billed for this session — analyze auto-suggest plus every Refresh / on-demand AI run. Matches the Aerele usage ledger; only ever increases.",
+   "fieldname": "ai_tokens_spent",
+   "fieldtype": "Int",
+   "label": "AI Tokens Spent",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Number of times \"Refresh AI suggestions\" has been run on this session.",
+   "fieldname": "ai_refresh_count",
+   "fieldtype": "Int",
+   "label": "AI Refresh Count",
    "no_copy": 1,
    "read_only": 1
   },

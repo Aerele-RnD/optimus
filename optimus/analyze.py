@@ -762,6 +762,12 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 			return
 
 		_touch_singleflight(session_uuid)  # M2 heartbeat before the EXPLAIN burst
+
+		# v0.13: mark this session active for AI-token spend tracking. Every
+		# ai_fix LLM call below (auto-suggest fixes/indexes + humanized steps)
+		# funnels through ai_fix._record_session_spend, which adds its tokens to
+		# this session's cumulative ai_tokens_spent.
+		_mark_ai_spend_session(session_uuid)
 		_publish_progress(20, "Running EXPLAIN on queries", session_uuid)
 		enrichment_warnings = _enrich_recordings(recordings)
 
@@ -967,6 +973,17 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _mark_ai_spend_session(session_uuid) -> None:
+	"""Tag the worker-local "active session" so ai_fix's per-call spend recorder
+	(``ai_fix._record_session_spend``) charges this session's cumulative
+	``Optimus Session.ai_tokens_spent``. Best-effort + guarded so unit tests that
+	stub ``frappe`` (no ``frappe.local``) don't break."""
+	try:
+		frappe.local._optimus_spend_session = session_uuid
+	except Exception:
+		pass
 
 
 def _deserialize_tree(uuid: str, tree_blob):
@@ -2260,6 +2277,7 @@ def _run_ai_backfill(doc, *, cap: int | None = None,
 	``regenerate_all`` — all eligible ones.
 	"""
 	out = {"added": 0, "failed": 0, "skipped_time": 0, "total_pending": 0}
+	_mark_ai_spend_session(getattr(doc, "session_uuid", None))
 
 	from optimus import ai_fix
 
@@ -2462,6 +2480,7 @@ def _run_table_index_ai_backfill(doc, *, table_name: str) -> dict:
 	for it explicitly) — but ``ai_fix.suggest_index`` still needs a configured
 	provider. Returns ``{"ok": bool, "table": str, "reason"?: str}``; lets
 	``ai_fix.AiFixError`` propagate (the API turns it into ``frappe.throw``)."""
+	_mark_ai_spend_session(getattr(doc, "session_uuid", None))
 	if not table_name:
 		return {"ok": False, "reason": "no table specified"}
 	from optimus import ai_fix

@@ -1286,6 +1286,29 @@ def _usage_from_anthropic(data: dict | None) -> dict:
 	return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
 
 
+def _record_session_spend(total_tokens) -> None:
+	"""Best-effort: add this LLM call's tokens to the active session's cumulative
+	``Optimus Session.ai_tokens_spent``. The active session uuid is set by the
+	caller (analyze / api) on ``frappe.local._optimus_spend_session`` before any
+	AI call; left ``None`` (e.g. the settings probe) → no-op. Every token-bearing
+	call funnels through ``_call_openai_chat`` / ``_call_anthropic``, so this is
+	the single point that makes the per-session spend complete + cumulative."""
+	try:
+		import frappe
+
+		su = getattr(frappe.local, "_optimus_spend_session", None)
+		n = int(total_tokens or 0)
+		if su and n > 0:
+			frappe.db.sql(
+				"update `tabOptimus Session` "
+				"set ai_tokens_spent = coalesce(ai_tokens_spent, 0) + %s "
+				"where session_uuid = %s",
+				(n, su),
+			)
+	except Exception:
+		pass
+
+
 def _call_anthropic(
 	base_url: str, api_key: str, model: str, system: str, messages: list[dict],
 	*, max_tokens: int = _MAX_OUTPUT_TOKENS, usage_out: dict | None = None,
@@ -1307,6 +1330,7 @@ def _call_anthropic(
 	data = _http_post(url, headers, body, provider="anthropic", where="messages")
 	if usage_out is not None:
 		usage_out.update(_usage_from_anthropic(data))
+		_record_session_spend(usage_out.get("total_tokens"))
 	try:
 		blocks = data.get("content") or []
 		for b in blocks:
@@ -1338,6 +1362,7 @@ def _call_openai_chat(
 	data = _http_post(url, headers, body, provider="openai", where="chat/completions")
 	if usage_out is not None:
 		usage_out.update(_usage_from_openai(data))
+		_record_session_spend(usage_out.get("total_tokens"))
 	try:
 		choices = data.get("choices") or []
 		if choices:

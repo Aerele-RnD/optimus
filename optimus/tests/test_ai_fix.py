@@ -979,3 +979,86 @@ class TestIsAvailableSection:
 		     patch.object(ai_fix, "_resolve_provider", side_effect=AiFixError("not configured")):
 			assert ai_fix.is_available() is False
 			assert ai_fix.is_available(section="findings") is False
+
+
+# --------------------------------------------------------------------------
+# v0.13: per-session AI-token spend recording (_record_session_spend) + the
+# two _call_* chokepoints that drive Optimus Session.ai_tokens_spent.
+# --------------------------------------------------------------------------
+
+
+class _FakeDB:
+	def __init__(self):
+		self.calls = []
+
+	def sql(self, query, values=None):
+		self.calls.append((query, values))
+
+
+class TestRecordSessionSpend:
+	def test_increments_active_session(self, monkeypatch):
+		import frappe
+
+		fake = _FakeDB()
+		monkeypatch.setattr(frappe, "db", fake, raising=False)
+		monkeypatch.setattr(
+			frappe, "local", SimpleNamespace(_optimus_spend_session="uuid-1"), raising=False
+		)
+		ai_fix._record_session_spend(150)
+		assert len(fake.calls) == 1
+		query, values = fake.calls[0]
+		assert "ai_tokens_spent" in query and "session_uuid" in query
+		assert values == (150, "uuid-1")
+
+	def test_noop_without_active_session(self, monkeypatch):
+		import frappe
+
+		fake = _FakeDB()
+		monkeypatch.setattr(frappe, "db", fake, raising=False)
+		monkeypatch.setattr(frappe, "local", SimpleNamespace(), raising=False)
+		ai_fix._record_session_spend(150)
+		assert fake.calls == []
+
+	def test_noop_on_zero_or_missing_tokens(self, monkeypatch):
+		import frappe
+
+		fake = _FakeDB()
+		monkeypatch.setattr(frappe, "db", fake, raising=False)
+		monkeypatch.setattr(
+			frappe, "local", SimpleNamespace(_optimus_spend_session="uuid-1"), raising=False
+		)
+		ai_fix._record_session_spend(0)
+		ai_fix._record_session_spend(None)
+		assert fake.calls == []
+
+
+class TestCallChokepointRecordsSpend:
+	def test_openai_call_records_total_tokens(self, monkeypatch):
+		recorded = []
+		monkeypatch.setattr(ai_fix, "_record_session_spend", recorded.append, raising=True)
+		payload = {
+			"choices": [{"message": {"content": "hi"}}],
+			"usage": {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10},
+		}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, payload)))
+		usage = {}
+		ai_fix._call_openai_chat(
+			"u", "k", "m", "s", [{"role": "user", "content": "x"}], usage_out=usage
+		)
+		assert usage["total_tokens"] == 10
+		assert recorded == [10]
+
+	def test_anthropic_call_records_total_tokens(self, monkeypatch):
+		recorded = []
+		monkeypatch.setattr(ai_fix, "_record_session_spend", recorded.append, raising=True)
+		payload = {
+			"content": [{"type": "text", "text": "hi"}],
+			"usage": {"input_tokens": 4, "output_tokens": 6},
+		}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, payload)))
+		usage = {}
+		ai_fix._call_anthropic(
+			"u", "k", "m", "s", [{"role": "user", "content": "x"}], usage_out=usage
+		)
+		assert usage["total_tokens"] == 10
+		assert recorded == [10]

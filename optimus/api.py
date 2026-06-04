@@ -1328,6 +1328,7 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 	)
 
 	try:
+		_analyze_mod._mark_ai_spend_session(session_uuid)
 		result = ai_fix.suggest_fix(finding_dict)
 	except ai_fix.AiFixError as e:
 		frappe.throw(str(e))
@@ -1351,6 +1352,11 @@ def test_ai_connection() -> dict:
 	adjacent — Optimus Settings itself is SysMgr-only). Returns
 	``{"ok": bool, "message": str, "model": str}``; never raises on a
 	provider failure (the detail is in ``message``)."""
+	# The settings probe isn't billable to any session — clear the spend marker
+	# so its tokens don't land on whatever session this worker last served.
+	from optimus import analyze as _analyze_mod
+
+	_analyze_mod._mark_ai_spend_session(None)
 	user = _require_profiler_user()
 	roles = set(frappe.get_roles(user))
 	if "System Manager" not in roles and user != "Administrator":
@@ -1550,6 +1556,8 @@ def _humanize_steps_core(doc, *, title: str | None = None) -> dict:
 	"""
 	from optimus import ai_fix
 	from optimus import analyze as _analyze_mod
+
+	_analyze_mod._mark_ai_spend_session(getattr(doc, "session_uuid", None))
 
 	recording_uuids = [
 		a.recording_uuid for a in (doc.actions or [])
@@ -1769,6 +1777,14 @@ def refill_ai_suggestions(session_uuid: str) -> dict:
 
 	cfg = get_config()
 	doc = frappe.get_doc("Optimus Session", row["name"])
+
+	# v0.13: count this refresh (cumulative; only ever increases).
+	frappe.db.sql(
+		"update `tabOptimus Session` "
+		"set ai_refresh_count = coalesce(ai_refresh_count, 0) + 1 "
+		"where session_uuid = %s",
+		(session_uuid,),
+	)
 
 	fixes = {"added": 0, "failed": 0, "skipped_time": 0, "skipped": None}
 	if cfg.ai_suggest_findings:

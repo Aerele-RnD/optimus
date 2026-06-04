@@ -349,3 +349,19 @@ def test_load_recordings_bundle_none_without_file():
 
 	assert analyze._load_recordings_bundle(Doc()) is None
 	assert analyze._load_recordings_bundle(Doc2()) is None
+
+
+def test_mark_ai_spend_session_sets_and_is_guarded(monkeypatch):
+	"""The marker is set on frappe.local for the spend recorder, and a stubbed
+	frappe (no .local) must not raise — unit tests rely on this no-op."""
+	from types import SimpleNamespace
+
+	import frappe
+
+	monkeypatch.setattr(frappe, "local", SimpleNamespace(), raising=False)
+	analyze._mark_ai_spend_session("sess-x")
+	assert frappe.local._optimus_spend_session == "sess-x"
+
+	# Stubbed frappe without `.local` → guarded no-op, no exception.
+	monkeypatch.setattr(analyze, "frappe", SimpleNamespace(), raising=False)
+	analyze._mark_ai_spend_session("sess-y")
