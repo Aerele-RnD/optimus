@@ -1146,7 +1146,9 @@ def regenerate_reports(session_uuid: str) -> dict:
 		if getattr(a, "recording_uuid", None)
 	]
 	try:
-		recordings = list(_analyze_mod._fetch_recordings(recording_uuids))
+		recordings = list(_analyze_mod._fetch_recordings(
+			recording_uuids, recordings_bundle=_analyze_mod._load_recordings_bundle(doc)
+		))
 	except Exception:
 		frappe.log_error(title="optimus regenerate_reports fetch")
 		recordings = []
@@ -1312,7 +1314,7 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 			act = actions_by_idx.get(int(ref))
 			rec_uuid = (act or {}).get("recording_uuid")
 			if rec_uuid:
-				recs = list(_analyze_mod._fetch_recordings([rec_uuid]))
+				recs = list(_analyze_mod._fetch_recordings([rec_uuid], recordings_bundle=_analyze_mod._load_recordings_bundle(doc)))
 				recordings_by_uuid = {r.get("uuid"): r for r in recs if r.get("uuid")}
 	except Exception:
 		# Never let a recording-fetch error block the AI suggestion — fall
@@ -1554,7 +1556,9 @@ def _humanize_steps_core(doc, *, title: str | None = None) -> dict:
 		if getattr(a, "recording_uuid", None)
 	]
 	try:
-		recordings = list(_analyze_mod._fetch_recordings(recording_uuids))
+		recordings = list(_analyze_mod._fetch_recordings(
+			recording_uuids, recordings_bundle=_analyze_mod._load_recordings_bundle(doc)
+		))
 	except Exception:
 		frappe.log_error(title="optimus humanize_steps fetch")
 		recordings = []

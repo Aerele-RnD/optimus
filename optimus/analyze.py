@@ -907,6 +907,11 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 		# normalized data).
 		_render_and_attach_reports(docname, recordings)
 
+		# v0.13: snapshot the raw recordings to a File BEFORE cleanup deletes
+		# them, so AI re-runs (steps humanize / fix grounding) and report
+		# drill-down regeneration still work on this session post-analyze.
+		_persist_recordings_file(docname, session_uuid, recording_uuids)
+
 		_cleanup_redis(session_uuid, recording_uuids)
 
 		# Phase: Ready
@@ -964,7 +969,124 @@ def run(session_uuid: str, _bg_wait_until: float | None = None,
 # ---------------------------------------------------------------------------
 
 
-def _fetch_recordings(recording_uuids: list[str]):
+def _deserialize_tree(uuid: str, tree_blob):
+	"""Verify (HMAC) + unpickle a pyinstrument tree blob; returns the pyi
+	session object or None. Shared by the live-Redis and persisted-bundle
+	read paths in :func:`_fetch_recordings` so both reconstruct identically.
+
+	Phase K hardening: every blob is HMAC-prefixed by
+	``hooks_callbacks._dump_capture_state_to_redis``; ``session.unsign_blob``
+	rejects any tree whose signature doesn't match the site's encryption_key,
+	so a Redis-poisoning attacker can't slip a malicious pickle in.
+
+	Transition fallback: blobs written by code predating the HMAC rollout lack
+	the signature (``unsign_blob`` returns ``None``). To avoid degrading every
+	in-flight session at deploy time, we fall back to raw ``pickle.loads`` on
+	unsigned blobs when ``optimus_allow_unsigned_pickles`` is truthy in
+	site_config.json (default True; admin flips it False once the keyspace has
+	rolled over post-deploy). See SECURITY.md.
+	"""
+	import pickle
+
+	if not tree_blob:
+		return None
+	pyi_session = None
+	try:
+		from optimus.session import unsign_blob
+		verified = unsign_blob(tree_blob)
+		if verified is not None:
+			pyi_session = pickle.loads(verified)
+		else:
+			# Either (a) blob predates HMAC rollout (raw pickle, no
+			# prefix), or (b) the HMAC secret drifted across processes so
+			# signed blobs land here as ``32-byte sig + pickle``. Try BOTH
+			# shapes - the first ``pickle.loads`` that succeeds wins.
+			allow_unsigned = True
+			try:
+				allow_unsigned = bool(
+					frappe.conf.get("optimus_allow_unsigned_pickles", True)
+				)
+			except Exception:
+				pass
+			if allow_unsigned and isinstance(tree_blob, (bytes, bytearray)):
+				attempts = [bytes(tree_blob)]
+				if len(tree_blob) > 32:
+					attempts.append(bytes(tree_blob[32:]))
+				for payload in attempts:
+					try:
+						pyi_session = pickle.loads(payload)
+						break
+					except Exception:
+						continue
+				if pyi_session is None:
+					frappe.log_error(
+						title="optimus analyze",
+						message=(
+							f"Pyi tree load failed under both raw "
+							f"and stripped-sig paths for {uuid}"
+						),
+					)
+				else:
+					try:
+						frappe.logger().warning(
+							f"optimus analyze: loaded pyi tree for "
+							f"{uuid} via unsigned-fallback path "
+							f"(encryption_key missing in site_config "
+							f"or HMAC secret drifted across "
+							f"processes)."
+						)
+					except Exception:
+						pass
+			else:
+				frappe.log_error(
+					title="optimus analyze",
+					message=(
+						f"Pyi tree signature mismatch for {uuid}; "
+						f"unsigned fallback disabled by site_config."
+					),
+				)
+	except Exception:
+		frappe.log_error(
+			title="optimus analyze",
+			message=f"Failed to deserialize pyi tree for {uuid}",
+		)
+		pyi_session = None
+	return pyi_session
+
+
+def _rehydrate_from_bundle(recordings_bundle, uuid: str):
+	"""Rebuild a recording dict (rec + pyi_session + sidecar) from a persisted
+	bundle entry, mirroring the live-Redis read path so downstream consumers
+	can't tell the difference. Returns the rec dict or None when the bundle
+	lacks this uuid. Tolerant of being handed either the full bundle
+	(``{"recordings": {...}}``) or the inner uuid→entry map directly."""
+	import base64
+
+	if not isinstance(recordings_bundle, dict):
+		return None
+	recs = recordings_bundle.get("recordings")
+	if not isinstance(recs, dict):
+		recs = recordings_bundle
+	entry = recs.get(uuid)
+	if not isinstance(entry, dict):
+		return None
+	rec = entry.get("rec")
+	if not isinstance(rec, dict):
+		return None
+	tree_blob = None
+	tree_b64 = entry.get("tree_b64")
+	if tree_b64:
+		try:
+			tree_blob = base64.b64decode(tree_b64)
+		except Exception:
+			tree_blob = None
+	rec["pyi_session"] = _deserialize_tree(uuid, tree_blob)
+	sidecar = entry.get("sidecar")
+	rec["sidecar"] = sidecar if isinstance(sidecar, list) else []
+	return rec
+
+
+def _fetch_recordings(recording_uuids: list[str], *, recordings_bundle=None):
 	"""Stream recording dicts from Redis, one at a time.
 
 	v0.3.0 changes:
@@ -983,93 +1105,29 @@ def _fetch_recordings(recording_uuids: list[str]):
 	      "sidecar": <list[dict]>,
 	    }
 	"""
-	import pickle
-
 	for uuid in recording_uuids:
 		rec = frappe.cache.hget(RECORDER_REQUEST_HASH, uuid)
 		if not rec:
+			# v0.13: after analyze, _cleanup_redis deletes the recording
+			# hash + tree + sidecar. If a caller passed the persisted
+			# recordings bundle, rebuild from it so re-humanize / fix
+			# grounding / report drill-down regeneration still work
+			# post-cleanup (same verified tree-load as the Redis branch).
+			rec = _rehydrate_from_bundle(recordings_bundle, uuid)
+			if rec is not None:
+				yield rec
 			continue
 
-		# Load the pyinstrument tree pickle (best-effort). Phase K
-		# hardening: every blob is HMAC-prefixed by
-		# ``hooks_callbacks._dump_capture_state_to_redis`` -
-		# ``session.unsign_blob`` rejects any tree whose signature
-		# doesn't match the site's encryption_key, so a Redis-
-		# poisoning attacker can't slip a malicious pickle in.
-		#
-		# Transition fallback: blobs written by code that predates the
-		# HMAC rollout lack the signature; ``unsign_blob`` returns
-		# ``None`` for them. To avoid silently degrading every
-		# in-flight session at deploy time, we fall back to raw
-		# ``pickle.loads`` on unsigned blobs when
-		# ``optimus_allow_unsigned_pickles`` is truthy in
-		# site_config.json (default True, since the Redis TTL is 10
-		# minutes - admin flips it to False once the keyspace has
-		# rolled over post-deploy). See SECURITY.md for the
-		# post-deploy hardening note.
+		# Load the pyinstrument tree pickle (best-effort) via the shared,
+		# HMAC-verified loader (see _deserialize_tree).
 		pyi_session = None
 		try:
-			from optimus.session import unsign_blob
 			tree_blob = frappe.cache.get_value(_redis_keys.tree(uuid))
-			if tree_blob:
-				verified = unsign_blob(tree_blob)
-				if verified is not None:
-					pyi_session = pickle.loads(verified)
-				else:
-					# Either (a) blob predates HMAC rollout (raw
-					# pickle, no prefix), or (b) the HMAC secret
-					# drifted across processes so signed blobs land
-					# here as ``32-byte sig + pickle``. Try BOTH
-					# shapes - the first ``pickle.loads`` that
-					# succeeds wins.
-					allow_unsigned = True
-					try:
-						allow_unsigned = bool(
-							frappe.conf.get("optimus_allow_unsigned_pickles", True)
-						)
-					except Exception:
-						pass
-					if allow_unsigned and isinstance(tree_blob, (bytes, bytearray)):
-						attempts = [bytes(tree_blob)]
-						if len(tree_blob) > 32:
-							attempts.append(bytes(tree_blob[32:]))
-						for payload in attempts:
-							try:
-								pyi_session = pickle.loads(payload)
-								break
-							except Exception:
-								continue
-						if pyi_session is None:
-							frappe.log_error(
-								title="optimus analyze",
-								message=(
-									f"Pyi tree load failed under both raw "
-									f"and stripped-sig paths for {uuid}"
-								),
-							)
-						else:
-							try:
-								frappe.logger().warning(
-									f"optimus analyze: loaded pyi tree for "
-									f"{uuid} via unsigned-fallback path "
-									f"(encryption_key missing in site_config "
-									f"or HMAC secret drifted across "
-									f"processes)."
-								)
-							except Exception:
-								pass
-					else:
-						frappe.log_error(
-							title="optimus analyze",
-							message=(
-								f"Pyi tree signature mismatch for {uuid}; "
-								f"unsigned fallback disabled by site_config."
-							),
-						)
+			pyi_session = _deserialize_tree(uuid, tree_blob)
 		except Exception:
 			frappe.log_error(
 				title="optimus analyze",
-				message=f"Failed to deserialize pyi tree for {uuid}",
+				message=f"Failed to load pyi tree for {uuid}",
 			)
 			pyi_session = None
 
@@ -2423,7 +2481,7 @@ def _run_table_index_ai_backfill(doc, *, table_name: str) -> dict:
 		a.recording_uuid for a in (doc.actions or []) if getattr(a, "recording_uuid", None)
 	]
 	try:
-		recordings = list(_fetch_recordings(recording_uuids))
+		recordings = list(_fetch_recordings(recording_uuids, recordings_bundle=_load_recordings_bundle(doc)))
 	except Exception:
 		recordings = []
 
@@ -2880,7 +2938,7 @@ def _render_and_attach_reports(docname: str, recordings: list[dict]) -> None:
 	safe_commit()
 
 
-def _save_report_file(*, docname: str, filename: str, attached_to_field: str, content: str) -> str | None:
+def _save_report_file(*, docname: str, filename: str, attached_to_field: str, content) -> str | None:
 	"""Insert a private File attached to the Optimus Session.
 
 	Returns the file_url for the new file, or None on failure.
@@ -2913,7 +2971,7 @@ def _save_report_file(*, docname: str, filename: str, attached_to_field: str, co
 				"attached_to_doctype": "Optimus Session",
 				"attached_to_name": docname,
 				"attached_to_field": attached_to_field,
-				"content": content.encode("utf-8"),
+				"content": content if isinstance(content, (bytes, bytearray)) else content.encode("utf-8"),
 				"is_private": 1,
 			}
 		)
@@ -2942,6 +3000,97 @@ def _save_report_file(*, docname: str, filename: str, attached_to_field: str, co
 		return file_doc.file_url
 	except Exception:
 		frappe.log_error(title=f"optimus save_report_file {filename}")
+		return None
+
+
+def _persist_recordings_file(docname: str, session_uuid: str, recording_uuids: list[str]) -> None:
+	"""v0.13: snapshot every per-session Redis artifact to a gzipped JSON File
+	on the session BEFORE :func:`_cleanup_redis` deletes them, so the steps
+	humanizer, AI-fix grounding and report drill-downs can re-run after the
+	live recording is gone (recordings are otherwise deleted the moment
+	analyze finishes).
+
+	Bundle shape::
+
+	    {"schema", "session_uuid", "session_state",
+	     "recordings": {uuid: {rec, sparse, tree_b64, sidecar, infra}}}
+
+	Every value is already capture-time redacted
+	(``optimus/__init__._patch_recorder``), so the file carries the same
+	redaction posture as the JSON blobs already on the row. The tree is kept as
+	the raw HMAC-signed pickle (base64) so it reloads through the same verified
+	path as Redis. Best-effort: a failure here never aborts analyze.
+	"""
+	import base64
+	import gzip
+
+	try:
+		recordings: dict = {}
+		for uuid in recording_uuids:
+			rec = frappe.cache.hget(RECORDER_REQUEST_HASH, uuid)
+			if not isinstance(rec, dict):
+				continue
+			entry: dict = {"rec": rec}
+			sparse = frappe.cache.hget(RECORDER_REQUEST_SPARSE_HASH, uuid)
+			if isinstance(sparse, dict):
+				entry["sparse"] = sparse
+			tree_blob = frappe.cache.get_value(_redis_keys.tree(uuid))
+			if isinstance(tree_blob, (bytes, bytearray)):
+				entry["tree_b64"] = base64.b64encode(bytes(tree_blob)).decode("ascii")
+			sidecar = frappe.cache.get_value(_redis_keys.sidecar(uuid))
+			if isinstance(sidecar, list):
+				entry["sidecar"] = sidecar
+			infra_blob = frappe.cache.get_value(_redis_keys.infra(uuid))
+			if isinstance(infra_blob, dict):
+				entry["infra"] = infra_blob
+			recordings[uuid] = entry
+
+		if not recordings:
+			return
+
+		bundle = {
+			"schema": 1,
+			"session_uuid": session_uuid,
+			"session_state": session.get_session_meta(session_uuid),
+			"recordings": recordings,
+		}
+		payload = gzip.compress(json.dumps(bundle, default=str).encode("utf-8"))
+		url = _save_report_file(
+			docname=docname,
+			filename=f"optimus_recordings_{session_uuid}.json.gz",
+			attached_to_field="recordings_file",
+			content=payload,
+		)
+		if url:
+			frappe.db.set_value("Optimus Session", docname, "recordings_file", url)
+	except Exception:
+		try:
+			frappe.log_error(title="optimus persist recordings")
+		except Exception:
+			pass
+
+
+def _load_recordings_bundle(session_doc):
+	"""Load the persisted recordings snapshot for a session, or None.
+
+	Returns the parsed bundle dict so post-analyze callers can pass it to
+	``_fetch_recordings(recordings_bundle=...)`` once Redis is cleaned up.
+	Returns None when the session has no snapshot or it can't be read — callers
+	then behave exactly as before the snapshot existed.
+	"""
+	import gzip
+
+	url = getattr(session_doc, "recordings_file", None)
+	if not url:
+		return None
+	try:
+		file_doc = frappe.get_doc("File", {"file_url": url})
+		with open(file_doc.get_full_path(), "rb") as fh:
+			raw = fh.read()
+		bundle = json.loads(gzip.decompress(raw).decode("utf-8"))
+		return bundle if isinstance(bundle, dict) else None
+	except Exception:
+		frappe.log_error(title="optimus load recordings bundle")
 		return None
 
 

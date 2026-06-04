@@ -34,6 +34,7 @@
   "reports_section",
   "raw_report_file",
   "raw_report_pdf_file",
+  "recordings_file",
   "internal_section",
   "top_queries_json",
   "total_python_ms",
@@ -234,6 +235,15 @@
    "fieldname": "raw_report_pdf_file",
    "fieldtype": "Attach",
    "label": "Report (PDF)",
+   "read_only": 1
+  },
+  {
+   "description": "Gzipped JSON snapshot of the raw recordings (redacted at capture). Lets AI re-run and report drill-downs regenerate after the live recording is cleaned from Redis.",
+   "fieldname": "recordings_file",
+   "fieldtype": "Attach",
+   "hidden": 1,
+   "label": "Recordings Snapshot",
+   "no_copy": 1,
    "read_only": 1
   },
   {
