@@ -822,6 +822,34 @@ function _drain_suffix(d) {
 	return win ? __(" · up to {0}", [win]) : "";
 }
 
+// One self-managed banner element updated in place. frm.set_intro /
+// frm.dashboard.set_headline both APPEND a dismissible .form-message in this
+// Frappe version, so polling them stacked a new bar every tick. Pass
+// html=null to remove it.
+function _drain_banner(frm, html) {
+	const root = frm.$wrapper;
+	if (!root || !root.length) return;
+	if (html == null) {
+		root.find(".optimus-drain-banner").remove();
+		return;
+	}
+	let $b = root.find(".optimus-drain-banner");
+	if (!$b.length) {
+		$b = $('<div class="optimus-drain-banner"></div>').css({
+			padding: "10px 14px",
+			margin: "8px",
+			background: "#fff7ed",
+			border: "1px solid #fed7aa",
+			"border-radius": "6px",
+			color: "#9a3412",
+			"font-size": "0.9rem",
+		});
+		const $host = root.find(".form-layout").first();
+		($host.length ? $host : root).prepend($b);
+	}
+	$b.html(html);
+}
+
 // While the session drains the flow's background jobs after Stop, poll the
 // pending count + remaining window and show a live "Capturing background
 // jobs… N left · up to ~Xm" intro so it doesn't look stuck at "Stopping".
@@ -852,17 +880,17 @@ function render_drain_progress(frm) {
 				const d = (r && r.message) || {};
 				if (d.status && d.status !== "Capturing Background Jobs") {
 					stop();
-					frm.set_intro(null);
+					_drain_banner(frm, null);
 					frm.reload_doc();
 					return;
 				}
 				const n = d.pending != null ? d.pending : 0;
-				// set_intro REPLACES the banner in place each tick. (set_headline
-				// APPENDS a dismissible message, so polling stacked a new bar
-				// every 4s.)
-				frm.set_intro(
-					__("⏳ Capturing background jobs… {0} left{1}", [n, _drain_suffix(d)]),
-					"orange"
+				// One self-managed banner updated in place — set_intro /
+				// set_headline both APPEND a dismissible .form-message in this
+				// Frappe version, so polling them stacked a new bar each tick.
+				_drain_banner(
+					frm,
+					__("⏳ Capturing background jobs… {0} left{1}", [n, _drain_suffix(d)])
 				);
 			},
 			error: () => {},
