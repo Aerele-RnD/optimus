@@ -808,10 +808,24 @@ function render_status_indicator(frm) {
 	frm.page.set_indicator(status, colors[status] || "gray");
 }
 
+function _fmt_drain_window(secs) {
+	if (secs == null) return null;
+	if (secs <= 0) return __("almost done");
+	if (secs >= 60) return __("~{0} min", [Math.ceil(secs / 60)]);
+	return __("~{0}s", [secs]);
+}
+
+// " · up to ~Xm" suffix for the drain banner (or "" if the window is unknown).
+function _drain_suffix(d) {
+	const secs = d.remaining_seconds != null ? d.remaining_seconds : d.window_seconds;
+	const win = _fmt_drain_window(secs);
+	return win ? __(" · up to {0}", [win]) : "";
+}
+
 // While the session drains the flow's background jobs after Stop, poll the
-// pending count and show a live "Capturing background jobs… N still running"
-// headline so it doesn't look stuck at "Stopping". Reloads the form once the
-// status moves on (analyze.run takes over → Analyzing).
+// pending count + remaining window and show a live "Capturing background
+// jobs… N left · up to ~Xm" intro so it doesn't look stuck at "Stopping".
+// Reloads the form once the status moves on (analyze.run takes over → Analyzing).
 function render_drain_progress(frm) {
 	if (frm._optimus_drain_timer) {
 		clearInterval(frm._optimus_drain_timer);
@@ -847,7 +861,7 @@ function render_drain_progress(frm) {
 				// APPENDS a dismissible message, so polling stacked a new bar
 				// every 4s.)
 				frm.set_intro(
-					__("⏳ Capturing background jobs… {0} still running.", [n]),
+					__("⏳ Capturing background jobs… {0} left{1}", [n, _drain_suffix(d)]),
 					"orange"
 				);
 			},

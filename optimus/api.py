@@ -564,9 +564,29 @@ def drain_progress(session_uuid: str) -> dict:
 	status = frappe.db.get_value(
 		"Optimus Session", {"session_uuid": session_uuid}, "status"
 	)
+	# Window remaining: set_draining stored deadline = stop + wait_seconds + 60
+	# (60s grace for the analyze run itself); subtract the grace to get the
+	# bg-wait window the user actually sits through (≈ background_job_wait_seconds
+	# at the start, counting down to 0). The session can't stay here past it.
+	meta = session.get_session_meta(session_uuid) or {}
+	remaining = None
+	until = meta.get("draining_until")
+	if until:
+		try:
+			remaining = max(0, int(float(until) - time.time()) - 60)
+		except (TypeError, ValueError):
+			remaining = None
+	try:
+		from optimus.settings import get_config
+
+		window = int(getattr(get_config(), "background_job_wait_seconds", 0) or 0)
+	except Exception:
+		window = 0
 	return {
 		"status": status,
 		"pending": len(session.get_pending_jobs(session_uuid)),
+		"remaining_seconds": remaining,
+		"window_seconds": window or None,
 	}
 
 
