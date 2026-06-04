@@ -531,9 +531,15 @@ def _bg_wait_for_pending_jobs(session_uuid: str, docname: str, deadline):
 		_finalize_pending_statuses(session_uuid, still_running)
 		return len(still_running)  # cap hit — proceed; caller warns
 
-	# Keep the UI honest while we wait.
+	# v0.13: keep the UI honest while we wait — stay on "Capturing Background
+	# Jobs" (set at stop) for the whole drain rather than flipping to
+	# "Analyzing" here; the real "Analyzing" is set below once the jobs finish
+	# and we start gathering recordings. The janitor's stale-stopping sweep
+	# self-heals this status too, so a stranded drain can't get stuck.
 	try:
-		frappe.db.set_value("Optimus Session", docname, "status", "Analyzing")
+		frappe.db.set_value(
+			"Optimus Session", docname, "status", "Capturing Background Jobs"
+		)
 		safe_commit()
 	except Exception:
 		pass
@@ -1073,10 +1079,17 @@ def _deserialize_tree(uuid: str, tree_blob):
 
 def _rehydrate_from_bundle(recordings_bundle, uuid: str):
 	"""Rebuild a recording dict (rec + pyi_session + sidecar) from a persisted
-	bundle entry, mirroring the live-Redis read path so downstream consumers
-	can't tell the difference. Returns the rec dict or None when the bundle
-	lacks this uuid. Tolerant of being handed either the full bundle
-	(``{"recordings": {...}}``) or the inner uuid→entry map directly."""
+	bundle entry, mirroring the live-Redis read path. Returns the rec dict or
+	None when the bundle lacks this uuid. Tolerant of being handed either the
+	full bundle (``{"recordings": {...}}``) or the inner uuid→entry map directly.
+
+	The tree round-trips byte-identically (base64 of the same HMAC-signed
+	pickle), but ``rec``/``sidecar`` came back through JSON — so tuples are now
+	lists and any exotic type was stringified. That's transparent to the
+	analyze/render consumers (string/number/dict fields), but is NOT the pickle
+	Redis stores. The persisted ``sparse``/``infra`` entries are intentionally
+	not re-attached here — they aren't part of the live ``_fetch_recordings``
+	rec shape (see :func:`_persist_recordings_file`)."""
 	import base64
 
 	if not isinstance(recordings_bundle, dict):
@@ -1555,11 +1568,19 @@ def _persist(
 		# v0.6.0: when AI is enabled, draft a friendly human-readable flow
 		# (with the raw action list kept below); otherwise — or if the LLM
 		# call fails — fall back to the plain labelled list.
+		# v0.13: capture the humanizer's token usage here so the steps tokens
+		# show in the report and roll into the session's cumulative spend on
+		# the auto-analyze path too — not only after a manual "Refresh AI
+		# suggestions". (usage_out non-None also arms _record_session_spend at
+		# the ai_fix chokepoint, since the analyze run set the spend marker.)
+		_steps_usage: dict = {}
 		notes_html = _build_humanized_notes_html(
-			recordings, session_title=(doc.title or None)
+			recordings, session_title=(doc.title or None), usage_out=_steps_usage
 		) or _build_auto_notes_html(recordings)
 		if notes_html:
 			doc.notes = notes_html
+		if _steps_usage.get("total_tokens"):
+			doc.ai_steps_tokens = int(_steps_usage.get("total_tokens") or 0)
 
 	doc.total_requests = total_requests
 	doc.total_queries = total_queries
@@ -2696,7 +2717,8 @@ def _assemble_humanized_notes(steps_markdown: str) -> str:
 
 
 def _build_humanized_notes_html(
-	recordings: list[dict], *, session_title: str | None = None
+	recordings: list[dict], *, session_title: str | None = None,
+	usage_out: dict | None = None,
 ) -> str:
 	"""LLM-humanized "Steps to Reproduce" HTML, or "" when AI isn't
 	enabled/available, there's nothing to summarise, or the LLM call fails
@@ -2716,7 +2738,7 @@ def _build_humanized_notes_html(
 	if not actions:
 		return ""
 	try:
-		steps_md = ai_fix.humanize_steps(actions, session_title=session_title)
+		steps_md = ai_fix.humanize_steps(actions, session_title=session_title, usage_out=usage_out)
 	except Exception:
 		try:
 			frappe.log_error(title="optimus humanize_steps")
@@ -3034,11 +3056,21 @@ def _persist_recordings_file(docname: str, session_uuid: str, recording_uuids: l
 	    {"schema", "session_uuid", "session_state",
 	     "recordings": {uuid: {rec, sparse, tree_b64, sidecar, infra}}}
 
+	This is a COMPLETE snapshot: ``rec`` + ``tree`` + ``sidecar`` are what the
+	live read-fallback (:func:`_rehydrate_from_bundle`) reconstructs for AI
+	re-runs / drill-down regeneration; ``sparse`` + ``infra`` + ``session_state``
+	are captured for faithful regeneration + a possible future full
+	re-analyze-from-file, and are NOT consumed by the current read path.
+
 	Every value is already capture-time redacted
 	(``optimus/__init__._patch_recorder``), so the file carries the same
 	redaction posture as the JSON blobs already on the row. The tree is kept as
 	the raw HMAC-signed pickle (base64) so it reloads through the same verified
-	path as Redis. Best-effort: a failure here never aborts analyze.
+	path as Redis; ``rec``/``sidecar`` go through ``json.dumps(default=str)``
+	(tuples → lists). Memory note: this re-reads all recordings into a second
+	dict while the analyze ``recordings`` list is still alive, so RAM peaks
+	roughly 2× here — acceptable since persistence runs once at finalize.
+	Best-effort: a failure here never aborts analyze.
 	"""
 	import base64
 	import gzip

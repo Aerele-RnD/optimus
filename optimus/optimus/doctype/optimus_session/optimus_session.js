@@ -859,8 +859,12 @@ function render_drain_progress(frm) {
 		clearInterval(frm._optimus_drain_timer);
 		frm._optimus_drain_timer = null;
 	}
-	if (frm.is_new()) return;
-	if (frm.doc.status !== "Capturing Background Jobs") return;
+	if (frm.is_new() || frm.doc.status !== "Capturing Background Jobs") {
+		// Clear any stale banner left over from a soft refresh after the status
+		// already moved on.
+		_drain_banner(frm, null);
+		return;
+	}
 
 	const stop = () => {
 		clearInterval(frm._optimus_drain_timer);
@@ -893,7 +897,11 @@ function render_drain_progress(frm) {
 					__("⏳ Capturing background jobs… {0} left{1}", [n, _drain_suffix(d)])
 				);
 			},
-			error: () => {},
+			error: () => {
+				// Persistent 403/500 → stop polling so we don't hammer the
+				// server forever; a form refresh re-establishes the poll.
+				stop();
+			},
 		});
 	};
 	tick();

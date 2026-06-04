@@ -118,7 +118,7 @@
    "default": "0",
    "description": "Cumulative LLM tokens billed for this session — analyze auto-suggest plus every Refresh / on-demand AI run. Matches the Aerele usage ledger; only ever increases.",
    "fieldname": "ai_tokens_spent",
-   "fieldtype": "Int",
+   "fieldtype": "Long Int",
    "label": "AI Tokens Spent",
    "no_copy": 1,
    "read_only": 1

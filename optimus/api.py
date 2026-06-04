@@ -305,11 +305,14 @@ def _stop_session(user: str, session_uuid: str) -> tuple[str | None, bool]:
 			# v0.13: surface the post-stop background-job capture as its own
 			# status — otherwise the session sits at "Stopping" for the whole
 			# drain window (up to background_job_wait_seconds, default 300s) and
-			# looks stuck. analyze.run flips it to "Analyzing" once the jobs
-			# finish / the window closes.
+			# looks stuck. analyze.run keeps it here through the drain, then
+			# flips to "Analyzing" once the jobs finish / the window closes.
+			# safe_commit so the enqueued analyze worker can't read a stale
+			# "Stopping" if the request transaction commits late.
 			frappe.db.set_value(
 				"Optimus Session", docname, "status", "Capturing Background Jobs"
 			)
+			safe_commit()
 	except Exception:
 		frappe.log_error(title="optimus set draining window")
 
@@ -980,6 +983,10 @@ def export_session(session_uuid: str) -> dict:
 			# v0.3.0 fields
 			"total_python_ms": getattr(doc, "total_python_ms", None),
 			"total_sql_ms": getattr(doc, "total_sql_ms", None),
+			# v0.13: AI token usage (cumulative spend + refresh count + steps)
+			"ai_tokens_spent": getattr(doc, "ai_tokens_spent", None),
+			"ai_refresh_count": getattr(doc, "ai_refresh_count", None),
+			"ai_steps_tokens": getattr(doc, "ai_steps_tokens", None),
 		},
 		"actions": [
 			{
