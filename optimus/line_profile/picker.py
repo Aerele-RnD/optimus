@@ -198,6 +198,7 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 		return []
 
 	out: list[dict] = []
+	seen: set[str] = set()  # dedup by dotted_path across all walked trees
 
 	def walk(node, ua_depth, fw_depth, budget):
 		"""Dual-depth DFS: ``ua_depth`` is the depth a user-app frame
@@ -222,6 +223,19 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 		# Emit BEFORE recursing so DFS pre-order parents land first.
 		if is_real:
 			dotted = _build_dotted_path(filename, function)
+			if dotted and dotted in seen:
+				# Same function already offered (a hot function often roots more
+				# than one action tree) — don't list it twice. Walk its children
+				# at THIS depth so unique descendants still surface, then stop.
+				for child in sorted(
+					node.get("children") or [],
+					key=lambda c: float((c or {}).get("cumulative_ms") or 0),
+					reverse=True,
+				):
+					walk(child, ua_depth, fw_depth, budget)
+				return
+			if dotted:
+				seen.add(dotted)
 			app = _derive_app(filename) or (
 				dotted.split(".", 1)[0] if "." in dotted else ""
 			)

@@ -719,3 +719,25 @@ class TestMultiTreePicker:
 		# Per-tree cap honored — the giant tree contributes <= _PER_TREE_CAP frames.
 		giant_frames = [c for c in cands if c["file"].endswith("common.py")]
 		assert len(giant_frames) <= picker._PER_TREE_CAP
+
+	def test_deduplicates_same_function_across_trees(self):
+		# looped_validate is a hot root in two different action trees.
+		t1 = _root(
+			_frame("looped_validate", "ugly_code/python/common.py", 10, 17000.0, children=[
+				_frame("only_in_t1", "ugly_code/python/common.py", 20, 800.0),
+			]),
+		)
+		t2 = _root(
+			_frame("looped_validate", "ugly_code/python/common.py", 10, 16000.0, children=[
+				_frame("only_in_t2", "ugly_code/python/common.py", 30, 700.0),
+			]),
+		)
+		cands = picker._build_tree_indented_candidates([t1, t2])
+		paths = [c["dotted_path"] for c in cands]
+		# The duplicated function is listed exactly once...
+		assert paths.count("ugly_code.python.common.looped_validate") == 1
+		# ...but unique descendants of BOTH trees still surface (promoted into
+		# the deduped frame's slot).
+		fns = {c["qualname"] for c in cands}
+		assert "only_in_t1" in fns
+		assert "only_in_t2" in fns
