@@ -821,6 +821,10 @@ def _finding_to_dict(child, file_cache: dict | None = None) -> dict:
 			"provider": raw_llm.get("provider") or "",
 			"generated_at": raw_llm.get("generated_at") or "",
 			"source_available": raw_llm.get("source_available", True),
+			# Token usage the provider reported (Aerele managed proxy forwards
+			# the real billed count). None when the suggestion predates this or
+			# the provider returned no usage.
+			"tokens": raw_llm.get("tokens") or None,
 		}
 
 	return {

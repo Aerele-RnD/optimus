@@ -185,18 +185,28 @@ class TestJanitorSweepsActuallyDelete(FrappeTestCase):
 		)
 
 	def test_sweep_keeps_session_within_retention(self):
-		"""Negative control. A Ready session 30 days old is well
-		within the 90-day retention window — the sweep MUST leave it
-		alone. Without this guard, the sweep could overzealously
-		delete recent sessions."""
-		fixture = self._create_session(days_old=30, status="Ready")
+		"""Negative control. A Ready session comfortably INSIDE the
+		configured retention window MUST be left alone by the sweep —
+		without this guard the sweep could overzealously delete recent
+		sessions.
+
+		Retention is ``Optimus Settings.session_retention_days`` (default 30,
+		config-profile dependent — see settings.py), so the fixture age is
+		taken as HALF that window rather than a hard-coded 30 days. A
+		hard-coded 30 sat exactly on the default-30 boundary and lost the race
+		against the sweep's ``now()`` cutoff."""
+		from optimus.settings import get_config
+
+		retention = max(1, int(get_config().session_retention_days or 30))
+		within = max(0, retention // 2)
+		fixture = self._create_session(days_old=within, status="Ready")
 		assert self._session_exists(fixture["uuid"])
 
 		janitor.sweep_old_sessions()
 
 		assert self._session_exists(fixture["uuid"]), (
-			f"sweep_old_sessions ate a 30-day-old session "
-			f"{fixture['uuid']!r} — retention policy is too aggressive"
+			f"sweep_old_sessions ate a {within}-day-old session "
+			f"{fixture['uuid']!r} (retention={retention}d) — too aggressive"
 		)
 
 	def test_sweep_keeps_active_sessions_regardless_of_age(self):

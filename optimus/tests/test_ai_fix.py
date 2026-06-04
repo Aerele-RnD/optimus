@@ -302,6 +302,37 @@ class TestOpenAiCall:
 		with pytest.raises(ai_fix.AiFixError):
 			ai_fix._call_openai_chat("u", "k", "m", "s", [{"role": "user", "content": "x"}])
 
+	def test_populates_usage_out_when_provided(self, monkeypatch):
+		payload = {
+			"choices": [{"message": {"content": "ok"}}],
+			"usage": {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165},
+		}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, payload)))
+		usage: dict = {}
+		ai_fix._call_openai_chat("u", "k", "m", "s", [{"role": "user", "content": "x"}], usage_out=usage)
+		assert usage == {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165}
+
+
+class TestUsageNormalization:
+	def test_openai_passthrough(self):
+		assert ai_fix._usage_from_openai(
+			{"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+		) == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+	def test_openai_total_falls_back_to_sum(self):
+		assert ai_fix._usage_from_openai({"usage": {"prompt_tokens": 10, "completion_tokens": 5}})[
+			"total_tokens"
+		] == 15
+
+	def test_anthropic_maps_input_output(self):
+		assert ai_fix._usage_from_anthropic(
+			{"usage": {"input_tokens": 8, "output_tokens": 4}}
+		) == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
+
+	def test_missing_usage_is_zero(self):
+		assert ai_fix._usage_from_openai({})["total_tokens"] == 0
+		assert ai_fix._usage_from_anthropic(None)["total_tokens"] == 0
+
 
 class TestAnthropicCall:
 	def test_extracts_text_block(self, monkeypatch):
@@ -466,6 +497,15 @@ class TestSuggestFix:
 		assert out["model"] == "gpt-4.1-mini"
 		assert out["provider"] == "OpenAI"
 		assert out["generated_at"]  # iso timestamp
+		assert "tokens" not in out  # _OPENAI_OK carries no usage block
+
+	def test_includes_tokens_when_usage_present(self, monkeypatch):
+		resp = {"choices": [{"message": {"content": "**Fix**"}}],
+		        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, resp)))
+		with patch("optimus.ai_fix._resolve_provider", return_value=dict(self._PROVIDER)):
+			out = ai_fix.suggest_fix({"finding_type": "Slow Query", "title": "x", "technical_detail": {}})
+		assert out["tokens"] == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
 
 	def test_anthropic_dispatch(self, monkeypatch):
 		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, _ANTHROPIC_OK)))
@@ -539,6 +579,22 @@ class TestSourceAvailableFlag:
 			"phase2_hotline": {"lineno": 7, "content": "_run_validations(doc)", "total_ms": 387, "hits": 2},
 		})
 		assert out["source_available"] is True
+
+
+class TestSuggestIndex:
+	_PROVIDER = {"name": "OpenAI", "protocol": "openai", "base_url": "https://api.openai.com/v1",
+	             "model": "gpt-4.1-mini", "needs_key": True, "api_key": "sk-test"}
+
+	def test_includes_tokens_when_usage_present(self, monkeypatch):
+		resp = {"choices": [{"message": {"content": "**Index**\n\nadd a composite index"}}],
+		        "usage": {"prompt_tokens": 90, "completion_tokens": 30, "total_tokens": 120}}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, resp)))
+		monkeypatch.setattr(ai_fix, "_build_index_messages",
+		                    lambda payload: ("sys", [{"role": "user", "content": "x"}]))
+		with patch("optimus.ai_fix._resolve_provider", return_value=dict(self._PROVIDER)):
+			out = ai_fix.suggest_index({"table": "tabUser"})
+		assert out["tokens"] == {"prompt_tokens": 90, "completion_tokens": 30, "total_tokens": 120}
+		assert out["suggestion"].startswith("**Index**")
 
 
 class TestHumanizeSteps:
@@ -923,3 +979,86 @@ class TestIsAvailableSection:
 		     patch.object(ai_fix, "_resolve_provider", side_effect=AiFixError("not configured")):
 			assert ai_fix.is_available() is False
 			assert ai_fix.is_available(section="findings") is False
+
+
+# --------------------------------------------------------------------------
+# v0.13: per-session AI-token spend recording (_record_session_spend) + the
+# two _call_* chokepoints that drive Optimus Session.ai_tokens_spent.
+# --------------------------------------------------------------------------
+
+
+class _FakeDB:
+	def __init__(self):
+		self.calls = []
+
+	def sql(self, query, values=None):
+		self.calls.append((query, values))
+
+
+class TestRecordSessionSpend:
+	def test_increments_active_session(self, monkeypatch):
+		import frappe
+
+		fake = _FakeDB()
+		monkeypatch.setattr(frappe, "db", fake, raising=False)
+		monkeypatch.setattr(
+			frappe, "local", SimpleNamespace(_optimus_spend_session="uuid-1"), raising=False
+		)
+		ai_fix._record_session_spend(150)
+		assert len(fake.calls) == 1
+		query, values = fake.calls[0]
+		assert "ai_tokens_spent" in query and "session_uuid" in query
+		assert values == (150, "uuid-1")
+
+	def test_noop_without_active_session(self, monkeypatch):
+		import frappe
+
+		fake = _FakeDB()
+		monkeypatch.setattr(frappe, "db", fake, raising=False)
+		monkeypatch.setattr(frappe, "local", SimpleNamespace(), raising=False)
+		ai_fix._record_session_spend(150)
+		assert fake.calls == []
+
+	def test_noop_on_zero_or_missing_tokens(self, monkeypatch):
+		import frappe
+
+		fake = _FakeDB()
+		monkeypatch.setattr(frappe, "db", fake, raising=False)
+		monkeypatch.setattr(
+			frappe, "local", SimpleNamespace(_optimus_spend_session="uuid-1"), raising=False
+		)
+		ai_fix._record_session_spend(0)
+		ai_fix._record_session_spend(None)
+		assert fake.calls == []
+
+
+class TestCallChokepointRecordsSpend:
+	def test_openai_call_records_total_tokens(self, monkeypatch):
+		recorded = []
+		monkeypatch.setattr(ai_fix, "_record_session_spend", recorded.append, raising=True)
+		payload = {
+			"choices": [{"message": {"content": "hi"}}],
+			"usage": {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10},
+		}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, payload)))
+		usage = {}
+		ai_fix._call_openai_chat(
+			"u", "k", "m", "s", [{"role": "user", "content": "x"}], usage_out=usage
+		)
+		assert usage["total_tokens"] == 10
+		assert recorded == [10]
+
+	def test_anthropic_call_records_total_tokens(self, monkeypatch):
+		recorded = []
+		monkeypatch.setattr(ai_fix, "_record_session_spend", recorded.append, raising=True)
+		payload = {
+			"content": [{"type": "text", "text": "hi"}],
+			"usage": {"input_tokens": 4, "output_tokens": 6},
+		}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, payload)))
+		usage = {}
+		ai_fix._call_anthropic(
+			"u", "k", "m", "s", [{"role": "user", "content": "x"}], usage_out=usage
+		)
+		assert usage["total_tokens"] == 10
+		assert recorded == [10]

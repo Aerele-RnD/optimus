@@ -1146,7 +1146,9 @@ def regenerate_reports(session_uuid: str) -> dict:
 		if getattr(a, "recording_uuid", None)
 	]
 	try:
-		recordings = list(_analyze_mod._fetch_recordings(recording_uuids))
+		recordings = list(_analyze_mod._fetch_recordings(
+			recording_uuids, recordings_bundle=_analyze_mod._load_recordings_bundle(doc)
+		))
 	except Exception:
 		frappe.log_error(title="optimus regenerate_reports fetch")
 		recordings = []
@@ -1312,7 +1314,7 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 			act = actions_by_idx.get(int(ref))
 			rec_uuid = (act or {}).get("recording_uuid")
 			if rec_uuid:
-				recs = list(_analyze_mod._fetch_recordings([rec_uuid]))
+				recs = list(_analyze_mod._fetch_recordings([rec_uuid], recordings_bundle=_analyze_mod._load_recordings_bundle(doc)))
 				recordings_by_uuid = {r.get("uuid"): r for r in recs if r.get("uuid")}
 	except Exception:
 		# Never let a recording-fetch error block the AI suggestion — fall
@@ -1326,6 +1328,7 @@ def suggest_fix(session_uuid: str, finding_ref: str, regenerate=0) -> dict:
 	)
 
 	try:
+		_analyze_mod._mark_ai_spend_session(session_uuid)
 		result = ai_fix.suggest_fix(finding_dict)
 	except ai_fix.AiFixError as e:
 		frappe.throw(str(e))
@@ -1349,6 +1352,11 @@ def test_ai_connection() -> dict:
 	adjacent — Optimus Settings itself is SysMgr-only). Returns
 	``{"ok": bool, "message": str, "model": str}``; never raises on a
 	provider failure (the detail is in ``message``)."""
+	# The settings probe isn't billable to any session — clear the spend marker
+	# so its tokens don't land on whatever session this worker last served.
+	from optimus import analyze as _analyze_mod
+
+	_analyze_mod._mark_ai_spend_session(None)
 	user = _require_profiler_user()
 	roles = set(frappe.get_roles(user))
 	if "System Manager" not in roles and user != "Administrator":
@@ -1549,12 +1557,16 @@ def _humanize_steps_core(doc, *, title: str | None = None) -> dict:
 	from optimus import ai_fix
 	from optimus import analyze as _analyze_mod
 
+	_analyze_mod._mark_ai_spend_session(getattr(doc, "session_uuid", None))
+
 	recording_uuids = [
 		a.recording_uuid for a in (doc.actions or [])
 		if getattr(a, "recording_uuid", None)
 	]
 	try:
-		recordings = list(_analyze_mod._fetch_recordings(recording_uuids))
+		recordings = list(_analyze_mod._fetch_recordings(
+			recording_uuids, recordings_bundle=_analyze_mod._load_recordings_bundle(doc)
+		))
 	except Exception:
 		frappe.log_error(title="optimus humanize_steps fetch")
 		recordings = []
@@ -1568,14 +1580,20 @@ def _humanize_steps_core(doc, *, title: str | None = None) -> dict:
 				"background / polling traffic (or the recordings have expired)."
 			),
 		}
+	_steps_usage: dict = {}
 	try:
-		steps_md = ai_fix.humanize_steps(actions, session_title=title)
+		steps_md = ai_fix.humanize_steps(actions, session_title=title, usage_out=_steps_usage)
 	except ai_fix.AiFixError as e:
 		return {"updated": False, "reason": str(e)}
 
 	frappe.db.set_value(
-		"Optimus Session", doc.name, "notes",
-		_analyze_mod._assemble_humanized_notes(steps_md),
+		"Optimus Session", doc.name, {
+			"notes": _analyze_mod._assemble_humanized_notes(steps_md),
+			# Tokens for this Steps-to-Reproduce humanization. The report's
+			# session total rolls it in alongside fix + index suggestions
+			# (notes is markdown, so the count needs its own field).
+			"ai_steps_tokens": int(_steps_usage.get("total_tokens") or 0),
+		},
 	)
 	safe_commit()
 	return {"updated": True, "reason": None}
@@ -1759,6 +1777,14 @@ def refill_ai_suggestions(session_uuid: str) -> dict:
 
 	cfg = get_config()
 	doc = frappe.get_doc("Optimus Session", row["name"])
+
+	# v0.13: count this refresh (cumulative; only ever increases).
+	frappe.db.sql(
+		"update `tabOptimus Session` "
+		"set ai_refresh_count = coalesce(ai_refresh_count, 0) + 1 "
+		"where session_uuid = %s",
+		(session_uuid,),
+	)
 
 	fixes = {"added": 0, "failed": 0, "skipped_time": 0, "skipped": None}
 	if cfg.ai_suggest_findings:

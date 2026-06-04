@@ -119,6 +119,7 @@ frappe.ui.form.on("Optimus Settings", {
 				});
 			});
 		}
+
 	},
 
 	config_profile(frm) {

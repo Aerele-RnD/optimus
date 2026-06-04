@@ -216,7 +216,7 @@ def _sweep_old_sessions():
 		},
 		fields=[
 			"name", "title",
-			"raw_report_file", "raw_report_pdf_file",
+			"raw_report_file", "raw_report_pdf_file", "recordings_file",
 		],
 		limit=MAX_DELETIONS_PER_RUN,
 		order_by="started_at asc",
@@ -274,7 +274,7 @@ def _sweep_old_sessions():
 	# None and the deletion path skips them.
 	all_urls = {
 		u for r in old
-		for u in (r.get("raw_report_file"), r.get("raw_report_pdf_file"))
+		for u in (r.get("raw_report_file"), r.get("raw_report_pdf_file"), r.get("recordings_file"))
 		if u
 	}
 	file_name_by_url: dict[str, str] = {}
@@ -304,6 +304,7 @@ def _sweep_old_sessions():
 			for file_url in (
 				row.get("raw_report_file"),
 				row.get("raw_report_pdf_file"),
+				row.get("recordings_file"),
 			):
 				if not file_url:
 					continue

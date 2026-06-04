@@ -94,6 +94,20 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
 		# Local endpoints (Ollama / LM Studio / vLLM) usually need no key.
 		"needs_key": False,
 	},
+	# v0.14.x: Aerele-managed AI provider. Architecturally identical to
+	# the Anthropic / OpenAI entries — just a hosted endpoint + an API
+	# key the customer pastes into ``ai_api_key``. The token balance,
+	# pre-call validation, and metering all live on Aerele's separate
+	# Frappe site (the URL below); Optimus is a dumb client. Aerele's
+	# proxy fronts an OpenAI-shaped wire so ``_call_openai_chat`` routes
+	# correctly without a new protocol handler. See
+	# ``docs/AI-FIXING.md`` §10.
+	"Aerele": {
+		"protocol": "openai",
+		"base_url": "https://api.aerele.in/optimus/v1",
+		"model": "claude-sonnet-4-6",  # Aerele picks the upstream model
+		"needs_key": True,
+	},
 }
 _DEFAULT_PROVIDER = "Anthropic"
 
@@ -527,18 +541,18 @@ def suggest_fix(finding: dict) -> dict:
 			"No API key is configured for this AI provider — set it under "
 			"Optimus Settings ▸ AI Fix Suggestions."
 		)
-
 	system, messages = _build_messages(finding)
 
+	usage: dict = {}
 	if provider["protocol"] == "anthropic":
 		text = _call_anthropic(
 			provider["base_url"], provider.get("api_key") or "",
-			provider["model"], system, messages,
+			provider["model"], system, messages, usage_out=usage,
 		)
 	else:
 		text = _call_openai_chat(
 			provider["base_url"], provider.get("api_key") or "",
-			provider["model"], system, messages,
+			provider["model"], system, messages, usage_out=usage,
 		)
 
 	text = (text or "").strip()
@@ -547,16 +561,24 @@ def suggest_fix(finding: dict) -> dict:
 	text = _flag_metadata_column_index_advice(text)
 	text = _flag_raw_sql_in_fix(text)
 
-	return {
+	result = {
 		"suggestion": text,
 		"model": provider["model"],
 		"provider": provider["name"],
 		"generated_at": datetime.now(timezone.utc).isoformat(),
 		"source_available": _had_concrete_context(finding),
 	}
+	# Token usage as the provider reported it (the Aerele managed proxy
+	# forwards the upstream usage verbatim, so for that path it's the real
+	# billed count). Omitted when the provider returns no usage block.
+	if usage.get("total_tokens"):
+		result["tokens"] = usage
+	return result
 
 
-def humanize_steps(actions: list[dict], *, session_title: str | None = None) -> str:
+def humanize_steps(
+	actions: list[dict], *, session_title: str | None = None, usage_out: dict | None = None
+) -> str:
 	"""Ask the configured LLM to turn the recorded actions into a friendly
 	"Steps to Reproduce" narrative (Markdown). ``actions`` is a list of
 	``{label, cmd, path, method, doctype, duration_ms}`` dicts (best-effort —
@@ -572,17 +594,16 @@ def humanize_steps(actions: list[dict], *, session_title: str | None = None) -> 
 		)
 	if provider.get("needs_key") and not provider.get("api_key"):
 		raise AiFixError("No API key is configured for this AI provider.")
-
 	system, messages = _build_steps_messages(actions, session_title)
 	if provider["protocol"] == "anthropic":
 		text = _call_anthropic(
 			provider["base_url"], provider.get("api_key") or "",
-			provider["model"], system, messages,
+			provider["model"], system, messages, usage_out=usage_out,
 		)
 	else:
 		text = _call_openai_chat(
 			provider["base_url"], provider.get("api_key") or "",
-			provider["model"], system, messages,
+			provider["model"], system, messages, usage_out=usage_out,
 		)
 	text = (text or "").strip()
 	if not text:
@@ -609,17 +630,17 @@ def suggest_index(table_payload: dict) -> dict:
 		)
 	if provider.get("needs_key") and not provider.get("api_key"):
 		raise AiFixError("No API key is configured for this AI provider.")
-
 	system, messages = _build_index_messages(table_payload)
+	usage: dict = {}
 	if provider["protocol"] == "anthropic":
 		text = _call_anthropic(
 			provider["base_url"], provider.get("api_key") or "",
-			provider["model"], system, messages,
+			provider["model"], system, messages, usage_out=usage,
 		)
 	else:
 		text = _call_openai_chat(
 			provider["base_url"], provider.get("api_key") or "",
-			provider["model"], system, messages,
+			provider["model"], system, messages, usage_out=usage,
 		)
 	text = (text or "").strip()
 	if not text:
@@ -632,12 +653,15 @@ def suggest_index(table_payload: dict) -> dict:
 	# guard fires only on the broader anti-pattern).
 	text = _flag_metadata_column_index_advice(text)
 	text = _flag_raw_sql_in_fix(text)
-	return {
+	result = {
 		"suggestion": text,
 		"model": provider["model"],
 		"provider": provider["name"],
 		"generated_at": datetime.now(timezone.utc).isoformat(),
 	}
+	if usage.get("total_tokens"):
+		result["tokens"] = usage
+	return result
 
 
 def _had_concrete_context(finding: dict) -> bool:
@@ -673,25 +697,32 @@ def test_connection() -> dict:
 		return {"ok": False, "message": "No API key configured.", "model": provider["model"]}
 
 	messages = [{"role": "user", "content": "Reply with exactly: OK"}]
+	usage: dict = {}
 	try:
 		if provider["protocol"] == "anthropic":
 			text = _call_anthropic(
 				provider["base_url"], provider.get("api_key") or "",
 				provider["model"], "You are a connectivity probe. Reply with exactly: OK",
-				messages, max_tokens=16,
+				messages, max_tokens=16, usage_out=usage,
 			)
 		else:
 			text = _call_openai_chat(
 				provider["base_url"], provider.get("api_key") or "",
 				provider["model"], "You are a connectivity probe. Reply with exactly: OK",
-				messages, max_tokens=16,
+				messages, max_tokens=16, usage_out=usage,
 			)
 	except AiFixError as e:
 		return {"ok": False, "message": str(e), "model": provider["model"]}
 
+	# A connectivity probe is a Settings test, not session work — show its
+	# count here, but it does NOT roll into a session's token total.
+	_toks = usage.get("total_tokens") or 0
 	return {
 		"ok": True,
-		"message": f"Reachable. Model replied: {(text or '').strip()[:60]!r}",
+		"message": (
+			f"Reachable. Model replied: {(text or '').strip()[:60]!r}"
+			+ (f" ({_toks} tokens)" if _toks else "")
+		),
 		"model": provider["model"],
 	}
 
@@ -1235,9 +1266,52 @@ def _http_post(url: str, headers: dict, body: dict, *, provider: str, where: str
 		raise AiFixError("The AI provider returned an unexpected (non-JSON) response.")
 
 
+def _usage_from_openai(data: dict | None) -> dict:
+	"""Normalised token usage from an OpenAI-shaped response (also what the
+	Aerele managed proxy + Ollama/LM Studio/vLLM return). Missing fields →
+	0; ``total`` falls back to prompt+completion when the upstream omits it."""
+	u = (data or {}).get("usage") or {}
+	prompt = int(u.get("prompt_tokens") or 0)
+	completion = int(u.get("completion_tokens") or 0)
+	total = int(u.get("total_tokens") or (prompt + completion))
+	return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
+
+
+def _usage_from_anthropic(data: dict | None) -> dict:
+	"""Normalised token usage from an Anthropic Messages response
+	(``usage.input_tokens`` / ``usage.output_tokens``)."""
+	u = (data or {}).get("usage") or {}
+	prompt = int(u.get("input_tokens") or 0)
+	completion = int(u.get("output_tokens") or 0)
+	return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
+
+
+def _record_session_spend(total_tokens) -> None:
+	"""Best-effort: add this LLM call's tokens to the active session's cumulative
+	``Optimus Session.ai_tokens_spent``. The active session uuid is set by the
+	caller (analyze / api) on ``frappe.local._optimus_spend_session`` before any
+	AI call; left ``None`` (e.g. the settings probe) → no-op. Every token-bearing
+	call funnels through ``_call_openai_chat`` / ``_call_anthropic``, so this is
+	the single point that makes the per-session spend complete + cumulative."""
+	try:
+		import frappe
+
+		su = getattr(frappe.local, "_optimus_spend_session", None)
+		n = int(total_tokens or 0)
+		if su and n > 0:
+			frappe.db.sql(
+				"update `tabOptimus Session` "
+				"set ai_tokens_spent = coalesce(ai_tokens_spent, 0) + %s "
+				"where session_uuid = %s",
+				(n, su),
+			)
+	except Exception:
+		pass
+
+
 def _call_anthropic(
 	base_url: str, api_key: str, model: str, system: str, messages: list[dict],
-	*, max_tokens: int = _MAX_OUTPUT_TOKENS,
+	*, max_tokens: int = _MAX_OUTPUT_TOKENS, usage_out: dict | None = None,
 ) -> str:
 	url = base_url.rstrip("/") + "/v1/messages"
 	headers = {
@@ -1254,6 +1328,9 @@ def _call_anthropic(
 		"messages": messages,
 	}
 	data = _http_post(url, headers, body, provider="anthropic", where="messages")
+	if usage_out is not None:
+		usage_out.update(_usage_from_anthropic(data))
+		_record_session_spend(usage_out.get("total_tokens"))
 	try:
 		blocks = data.get("content") or []
 		for b in blocks:
@@ -1269,7 +1346,7 @@ def _call_anthropic(
 
 def _call_openai_chat(
 	base_url: str, api_key: str, model: str, system: str, messages: list[dict],
-	*, max_tokens: int = _MAX_OUTPUT_TOKENS,
+	*, max_tokens: int = _MAX_OUTPUT_TOKENS, usage_out: dict | None = None,
 ) -> str:
 	url = base_url.rstrip("/") + "/chat/completions"
 	headers = {"content-type": "application/json"}
@@ -1283,6 +1360,9 @@ def _call_openai_chat(
 	if not _is_reasoning_model(model):
 		body["temperature"] = _TEMPERATURE
 	data = _http_post(url, headers, body, provider="openai", where="chat/completions")
+	if usage_out is not None:
+		usage_out.update(_usage_from_openai(data))
+		_record_session_spend(usage_out.get("total_tokens"))
 	try:
 		choices = data.get("choices") or []
 		if choices:

@@ -974,11 +974,34 @@ def build_report_context(session_doc: Any, ctx: dict) -> dict:
 		_sampler_ms = float(get_config().pyinstrument_sampler_interval_ms or 1.0)
 	except Exception:
 		_sampler_ms = 1.0
+	# AI token-usage transparency: total tokens every AI feature consumed this
+	# session — fix suggestions (per finding), index suggestions (per table),
+	# and the Steps-to-Reproduce humanization (one per session). Derived at
+	# render time so re-generated reports stay in sync — never baked at
+	# analyze time. (The connectivity probe is a Settings test, not session
+	# work, so it's deliberately excluded.)
+	_ai_tokens_total = 0
+
+	def _add_tokens(_obj):
+		nonlocal _ai_tokens_total
+		_tok = _obj.get("tokens") if isinstance(_obj, dict) else None
+		if isinstance(_tok, dict):
+			_ai_tokens_total += int(_tok.get("total_tokens") or 0)
+
+	for _bucket in ctx.get("findings_by_app", []) or []:
+		for _f in (_bucket.get("findings") if isinstance(_bucket, dict) else []) or []:
+			_add_tokens(_f.get("llm_fix") if isinstance(_f, dict) else None)
+	for _t in ctx.get("table_breakdown", []) or []:
+		_add_tokens(_t.get("ai_index") if isinstance(_t, dict) else None)
+	_steps_tokens = int(getattr(session_doc, "ai_steps_tokens", 0) or 0)
+	_ai_tokens_total += _steps_tokens
 	return {
 		"session": _build_session(session_doc, ctx),
 		"tldr": _build_tldr(ctx.get("tldr")),
 		"kpis": _build_kpis(session_doc, ctx),
 		"sampler_interval_ms": _sampler_ms,
+		"ai_tokens_total": _ai_tokens_total,
+		"ai_steps_tokens": _steps_tokens,
 		"repro": _build_repro(ctx.get("notes_html")),
 		"summary": _build_summary(ctx.get("summary_html")),
 		"findings": _build_findings(ctx.get("findings", []), ctx),
