@@ -241,7 +241,12 @@ def _parse_query(query: str) -> dict:
 	try:
 		from sql_metadata import Parser
 
-		parsed = Parser(query)
+		# disable_logging: sql_metadata logs at error() for query types it can't
+		# classify (COMMIT/ROLLBACK, SHOW GLOBAL STATUS / SHOW VARIABLES from
+		# frappe's tx control + Optimus's infra capture) and then raises — which
+		# we already catch below and treat as "no tables". Silence the noisy log;
+		# behaviour is unchanged.
+		parsed = Parser(query, disable_logging=True)
 		raw_tables = parsed.tables or []
 	except Exception:
 		return {"tables": [], "verb": verb, "index_cols": {}}
