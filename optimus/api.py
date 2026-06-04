@@ -1568,14 +1568,20 @@ def _humanize_steps_core(doc, *, title: str | None = None) -> dict:
 				"background / polling traffic (or the recordings have expired)."
 			),
 		}
+	_steps_usage: dict = {}
 	try:
-		steps_md = ai_fix.humanize_steps(actions, session_title=title)
+		steps_md = ai_fix.humanize_steps(actions, session_title=title, usage_out=_steps_usage)
 	except ai_fix.AiFixError as e:
 		return {"updated": False, "reason": str(e)}
 
 	frappe.db.set_value(
-		"Optimus Session", doc.name, "notes",
-		_analyze_mod._assemble_humanized_notes(steps_md),
+		"Optimus Session", doc.name, {
+			"notes": _analyze_mod._assemble_humanized_notes(steps_md),
+			# Tokens for this Steps-to-Reproduce humanization. The report's
+			# session total rolls it in alongside fix + index suggestions
+			# (notes is markdown, so the count needs its own field).
+			"ai_steps_tokens": int(_steps_usage.get("total_tokens") or 0),
+		},
 	)
 	safe_commit()
 	return {"updated": True, "reason": None}

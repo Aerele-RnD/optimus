@@ -14,6 +14,7 @@
   "status",
   "top_severity",
   "notes",
+  "ai_steps_tokens",
   "timing_section",
   "started_at",
   "stopped_at",
@@ -99,6 +100,16 @@
    "fieldtype": "Text Editor",
    "label": "Steps to Reproduce / Notes",
    "description": "What did you do during this session? Describe the flow step-by-step so your dev team (or a third-party reviewer) has full reproduction context alongside the technical findings. Also a good place for related ticket links. Rendered at the top of the report. Editable even on Ready sessions."
+  },
+  {
+   "default": "0",
+   "description": "Tokens used by the AI Steps-to-Reproduce humanization for this session. Internal; rolled into the report's session AI-token total.",
+   "fieldname": "ai_steps_tokens",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "AI Steps Tokens",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "fieldname": "timing_section",

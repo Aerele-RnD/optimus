@@ -1959,7 +1959,7 @@
     <div class="fix-box">
       <div class="fix-head">
         <span>Suggested fix <span class="fix-badge">Unverified &mdash; review before applying</span></span>
-        <span class="ai-tag">AI{% if f.llm_fix.model %} &middot; {{ f.llm_fix.model }}{% endif %}</span>
+        <span class="ai-tag">AI{% if f.llm_fix.model %} &middot; {{ f.llm_fix.model }}{% endif %}{% if f.llm_fix.tokens and f.llm_fix.tokens.total_tokens %} &middot; {{ f.llm_fix.tokens.total_tokens }} tokens{% endif %}</span>
       </div>
       {% if not f.llm_fix.source_available %}
       <div class="fix-caution">The profiler couldn&rsquo;t show the AI this finding&rsquo;s source code (or SQL) - treat the suggestion below as directional guidance, not a verified code fix.</div>
@@ -2367,6 +2367,9 @@
   <section class="section" style="background: #f0f9ff; border-left: 4px solid #2563eb;">
     <a id="repro"></a>{# v0.7.x Phase I.1: mock-spec ID anchor #}
     <h2 style="margin-top: 0;">Steps to Reproduce</h2>
+    {% if report_data.ai_steps_tokens %}
+    <p class="small muted" style="margin: -6px 0 10px;">AI-generated &middot; {{ report_data.ai_steps_tokens }} tokens</p>
+    {% endif %}
     <div class="notes-content">
       {{ report_data.repro.raw_html | safe }}
     </div>
@@ -2473,6 +2476,9 @@
   {# --------------- FINDINGS (v0.5.2: per-app sub-grouping) --------------- #}
   <section class="section" id="findings">
     <h2>Findings - what to fix</h2>
+    {% if report_data.ai_tokens_total %}
+    <p class="small muted">AI suggestions used <strong>{{ report_data.ai_tokens_total }}</strong> tokens this session (fix, index &amp; steps).</p>
+    {% endif %}
     {# v0.7.x Phase J.2.7: Findings reads from report_data.findings_by_app
        (passthrough of the legacy app-bucketed list). The contract's
        transformed ``report_data.findings`` is available for a future
@@ -3417,7 +3423,7 @@
               <div class="fix-box" style="margin-top: 10px;">
                 <div class="fix-head">
                   <span>Index advice</span>
-                  <span class="ai-tag">AI{% if t.ai_index.model %} &middot; {{ t.ai_index.model }}{% endif %}</span>
+                  <span class="ai-tag">AI{% if t.ai_index.model %} &middot; {{ t.ai_index.model }}{% endif %}{% if t.ai_index.tokens and t.ai_index.tokens.total_tokens %} &middot; {{ t.ai_index.tokens.total_tokens }} tokens{% endif %}</span>
                 </div>
                 <div class="fix-body">{{ t.ai_index.suggestion_html | safe }}</div>
                 <div class="fix-foot">Machine-generated{% if t.ai_index.generated_at %} &middot; {{ fmt_dt(t.ai_index.generated_at) }}{% endif %} - verify against <code>SHOW INDEX</code> before applying.</div>

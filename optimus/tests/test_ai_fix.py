@@ -302,6 +302,37 @@ class TestOpenAiCall:
 		with pytest.raises(ai_fix.AiFixError):
 			ai_fix._call_openai_chat("u", "k", "m", "s", [{"role": "user", "content": "x"}])
 
+	def test_populates_usage_out_when_provided(self, monkeypatch):
+		payload = {
+			"choices": [{"message": {"content": "ok"}}],
+			"usage": {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165},
+		}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, payload)))
+		usage: dict = {}
+		ai_fix._call_openai_chat("u", "k", "m", "s", [{"role": "user", "content": "x"}], usage_out=usage)
+		assert usage == {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165}
+
+
+class TestUsageNormalization:
+	def test_openai_passthrough(self):
+		assert ai_fix._usage_from_openai(
+			{"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+		) == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+	def test_openai_total_falls_back_to_sum(self):
+		assert ai_fix._usage_from_openai({"usage": {"prompt_tokens": 10, "completion_tokens": 5}})[
+			"total_tokens"
+		] == 15
+
+	def test_anthropic_maps_input_output(self):
+		assert ai_fix._usage_from_anthropic(
+			{"usage": {"input_tokens": 8, "output_tokens": 4}}
+		) == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
+
+	def test_missing_usage_is_zero(self):
+		assert ai_fix._usage_from_openai({})["total_tokens"] == 0
+		assert ai_fix._usage_from_anthropic(None)["total_tokens"] == 0
+
 
 class TestAnthropicCall:
 	def test_extracts_text_block(self, monkeypatch):
@@ -466,6 +497,15 @@ class TestSuggestFix:
 		assert out["model"] == "gpt-4.1-mini"
 		assert out["provider"] == "OpenAI"
 		assert out["generated_at"]  # iso timestamp
+		assert "tokens" not in out  # _OPENAI_OK carries no usage block
+
+	def test_includes_tokens_when_usage_present(self, monkeypatch):
+		resp = {"choices": [{"message": {"content": "**Fix**"}}],
+		        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, resp)))
+		with patch("optimus.ai_fix._resolve_provider", return_value=dict(self._PROVIDER)):
+			out = ai_fix.suggest_fix({"finding_type": "Slow Query", "title": "x", "technical_detail": {}})
+		assert out["tokens"] == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
 
 	def test_anthropic_dispatch(self, monkeypatch):
 		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, _ANTHROPIC_OK)))
@@ -539,6 +579,22 @@ class TestSourceAvailableFlag:
 			"phase2_hotline": {"lineno": 7, "content": "_run_validations(doc)", "total_ms": 387, "hits": 2},
 		})
 		assert out["source_available"] is True
+
+
+class TestSuggestIndex:
+	_PROVIDER = {"name": "OpenAI", "protocol": "openai", "base_url": "https://api.openai.com/v1",
+	             "model": "gpt-4.1-mini", "needs_key": True, "api_key": "sk-test"}
+
+	def test_includes_tokens_when_usage_present(self, monkeypatch):
+		resp = {"choices": [{"message": {"content": "**Index**\n\nadd a composite index"}}],
+		        "usage": {"prompt_tokens": 90, "completion_tokens": 30, "total_tokens": 120}}
+		monkeypatch.setattr(requests, "post", _post_returning(_FakeResp(200, resp)))
+		monkeypatch.setattr(ai_fix, "_build_index_messages",
+		                    lambda payload: ("sys", [{"role": "user", "content": "x"}]))
+		with patch("optimus.ai_fix._resolve_provider", return_value=dict(self._PROVIDER)):
+			out = ai_fix.suggest_index({"table": "tabUser"})
+		assert out["tokens"] == {"prompt_tokens": 90, "completion_tokens": 30, "total_tokens": 120}
+		assert out["suggestion"].startswith("**Index**")
 
 
 class TestHumanizeSteps:
