@@ -820,25 +820,35 @@ function render_drain_progress(frm) {
 	if (frm.is_new()) return;
 	if (frm.doc.status !== "Capturing Background Jobs") return;
 
+	const stop = () => {
+		clearInterval(frm._optimus_drain_timer);
+		frm._optimus_drain_timer = null;
+	};
 	const tick = () => {
+		// Stop polling if the user navigated away from this form (no clean
+		// per-form unload hook in Frappe — cur_frm is the active form).
+		if (window.cur_frm !== frm) {
+			stop();
+			return;
+		}
 		frappe.call({
 			method: "optimus.api.drain_progress",
 			args: { session_uuid: frm.doc.session_uuid },
 			callback: (r) => {
 				const d = (r && r.message) || {};
 				if (d.status && d.status !== "Capturing Background Jobs") {
-					clearInterval(frm._optimus_drain_timer);
-					frm._optimus_drain_timer = null;
-					frm.dashboard.clear_headline();
+					stop();
+					frm.set_intro(null);
 					frm.reload_doc();
 					return;
 				}
 				const n = d.pending != null ? d.pending : 0;
-				frm.dashboard.set_headline(
-					'<span class="text-muted">' +
-						'<i class="fa fa-spinner fa-spin" style="margin-right:6px;"></i>' +
-						__("Capturing background jobs… {0} still running", [n]) +
-						"</span>"
+				// set_intro REPLACES the banner in place each tick. (set_headline
+				// APPENDS a dismissible message, so polling stacked a new bar
+				// every 4s.)
+				frm.set_intro(
+					__("⏳ Capturing background jobs… {0} still running.", [n]),
+					"orange"
 				);
 			},
 			error: () => {},
