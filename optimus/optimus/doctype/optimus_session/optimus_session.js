@@ -11,6 +11,7 @@
 frappe.ui.form.on("Optimus Session", {
 	refresh(frm) {
 		render_status_indicator(frm);
+		render_drain_progress(frm);
 		render_download_buttons(frm);
 		render_retry_button(frm);
 		render_regenerate_report_button(frm);
@@ -423,30 +424,64 @@ function show_phase2_dialog(frm, data) {
 				"style='font-family:var(--font-mono);font-size:0.85em;'>" +
 				dotted + "</span>" + meta(c);
 
+			// Every row leads with a fixed-width disclosure cell (.fp-toggle):
+			// a chevron for expandable rows, an invisible spacer for leaves.
+			// This keeps a row's checkbox flush at its OWN depth, so a
+			// top-level (depth-0) leaf never renders indented as though it
+			// were nested under the preceding sibling <details>. Depth is
+			// conveyed purely by DOM nesting (.fp-children), not per-row pad.
 			if (node.children.length === 0) {
 				return (
-					"<div style='padding:2px 0 2px 22px;'>" +
-					"<label style='cursor:pointer;'>" + body + "</label>" +
+					"<div class='fp-row fp-leaf'>" +
+					"<label class='fp-rowline'>" +
+					"<span class='fp-toggle fp-spacer'></span>" +
+					body + "</label>" +
 					"</div>"
 				);
 			}
 			var inner = node.children.map(row).join("");
 			return (
-				"<details style='margin:2px 0;'>" +
-				"<summary style='cursor:pointer;list-style:revert;" +
-				"padding:2px 0;'>" +
-				"<label style='cursor:pointer;' " +
+				"<details class='fp-row'>" +
+				"<summary class='fp-summary'>" +
+				"<span class='fp-toggle'></span>" +
+				"<label class='fp-rowline' " +
 				"onclick='event.stopPropagation()'>" +
 				body + "</label>" +
 				"</summary>" +
-				"<div style='padding-left:18px;border-left:1px dashed " +
-				"#d1d5db;margin-left:6px;'>" +
+				"<div class='fp-children'>" +
 				inner +
 				"</div>" +
 				"</details>"
 			);
 		}
+		// Scoped styling: hide the native <details> disclosure marker and
+		// draw our own fixed-width chevron, so leaf rows and parent rows
+		// align column-for-column at every depth. Indentation comes only
+		// from .fp-children nesting (one dashed guide per level). Idempotent
+		// if injected more than once (primary + framework trees).
+		var style = (
+			"<style>" +
+			".fp-tree summary{list-style:none;}" +
+			".fp-tree summary::-webkit-details-marker{display:none;}" +
+			".fp-tree summary::marker{content:'';}" +
+			".fp-tree .fp-row{margin:0;}" +
+			".fp-tree .fp-summary{cursor:pointer;padding:2px 0;" +
+			"display:flex;align-items:center;}" +
+			".fp-tree .fp-leaf{padding:2px 0;}" +
+			".fp-tree .fp-rowline{cursor:pointer;display:flex;" +
+			"align-items:center;flex:1;margin:0;}" +
+			".fp-tree .fp-toggle{display:inline-block;width:16px;" +
+			"min-width:16px;text-align:center;color:#9ca3af;" +
+			"font-size:0.8em;user-select:none;}" +
+			".fp-tree details>summary>.fp-toggle::before{content:'\\25B8';}" +
+			".fp-tree details[open]>summary>.fp-toggle::before{content:'\\25BE';}" +
+			".fp-tree .fp-spacer{visibility:hidden;}" +
+			".fp-tree .fp-children{padding-left:16px;" +
+			"border-left:1px dashed #d1d5db;margin-left:7px;}" +
+			"</style>"
+		);
 		return (
+			style +
 			"<div class='fp-tree' style='max-height:340px;" +
 			"overflow-y:auto;border:1px solid var(--border-color, #e5e7eb);" +
 			"border-radius:4px;padding:8px 12px;'>" +
@@ -799,11 +834,112 @@ function render_status_indicator(frm) {
 	const colors = {
 		Recording: "green",
 		Stopping: "orange",
+		"Capturing Background Jobs": "orange",
 		Analyzing: "orange",
 		Ready: "blue",
 		Failed: "red",
 	};
 	frm.page.set_indicator(status, colors[status] || "gray");
+}
+
+function _fmt_drain_window(secs) {
+	if (secs == null) return null;
+	if (secs <= 0) return __("almost done");
+	if (secs >= 60) return __("~{0} min", [Math.ceil(secs / 60)]);
+	return __("~{0}s", [secs]);
+}
+
+// " · up to ~Xm" suffix for the drain banner (or "" if the window is unknown).
+function _drain_suffix(d) {
+	const secs = d.remaining_seconds != null ? d.remaining_seconds : d.window_seconds;
+	const win = _fmt_drain_window(secs);
+	return win ? __(" · up to {0}", [win]) : "";
+}
+
+// One self-managed banner element updated in place. frm.set_intro /
+// frm.dashboard.set_headline both APPEND a dismissible .form-message in this
+// Frappe version, so polling them stacked a new bar every tick. Pass
+// html=null to remove it.
+function _drain_banner(frm, html) {
+	const root = frm.$wrapper;
+	if (!root || !root.length) return;
+	if (html == null) {
+		root.find(".optimus-drain-banner").remove();
+		return;
+	}
+	let $b = root.find(".optimus-drain-banner");
+	if (!$b.length) {
+		$b = $('<div class="optimus-drain-banner"></div>').css({
+			padding: "10px 14px",
+			margin: "8px",
+			background: "#fff7ed",
+			border: "1px solid #fed7aa",
+			"border-radius": "6px",
+			color: "#9a3412",
+			"font-size": "0.9rem",
+		});
+		const $host = root.find(".form-layout").first();
+		($host.length ? $host : root).prepend($b);
+	}
+	$b.html(html);
+}
+
+// While the session drains the flow's background jobs after Stop, poll the
+// pending count + remaining window and show a live "Capturing background
+// jobs… N left · up to ~Xm" intro so it doesn't look stuck at "Stopping".
+// Reloads the form once the status moves on (analyze.run takes over → Analyzing).
+function render_drain_progress(frm) {
+	if (frm._optimus_drain_timer) {
+		clearInterval(frm._optimus_drain_timer);
+		frm._optimus_drain_timer = null;
+	}
+	if (frm.is_new() || frm.doc.status !== "Capturing Background Jobs") {
+		// Clear any stale banner left over from a soft refresh after the status
+		// already moved on.
+		_drain_banner(frm, null);
+		return;
+	}
+
+	const stop = () => {
+		clearInterval(frm._optimus_drain_timer);
+		frm._optimus_drain_timer = null;
+	};
+	const tick = () => {
+		// Stop polling if the user navigated away from this form (no clean
+		// per-form unload hook in Frappe — cur_frm is the active form).
+		if (window.cur_frm !== frm) {
+			stop();
+			return;
+		}
+		frappe.call({
+			method: "optimus.api.drain_progress",
+			args: { session_uuid: frm.doc.session_uuid },
+			callback: (r) => {
+				const d = (r && r.message) || {};
+				if (d.status && d.status !== "Capturing Background Jobs") {
+					stop();
+					_drain_banner(frm, null);
+					frm.reload_doc();
+					return;
+				}
+				const n = d.pending != null ? d.pending : 0;
+				// One self-managed banner updated in place — set_intro /
+				// set_headline both APPEND a dismissible .form-message in this
+				// Frappe version, so polling them stacked a new bar each tick.
+				_drain_banner(
+					frm,
+					__("⏳ Capturing background jobs… {0} left{1}", [n, _drain_suffix(d)])
+				);
+			},
+			error: () => {
+				// Persistent 403/500 → stop polling so we don't hammer the
+				// server forever; a form refresh re-establishes the poll.
+				stop();
+			},
+		});
+	};
+	tick();
+	frm._optimus_drain_timer = setInterval(tick, 4000);
 }
 
 function render_download_buttons(frm) {

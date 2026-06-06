@@ -25,13 +25,22 @@ passes them to ``_build_candidates_from_trees``.
 import importlib
 
 from optimus.analyzers.base import FRAMEWORK_APPS
-from optimus.analyzers.call_tree import _is_pure_helper_frame
+from optimus.analyzers.call_tree import _is_pure_helper_frame, _top_level_app
 
 CANDIDATE_CAP = 30
 # v0.7.x (P2): non-framework frames at/above this cumulative-ms are "recommended"
 # — the picker pre-ticks them so the real hot paths are one click to line-profile.
 # Matches the auto_expand_min_ms default so "worth expanding" == "worth ticking".
 RECOMMEND_MIN_MS = 50.0
+# v0.13: surface hot frames from the top-N hottest action trees, not just the
+# single hottest — a flow often has several slow actions worth line-profiling
+# (e.g. multiple slow background jobs). A per-tree budget keeps one giant tree
+# (a long bg job) from filling the whole list and starving the others.
+_MAX_TREES = 8
+_MIN_TREE_MS = 50.0
+_PER_TREE_CAP = 12
+_TREE_TOTAL_CAP = 60  # overall cap for the multi-tree picker walk (independent
+# of CANDIDATE_CAP, which the legacy _build_candidates_from_trees still uses)
 
 
 class PickerError(Exception):
@@ -183,30 +192,27 @@ def _walk_tree(node: dict, hits: dict) -> None:
 
 
 def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
-	"""Phase K v0.7 GA: pick the hottest tree (largest root
-	``cumulative_ms``) and walk it DFS, emitting candidates with a
-	``depth`` field so the picker UI can indent parent → child
-	hierarchies.
+	"""Phase K v0.7 GA / v0.13: walk the top-N hottest action trees DFS,
+	emitting candidates with a ``depth`` field so the picker UI can indent
+	parent → child hierarchies. Each hot action becomes its own depth-0 root.
 
-	DFS pre-order means a parent always lands in the list before its
-	children. Children at each level are explored hottest-first so the
-	30-row cap surfaces the dominant paths.
+	DFS pre-order means a parent always lands in the list before its children;
+	children at each level are explored hottest-first.
 
-	Replaces the cross-tree-aggregating ``_build_candidates_from_trees``
-	for the production picker - the user's mental model is "profile
-	this one slow action", and the hottest tree IS that action. The
-	legacy helper stays in place for back-compat / tests.
+	Was: only the single hottest tree — which hid the hot frames of every other
+	slow action (a flow with several slow bg jobs only surfaced one). Now the
+	top ``_MAX_TREES`` trees above ``_MIN_TREE_MS`` are each walked with a
+	per-tree budget (so one giant tree doesn't fill the list), capped overall at
+	``CANDIDATE_CAP``. The legacy cross-tree-aggregating
+	``_build_candidates_from_trees`` stays in place for back-compat / tests.
 	"""
 	if not trees:
 		return []
-	biggest = max(
-		trees,
-		key=lambda t: float((t or {}).get("cumulative_ms") or 0),
-	)
 
 	out: list[dict] = []
+	seen: set[str] = set()  # dedup by dotted_path across all walked trees
 
-	def walk(node, ua_depth, fw_depth):
+	def walk(node, ua_depth, fw_depth, budget):
 		"""Dual-depth DFS: ``ua_depth`` is the depth a user-app frame
 		would get if it's user-app at this node; ``fw_depth`` is the
 		analog for framework frames. The emitted ``depth`` is the
@@ -214,24 +220,45 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 		list's hierarchy renders flush-left in the dialog independent
 		of where the other list's frames sit in the absolute tree.
 		"""
-		if not isinstance(node, dict) or len(out) >= CANDIDATE_CAP:
+		if not isinstance(node, dict) or len(out) >= _TREE_TOTAL_CAP or budget[0] <= 0:
 			return
 		function = node.get("function") or ""
 		filename = node.get("filename") or ""
 		kind = node.get("kind", "python")
+		# v0.13: bucket the frame by its owning app the SAME way the donut /
+		# leaderboard do (``_top_level_app``). Frames that bucket to
+		# ``[other]`` — Python stdlib (``importlib/__init__.py``), third-party
+		# site-packages, synthetic ``<...>`` frames — are NOT the customer's
+		# code (nor a Frappe framework app) and can't be usefully
+		# line-profiled, so they must never appear in the picker. (The real
+		# cost of a hot ``importlib.import_module`` is module loading, fixed by
+		# lazy-importing in the user's own frame — which DOES surface.)
+		bucket = _top_level_app(function, filename)
 		is_real = (
 			kind == "python"
 			and not _is_synthetic_frame(function)
 			and not _is_pure_helper_frame(node)
+			and bucket != "[other]"
 		)
 		next_ua = ua_depth
 		next_fw = fw_depth
 		# Emit BEFORE recursing so DFS pre-order parents land first.
 		if is_real:
 			dotted = _build_dotted_path(filename, function)
-			app = _derive_app(filename) or (
-				dotted.split(".", 1)[0] if "." in dotted else ""
-			)
+			if dotted and dotted in seen:
+				# Same function already offered (a hot function often roots more
+				# than one action tree) — don't list it twice. Walk its children
+				# at THIS depth so unique descendants still surface, then stop.
+				for child in sorted(
+					node.get("children") or [],
+					key=lambda c: float((c or {}).get("cumulative_ms") or 0),
+					reverse=True,
+				):
+					walk(child, ua_depth, fw_depth, budget)
+				return
+			if dotted:
+				seen.add(dotted)
+			app = bucket
 			is_framework = app in FRAMEWORK_APPS
 			my_depth = fw_depth if is_framework else ua_depth
 			cml = round(float(node.get("cumulative_ms") or 0), 2)
@@ -249,6 +276,7 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 				# time threshold (the frames that become self-time findings).
 				"recommended": (not is_framework) and cml >= RECOMMEND_MIN_MS,
 			})
+			budget[0] -= 1
 			# Crossing back into the other list starts a fresh subtree
 			# at depth 0 in that list; stay-in-list increments by 1.
 			if is_framework:
@@ -266,9 +294,19 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 			reverse=True,
 		)
 		for child in children:
-			walk(child, next_ua, next_fw)
+			walk(child, next_ua, next_fw, budget)
 
-	walk(biggest, 0, 0)
+	ranked = sorted(
+		trees,
+		key=lambda t: float((t or {}).get("cumulative_ms") or 0),
+		reverse=True,
+	)
+	for tree in ranked[:_MAX_TREES]:
+		if len(out) >= _TREE_TOTAL_CAP:
+			break
+		if float((tree or {}).get("cumulative_ms") or 0) < _MIN_TREE_MS:
+			break  # ranked desc → everything after this is below the floor
+		walk(tree, 0, 0, [_PER_TREE_CAP])
 	return out
 
 

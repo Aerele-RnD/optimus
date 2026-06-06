@@ -717,3 +717,156 @@ class TestRecommendedFlag:
 		for c in candidates:
 			if c["is_framework"]:
 				assert c["recommended"] is False
+
+
+class TestMultiTreePicker:
+	"""v0.13: the picker walks the top-N hottest action trees, not just the
+	single hottest — so a flow with several slow actions surfaces them all
+	(previously only the one dominant tree's frames appeared)."""
+
+	def test_surfaces_frames_from_multiple_trees(self):
+		hot = _root(
+			_frame("bg_long_running_job", "ugly_code/python/common.py", 10, 60000.0, children=[
+				_frame("compute_aggregates", "ugly_code/python/common.py", 20, 2400.0),
+			]),
+		)
+		mid = _root(
+			_frame("process_invoice", "ugly_code/python/sales.py", 30, 18000.0, children=[
+				_frame("apply_taxes", "ugly_code/python/sales.py", 40, 1200.0),
+			]),
+		)
+		small = _root(_frame("recompute_stock", "ugly_code/python/stock.py", 50, 2500.0))
+
+		cands = picker._build_tree_indented_candidates([hot, mid, small])
+		fns = {c["qualname"] for c in cands}
+		# All three actions' hot frames surface, not just the hottest tree.
+		assert "bg_long_running_job" in fns
+		assert "process_invoice" in fns  # MISSING under the old single-tree walk
+		assert "recompute_stock" in fns
+		# Each tree's top frame is its own depth-0 root.
+		assert len([c for c in cands if c["depth"] == 0]) >= 3
+
+	def test_skips_trivially_fast_trees(self):
+		hot = _root(_frame("real_work", "ugly_code/python/common.py", 10, 5000.0))
+		noise = _root(_frame("blip", "ugly_code/python/common.py", 20, 1.0))  # < _MIN_TREE_MS
+		fns = {c["qualname"] for c in picker._build_tree_indented_candidates([hot, noise])}
+		assert "real_work" in fns
+		assert "blip" not in fns
+
+	def test_per_tree_budget_keeps_one_giant_tree_from_starving_others(self):
+		giant = _root(
+			_frame("root_fn", "ugly_code/python/common.py", 1, 60000.0, children=[
+				_frame(f"fn_{i}", "ugly_code/python/common.py", i, 1000.0 - i)
+				for i in range(40)
+			]),
+		)
+		other = _root(_frame("other_action", "ugly_code/python/sales.py", 2, 5000.0))
+
+		cands = picker._build_tree_indented_candidates([giant, other])
+		fns = {c["qualname"] for c in cands}
+		# The giant tree is budget-limited so the smaller action still surfaces.
+		assert "other_action" in fns
+		# Per-tree cap honored — the giant tree contributes <= _PER_TREE_CAP frames.
+		giant_frames = [c for c in cands if c["file"].endswith("common.py")]
+		assert len(giant_frames) <= picker._PER_TREE_CAP
+
+	def test_deduplicates_same_function_across_trees(self):
+		# looped_validate is a hot root in two different action trees.
+		t1 = _root(
+			_frame("looped_validate", "ugly_code/python/common.py", 10, 17000.0, children=[
+				_frame("only_in_t1", "ugly_code/python/common.py", 20, 800.0),
+			]),
+		)
+		t2 = _root(
+			_frame("looped_validate", "ugly_code/python/common.py", 10, 16000.0, children=[
+				_frame("only_in_t2", "ugly_code/python/common.py", 30, 700.0),
+			]),
+		)
+		cands = picker._build_tree_indented_candidates([t1, t2])
+		paths = [c["dotted_path"] for c in cands]
+		# The duplicated function is listed exactly once...
+		assert paths.count("ugly_code.python.common.looped_validate") == 1
+		# ...but unique descendants of BOTH trees still surface (promoted into
+		# the deduped frame's slot).
+		fns = {c["qualname"] for c in cands}
+		assert "only_in_t1" in fns
+		assert "only_in_t2" in fns
+
+	def test_excludes_stdlib_frames(self, monkeypatch):
+		# A hot user frame that calls into Python stdlib (importlib.import_module
+		# at 53ms — captured as ``importlib/__init__.py``). The stdlib frame is
+		# neither the customer's code nor a Frappe framework app, so it must NOT
+		# appear in the picker; the user-app frame that owns the cost does.
+		# ``_top_level_app`` only returns "[other]" for ``importlib`` when it can
+		# see the installed-apps list (the live endpoint can; bare unit tests
+		# fall back to accepting the first segment), so pin it here.
+		import frappe
+
+		monkeypatch.setattr(
+			frappe, "get_installed_apps",
+			lambda *a, **k: ["frappe", "erpnext", "ugly_code", "optimus"],
+			raising=False,
+		)
+		tree = _root(
+			_frame("bg_recheck_users", "ugly_code/python/common.py", 10, 2500.0, children=[
+				_frame("import_module", "importlib/__init__.py", 90, 53.0),
+			]),
+		)
+		cands = picker._build_tree_indented_candidates([tree])
+		fns = {c["qualname"] for c in cands}
+		assert "bg_recheck_users" in fns  # real app frame is kept
+		assert "import_module" not in fns  # stdlib frame is filtered out
+		assert "importlib" not in {c["app"] for c in cands}
+
+
+class TestPickerDialogIndent:
+	"""Regression guard for the phase-2 picker dialog's tree rendering
+	(``build_tree_html`` in optimus_session.js).
+
+	The "indent is wrong" report: a top-level (depth-0) LEAF candidate
+	(e.g. ``bg_recheck_users`` — a hot frame with no surfaced children) was
+	rendered with a hard-coded ``padding:2px 0 2px 22px`` left pad. When it
+	followed a sibling root rendered as a collapsed ``<details>`` (e.g.
+	``_maybe_log_user``), the 22px pad made the leaf look NESTED under that
+	<details>, even though the picker correctly assigns it ``depth == 0``.
+
+	The Python side is right (verified by the depth/dedup tests above); the
+	defect was purely in the dialog's HTML. The fix gives every row a
+	fixed-width ``.fp-toggle`` cell (a chevron for expandable rows, an
+	invisible spacer for leaves) so a depth-0 leaf's checkbox aligns flush
+	with depth-0 parents, and conveys depth ONLY through ``.fp-children``
+	DOM nesting. These guards keep the old per-row leaf indent from
+	creeping back.
+	"""
+
+	def _js_source(self) -> str:
+		from pathlib import Path
+
+		import optimus
+
+		js = (
+			Path(optimus.__file__).parent
+			/ "optimus"
+			/ "doctype"
+			/ "optimus_session"
+			/ "optimus_session.js"
+		)
+		return js.read_text(encoding="utf-8")
+
+	def test_no_hardcoded_leaf_indent(self):
+		# The exact pad that made depth-0 leaves render as if nested.
+		assert "padding:2px 0 2px 22px" not in self._js_source()
+
+	def test_uniform_row_alignment_markers_present(self):
+		src = self._js_source()
+		assert "build_tree_html" in src
+		# Fixed-width disclosure cell + leaf spacer keep checkboxes aligned
+		# by depth; nesting comes from the .fp-children wrapper, not padding.
+		assert "fp-toggle" in src
+		assert "fp-spacer" in src
+		assert "fp-children" in src
+
+	def test_depth_stack_reconstruction_intact(self):
+		# The dialog must still re-nest the flat DFS list via the depth stack
+		# (the Python picker assigns the depths the tests above pin down).
+		assert "stack[stack.length - 1].depth >= depth" in self._js_source()

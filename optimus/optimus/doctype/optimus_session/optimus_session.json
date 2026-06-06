@@ -84,7 +84,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Recording\nStopping\nAnalyzing\nReady\nFailed",
+   "options": "Recording\nStopping\nCapturing Background Jobs\nAnalyzing\nReady\nFailed",
    "read_only": 1,
    "reqd": 1,
    "search_index": 1
@@ -118,7 +118,7 @@
    "default": "0",
    "description": "Cumulative LLM tokens billed for this session — analyze auto-suggest plus every Refresh / on-demand AI run. Matches the Aerele usage ledger; only ever increases.",
    "fieldname": "ai_tokens_spent",
-   "fieldtype": "Int",
+   "fieldtype": "Long Int",
    "label": "AI Tokens Spent",
    "no_copy": 1,
    "read_only": 1

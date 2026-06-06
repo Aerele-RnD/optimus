@@ -13,7 +13,7 @@ frappe.listview_settings["Optimus Session"] = {
 
 		// Sessions still in progress → color by status
 		if (status === "Recording") return [__("Recording"), "green", "status,=,Recording"];
-		if (status === "Stopping" || status === "Analyzing") {
+		if (status === "Stopping" || status === "Analyzing" || status === "Capturing Background Jobs") {
 			return [__(status), "orange", `status,=,${status}`];
 		}
 		if (status === "Failed") return [__("Failed"), "red", "status,=,Failed"];

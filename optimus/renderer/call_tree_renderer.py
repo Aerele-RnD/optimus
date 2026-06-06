@@ -30,6 +30,11 @@ import re
 # ceiling beyond which children are silently truncated.
 _CALL_TREE_MAX_DEPTH = 12
 _CALL_TREE_HARD_CAP = 64
+# v0.13: the panel renders the top-N slowest actions' call trees, not just the
+# single slowest — so a flat #1 action (e.g. an RQ job that just loops one
+# function) doesn't hide the deep, structurally-rich trees of the next-slowest
+# actions in the same session.
+_CALL_TREE_MAX_ACTIONS = 3
 
 _CT_OTHER_RE = re.compile(
 	r"^\[(?:other: \d+ frames?|\d+ more frames? omitted)\]$"
@@ -189,18 +194,12 @@ def _render_call_tree_node(node, parent_ms, depth=0, unlimited=False, breadcrumb
 	return "".join(out)
 
 
-def _render_call_tree_panel(actions):
-	"""Phase K.5: render the call-tree panel sourced from the slowest
-	action's ``call_tree_json``. Empty string when no action carries
-	a tree (the template's ``{% if %}`` guard hides the section).
+def _render_one_call_tree(top):
+	"""Render the ``<div class="call-tree">`` block for a single action dict
+	(``call_tree_json`` + ``duration_ms`` + ``action_label``). Returns the
+	tree HTML, or "" when the action has no renderable Python frames (empty
+	tree, or every root child is an ``[other]`` / ``<sql>`` synthetic node).
 	"""
-	if not actions:
-		return ""
-	# Pick the action with the largest duration_ms that also has a tree.
-	candidates = [a for a in actions if isinstance(a, dict) and a.get("call_tree_json")]
-	if not candidates:
-		return ""
-	top = max(candidates, key=lambda a: float(a.get("duration_ms") or 0))
 	try:
 		tree = json.loads(top.get("call_tree_json") or "{}")
 	except Exception:
@@ -212,23 +211,6 @@ def _render_call_tree_panel(actions):
 		return ""
 
 	total_ms = float(tree.get("cumulative_ms") or 0) or float(top.get("duration_ms") or 0)
-	action_label = top.get("action_label") or ""
-
-	parts = [
-		'<section class="section" id="call-tree">',
-		'<div class="section-head">',
-		'<h2>Call tree (top action)</h2>',
-		f'<span class="section-tag">{_e(action_label)}</span>',
-		'</div>',
-		'<p class="section-intro">'
-		'Hierarchical breakdown of where wall-clock time went inside the slowest '
-		'action. The tree auto-opens down to your app\'s first hot frame; click any '
-		'frame to expand or collapse it. Numbers are cumulative time (including '
-		'children) and percentage of the parent. Branches consuming &ge;50% of their '
-		'parent are highlighted as hot.'
-		'</p>',
-		'<div class="call-tree">',
-	]
 	root_children_sorted = sorted(
 		root_children,
 		key=lambda c: float((c or {}).get("cumulative_ms") or 0),
@@ -237,11 +219,93 @@ def _render_call_tree_panel(actions):
 	# The profiler attributes SQL queries as root-level siblings of the entry
 	# frame, so the panel renders them directly (bypassing the per-node child
 	# loop). Drop [other] nodes and <sql> query leaves here too.
+	nodes = []
 	for c in root_children_sorted:
 		cn = c or {}
 		if _ct_is_other_frame(cn.get("function")) or _ct_is_sql_leaf(cn):
 			continue
-		parts.append(_render_call_tree_node(c, total_ms, depth=0))
-	parts.append('</div>')
+		nodes.append(_render_call_tree_node(c, total_ms, depth=0))
+	if not nodes:
+		return ""
+	return '<div class="call-tree">' + "".join(nodes) + '</div>'
+
+
+def _render_call_tree_panel(actions):
+	"""Phase K.5 / v0.13: render the call-tree panel for the top-N slowest
+	actions that carry a ``call_tree_json``. Empty string when no action
+	carries a renderable tree (the template's ``{% if %}`` guard hides the
+	section).
+
+	Was: the single slowest action only — which hid the deep, structurally
+	rich trees of every other slow action (a flow whose #1 action is a flat
+	RQ loop surfaced no hierarchy). Now the ``_CALL_TREE_MAX_ACTIONS``
+	slowest actions are each rendered as their own labeled sub-tree.
+	"""
+	if not actions:
+		return ""
+	candidates = [a for a in actions if isinstance(a, dict) and a.get("call_tree_json")]
+	if not candidates:
+		return ""
+	ranked = sorted(
+		candidates, key=lambda a: float(a.get("duration_ms") or 0), reverse=True
+	)
+
+	rendered = []  # (action_label, total_ms, tree_html) for actions that render
+	for top in ranked:
+		if len(rendered) >= _CALL_TREE_MAX_ACTIONS:
+			break
+		tree_html = _render_one_call_tree(top)
+		if not tree_html:
+			continue
+		total_ms = float(top.get("duration_ms") or 0)
+		rendered.append((top.get("action_label") or "", total_ms, tree_html))
+
+	if not rendered:
+		return ""
+
+	multi = len(rendered) > 1
+	if multi:
+		heading = "Call trees (top actions)"
+		tag = f"{len(rendered)} slowest"
+		intro = (
+			"Hierarchical breakdown of where wall-clock time went inside the "
+			f"{len(rendered)} slowest actions. Each tree auto-opens down to your "
+			"app's first hot frame; click any frame to expand or collapse it. "
+			"Numbers are cumulative time (including children) and percentage of the "
+			"parent. Branches consuming &ge;50% of their parent are highlighted as hot."
+		)
+	else:
+		heading = "Call tree (top action)"
+		tag = rendered[0][0]
+		intro = (
+			"Hierarchical breakdown of where wall-clock time went inside the slowest "
+			"action. The tree auto-opens down to your app's first hot frame; click any "
+			"frame to expand or collapse it. Numbers are cumulative time (including "
+			"children) and percentage of the parent. Branches consuming &ge;50% of their "
+			"parent are highlighted as hot."
+		)
+
+	parts = [
+		'<section class="section" id="call-tree">',
+		'<div class="section-head">',
+		f'<h2>{heading}</h2>',
+		f'<span class="section-tag">{_e(tag)}</span>',
+		'</div>',
+		f'<p class="section-intro">{intro}</p>',
+	]
+	if multi:
+		for rank, (label, total_ms, tree_html) in enumerate(rendered, start=1):
+			parts.append('<div class="call-tree-action">')
+			parts.append(
+				'<div class="call-tree-action-head">'
+				f'<span class="call-tree-action-rank">#{rank}</span>'
+				f'<span class="call-tree-action-label">{_e(label)}</span>'
+				f'<span class="call-tree-action-meta">{total_ms:.0f}ms</span>'
+				'</div>'
+			)
+			parts.append(tree_html)
+			parts.append('</div>')
+	else:
+		parts.append(rendered[0][2])
 	parts.append('</section>')
 	return "".join(parts)

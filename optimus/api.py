@@ -302,6 +302,17 @@ def _stop_session(user: str, session_uuid: str) -> tuple[str | None, bool]:
 		wait_seconds = int(getattr(get_config(), "background_job_wait_seconds", 0) or 0)
 		if wait_seconds > 0 and session.get_pending_jobs(session_uuid):
 			session.set_draining(session_uuid, time.time() + wait_seconds + 60)
+			# v0.13: surface the post-stop background-job capture as its own
+			# status — otherwise the session sits at "Stopping" for the whole
+			# drain window (up to background_job_wait_seconds, default 300s) and
+			# looks stuck. analyze.run keeps it here through the drain, then
+			# flips to "Analyzing" once the jobs finish / the window closes.
+			# safe_commit so the enqueued analyze worker can't read a stale
+			# "Stopping" if the request transaction commits late.
+			frappe.db.set_value(
+				"Optimus Session", docname, "status", "Capturing Background Jobs"
+			)
+			safe_commit()
 	except Exception:
 		frappe.log_error(title="optimus set draining window")
 
@@ -543,6 +554,43 @@ def get_active_session() -> dict | None:
 	if not active:
 		return None
 	return session.get_session_meta(active)
+
+
+@frappe.whitelist()
+def drain_progress(session_uuid: str) -> dict:
+	"""Live progress of the post-Stop background-job capture, for the form's
+	"Capturing Background Jobs (N left)" headline. Returns the current session
+	status plus the number of the flow's jobs still pending in Redis; ``pending``
+	drops to 0 as they finish and ``status`` flips to ``Analyzing`` once
+	``analyze.run`` takes over the drained recordings."""
+	_require_session_permission(session_uuid)
+	status = frappe.db.get_value(
+		"Optimus Session", {"session_uuid": session_uuid}, "status"
+	)
+	# Window remaining: set_draining stored deadline = stop + wait_seconds + 60
+	# (60s grace for the analyze run itself); subtract the grace to get the
+	# bg-wait window the user actually sits through (≈ background_job_wait_seconds
+	# at the start, counting down to 0). The session can't stay here past it.
+	meta = session.get_session_meta(session_uuid) or {}
+	remaining = None
+	until = meta.get("draining_until")
+	if until:
+		try:
+			remaining = max(0, int(float(until) - time.time()) - 60)
+		except (TypeError, ValueError):
+			remaining = None
+	try:
+		from optimus.settings import get_config
+
+		window = int(getattr(get_config(), "background_job_wait_seconds", 0) or 0)
+	except Exception:
+		window = 0
+	return {
+		"status": status,
+		"pending": len(session.get_pending_jobs(session_uuid)),
+		"remaining_seconds": remaining,
+		"window_seconds": window or None,
+	}
 
 
 # ---------------------------------------------------------------------------
@@ -935,6 +983,10 @@ def export_session(session_uuid: str) -> dict:
 			# v0.3.0 fields
 			"total_python_ms": getattr(doc, "total_python_ms", None),
 			"total_sql_ms": getattr(doc, "total_sql_ms", None),
+			# v0.13: AI token usage (cumulative spend + refresh count + steps)
+			"ai_tokens_spent": getattr(doc, "ai_tokens_spent", None),
+			"ai_refresh_count": getattr(doc, "ai_refresh_count", None),
+			"ai_steps_tokens": getattr(doc, "ai_steps_tokens", None),
 		},
 		"actions": [
 			{
