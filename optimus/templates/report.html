@@ -1163,6 +1163,27 @@
   .call-tree-deeper > details.call-tree-deeper-toggle > summary:hover {
     color: var(--ink);
   }
+  /* v0.13: per-action header when the panel shows the top-N slowest actions'
+     trees. One <section> wraps several .call-tree-action blocks. */
+  .call-tree-action { margin-top: 18px; }
+  .call-tree-action:first-of-type { margin-top: 4px; }
+  .call-tree-action-head {
+    display: flex; align-items: baseline; gap: 10px;
+    margin: 0 0 6px 0;
+  }
+  .call-tree-action-rank {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--ink-mute);
+  }
+  .call-tree-action-label {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--ink); letter-spacing: 0.02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .call-tree-action-meta {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-mute);
+    margin-left: auto; flex: 0 0 auto;
+  }
   @media print {
     details.call-tree-node:not([open]) > summary::after {
       content: " (collapsed)";

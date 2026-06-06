@@ -113,6 +113,63 @@ def test_panel_intro_reworded():
 	assert "Click any frame to expand its children" not in panel
 
 
+def _act(label, dur, tree=None):
+	return {
+		"call_tree_json": json.dumps(
+			{"cumulative_ms": dur, "children": [tree or _tree()]}
+		),
+		"duration_ms": dur,
+		"action_label": label,
+	}
+
+
+def test_panel_single_action_keeps_legacy_layout():
+	# One action → unchanged singular heading, label in the section-tag, and
+	# no per-action header (byte-compatible with the pre-v0.13 panel).
+	panel = renderer._render_call_tree_panel([_act("solo", 900)])
+	assert "Call tree (top action)" in panel
+	assert "Call trees (top actions)" not in panel
+	assert "call-tree-action-head" not in panel
+	assert "solo" in panel
+
+
+def test_panel_renders_top_three_slowest_actions():
+	# v0.13: the panel surfaces the top-3 slowest actions, each as its own
+	# labeled sub-tree; the 4th-slowest is dropped by the cap.
+	acts = [
+		_act("act_a", 5000),
+		_act("act_b", 4000),
+		_act("act_c", 3000),
+		_act("act_d", 1000),
+	]
+	panel = renderer._render_call_tree_panel(acts)
+	assert "Call trees (top actions)" in panel
+	assert "3 slowest" in panel
+	assert "act_a" in panel and "act_b" in panel and "act_c" in panel
+	assert "act_d" not in panel  # 4th-slowest dropped by _CALL_TREE_MAX_ACTIONS
+	assert panel.count('class="call-tree-action"') == 3
+	assert "#1" in panel and "#2" in panel and "#3" in panel
+
+
+def test_flat_top_action_does_not_hide_deep_action():
+	# The core fix: a flat #1 action (an RQ-style loop) no longer hides the
+	# deep framework→user hierarchy of the #2 action.
+	flat = _node("bg_loop", "ugly_code/python/common.py", 6000, [
+		_node("worker", "ugly_code/python/common.py", 200),
+		_node("worker", "ugly_code/python/common.py", 190),
+	])
+	acts = [
+		{"call_tree_json": json.dumps({"cumulative_ms": 6000, "children": [flat]}),
+		 "duration_ms": 6000, "action_label": "flat_top"},
+		{"call_tree_json": json.dumps({"cumulative_ms": 100, "children": [_tree()]}),
+		 "duration_ms": 100, "action_label": "deep_second"},
+	]
+	panel = renderer._render_call_tree_panel(acts)
+	assert "flat_top" in panel and "deep_second" in panel
+	# the deep action's user frame renders — its structure is no longer hidden
+	assert "looped_validate" in panel
+
+
 def test_drilldown_chain_skips_other_frames():
 	# v0.7.x: the finding call-chain breadcrumb must not walk into a synthetic
 	# "[other: N frames]" node (you can't drill into a collapsed bucket).
