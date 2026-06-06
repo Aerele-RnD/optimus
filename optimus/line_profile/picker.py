@@ -25,7 +25,7 @@ passes them to ``_build_candidates_from_trees``.
 import importlib
 
 from optimus.analyzers.base import FRAMEWORK_APPS
-from optimus.analyzers.call_tree import _is_pure_helper_frame
+from optimus.analyzers.call_tree import _is_pure_helper_frame, _top_level_app
 
 CANDIDATE_CAP = 30
 # v0.7.x (P2): non-framework frames at/above this cumulative-ms are "recommended"
@@ -213,10 +213,20 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 		function = node.get("function") or ""
 		filename = node.get("filename") or ""
 		kind = node.get("kind", "python")
+		# v0.13: bucket the frame by its owning app the SAME way the donut /
+		# leaderboard do (``_top_level_app``). Frames that bucket to
+		# ``[other]`` — Python stdlib (``importlib/__init__.py``), third-party
+		# site-packages, synthetic ``<...>`` frames — are NOT the customer's
+		# code (nor a Frappe framework app) and can't be usefully
+		# line-profiled, so they must never appear in the picker. (The real
+		# cost of a hot ``importlib.import_module`` is module loading, fixed by
+		# lazy-importing in the user's own frame — which DOES surface.)
+		bucket = _top_level_app(function, filename)
 		is_real = (
 			kind == "python"
 			and not _is_synthetic_frame(function)
 			and not _is_pure_helper_frame(node)
+			and bucket != "[other]"
 		)
 		next_ua = ua_depth
 		next_fw = fw_depth
@@ -236,9 +246,7 @@ def _build_tree_indented_candidates(trees: list[dict]) -> list[dict]:
 				return
 			if dotted:
 				seen.add(dotted)
-			app = _derive_app(filename) or (
-				dotted.split(".", 1)[0] if "." in dotted else ""
-			)
+			app = bucket
 			is_framework = app in FRAMEWORK_APPS
 			my_depth = fw_depth if is_framework else ua_depth
 			cml = round(float(node.get("cumulative_ms") or 0), 2)

@@ -742,6 +742,32 @@ class TestMultiTreePicker:
 		assert "only_in_t1" in fns
 		assert "only_in_t2" in fns
 
+	def test_excludes_stdlib_frames(self, monkeypatch):
+		# A hot user frame that calls into Python stdlib (importlib.import_module
+		# at 53ms — captured as ``importlib/__init__.py``). The stdlib frame is
+		# neither the customer's code nor a Frappe framework app, so it must NOT
+		# appear in the picker; the user-app frame that owns the cost does.
+		# ``_top_level_app`` only returns "[other]" for ``importlib`` when it can
+		# see the installed-apps list (the live endpoint can; bare unit tests
+		# fall back to accepting the first segment), so pin it here.
+		import frappe
+
+		monkeypatch.setattr(
+			frappe, "get_installed_apps",
+			lambda *a, **k: ["frappe", "erpnext", "ugly_code", "optimus"],
+			raising=False,
+		)
+		tree = _root(
+			_frame("bg_recheck_users", "ugly_code/python/common.py", 10, 2500.0, children=[
+				_frame("import_module", "importlib/__init__.py", 90, 53.0),
+			]),
+		)
+		cands = picker._build_tree_indented_candidates([tree])
+		fns = {c["qualname"] for c in cands}
+		assert "bg_recheck_users" in fns  # real app frame is kept
+		assert "import_module" not in fns  # stdlib frame is filtered out
+		assert "importlib" not in {c["app"] for c in cands}
+
 
 class TestPickerDialogIndent:
 	"""Regression guard for the phase-2 picker dialog's tree rendering
