@@ -741,3 +741,56 @@ class TestMultiTreePicker:
 		fns = {c["qualname"] for c in cands}
 		assert "only_in_t1" in fns
 		assert "only_in_t2" in fns
+
+
+class TestPickerDialogIndent:
+	"""Regression guard for the phase-2 picker dialog's tree rendering
+	(``build_tree_html`` in optimus_session.js).
+
+	The "indent is wrong" report: a top-level (depth-0) LEAF candidate
+	(e.g. ``bg_recheck_users`` — a hot frame with no surfaced children) was
+	rendered with a hard-coded ``padding:2px 0 2px 22px`` left pad. When it
+	followed a sibling root rendered as a collapsed ``<details>`` (e.g.
+	``_maybe_log_user``), the 22px pad made the leaf look NESTED under that
+	<details>, even though the picker correctly assigns it ``depth == 0``.
+
+	The Python side is right (verified by the depth/dedup tests above); the
+	defect was purely in the dialog's HTML. The fix gives every row a
+	fixed-width ``.fp-toggle`` cell (a chevron for expandable rows, an
+	invisible spacer for leaves) so a depth-0 leaf's checkbox aligns flush
+	with depth-0 parents, and conveys depth ONLY through ``.fp-children``
+	DOM nesting. These guards keep the old per-row leaf indent from
+	creeping back.
+	"""
+
+	def _js_source(self) -> str:
+		from pathlib import Path
+
+		import optimus
+
+		js = (
+			Path(optimus.__file__).parent
+			/ "optimus"
+			/ "doctype"
+			/ "optimus_session"
+			/ "optimus_session.js"
+		)
+		return js.read_text(encoding="utf-8")
+
+	def test_no_hardcoded_leaf_indent(self):
+		# The exact pad that made depth-0 leaves render as if nested.
+		assert "padding:2px 0 2px 22px" not in self._js_source()
+
+	def test_uniform_row_alignment_markers_present(self):
+		src = self._js_source()
+		assert "build_tree_html" in src
+		# Fixed-width disclosure cell + leaf spacer keep checkboxes aligned
+		# by depth; nesting comes from the .fp-children wrapper, not padding.
+		assert "fp-toggle" in src
+		assert "fp-spacer" in src
+		assert "fp-children" in src
+
+	def test_depth_stack_reconstruction_intact(self):
+		# The dialog must still re-nest the flat DFS list via the depth stack
+		# (the Python picker assigns the depths the tests above pin down).
+		assert "stack[stack.length - 1].depth >= depth" in self._js_source()

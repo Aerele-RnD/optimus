@@ -424,30 +424,64 @@ function show_phase2_dialog(frm, data) {
 				"style='font-family:var(--font-mono);font-size:0.85em;'>" +
 				dotted + "</span>" + meta(c);
 
+			// Every row leads with a fixed-width disclosure cell (.fp-toggle):
+			// a chevron for expandable rows, an invisible spacer for leaves.
+			// This keeps a row's checkbox flush at its OWN depth, so a
+			// top-level (depth-0) leaf never renders indented as though it
+			// were nested under the preceding sibling <details>. Depth is
+			// conveyed purely by DOM nesting (.fp-children), not per-row pad.
 			if (node.children.length === 0) {
 				return (
-					"<div style='padding:2px 0 2px 22px;'>" +
-					"<label style='cursor:pointer;'>" + body + "</label>" +
+					"<div class='fp-row fp-leaf'>" +
+					"<label class='fp-rowline'>" +
+					"<span class='fp-toggle fp-spacer'></span>" +
+					body + "</label>" +
 					"</div>"
 				);
 			}
 			var inner = node.children.map(row).join("");
 			return (
-				"<details style='margin:2px 0;'>" +
-				"<summary style='cursor:pointer;list-style:revert;" +
-				"padding:2px 0;'>" +
-				"<label style='cursor:pointer;' " +
+				"<details class='fp-row'>" +
+				"<summary class='fp-summary'>" +
+				"<span class='fp-toggle'></span>" +
+				"<label class='fp-rowline' " +
 				"onclick='event.stopPropagation()'>" +
 				body + "</label>" +
 				"</summary>" +
-				"<div style='padding-left:18px;border-left:1px dashed " +
-				"#d1d5db;margin-left:6px;'>" +
+				"<div class='fp-children'>" +
 				inner +
 				"</div>" +
 				"</details>"
 			);
 		}
+		// Scoped styling: hide the native <details> disclosure marker and
+		// draw our own fixed-width chevron, so leaf rows and parent rows
+		// align column-for-column at every depth. Indentation comes only
+		// from .fp-children nesting (one dashed guide per level). Idempotent
+		// if injected more than once (primary + framework trees).
+		var style = (
+			"<style>" +
+			".fp-tree summary{list-style:none;}" +
+			".fp-tree summary::-webkit-details-marker{display:none;}" +
+			".fp-tree summary::marker{content:'';}" +
+			".fp-tree .fp-row{margin:0;}" +
+			".fp-tree .fp-summary{cursor:pointer;padding:2px 0;" +
+			"display:flex;align-items:center;}" +
+			".fp-tree .fp-leaf{padding:2px 0;}" +
+			".fp-tree .fp-rowline{cursor:pointer;display:flex;" +
+			"align-items:center;flex:1;margin:0;}" +
+			".fp-tree .fp-toggle{display:inline-block;width:16px;" +
+			"min-width:16px;text-align:center;color:#9ca3af;" +
+			"font-size:0.8em;user-select:none;}" +
+			".fp-tree details>summary>.fp-toggle::before{content:'\\25B8';}" +
+			".fp-tree details[open]>summary>.fp-toggle::before{content:'\\25BE';}" +
+			".fp-tree .fp-spacer{visibility:hidden;}" +
+			".fp-tree .fp-children{padding-left:16px;" +
+			"border-left:1px dashed #d1d5db;margin-left:7px;}" +
+			"</style>"
+		);
 		return (
+			style +
 			"<div class='fp-tree' style='max-height:340px;" +
 			"overflow-y:auto;border:1px solid var(--border-color, #e5e7eb);" +
 			"border-radius:4px;padding:8px 12px;'>" +
