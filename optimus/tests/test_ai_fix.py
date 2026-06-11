@@ -313,6 +313,54 @@ class TestOpenAiCall:
 		assert usage == {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165}
 
 
+class TestAereleSessionAttribution:
+	"""The Aerele managed proxy is sent a ``metadata`` block attributing each
+	call to the originating Optimus Session, so the billing portal can show
+	per-session usage. Only the Aerele provider gets it; OpenAI/Anthropic must
+	not receive unknown body fields."""
+
+	def test_metadata_none_for_non_aerele_provider(self):
+		assert ai_fix._aerele_call_metadata({"name": "OpenAI"}, "N+1 Query") is None
+		assert ai_fix._aerele_call_metadata(None) is None
+
+	def test_metadata_none_for_aerele_without_active_session(self, monkeypatch):
+		import frappe
+
+		monkeypatch.setattr(frappe.local, "_optimus_spend_session", None, raising=False)
+		assert ai_fix._aerele_call_metadata({"name": "Aerele"}, "Steps") is None
+
+	def test_metadata_builds_ref_for_aerele_with_session(self, monkeypatch):
+		import frappe
+
+		class _FakeDB:
+			def get_value(self, *a, **k):
+				return "nonj171gfs"
+
+		monkeypatch.setattr(frappe.local, "_optimus_spend_session", "uuid-123", raising=False)
+		monkeypatch.setattr(frappe, "db", _FakeDB(), raising=False)
+		meta = ai_fix._aerele_call_metadata({"name": "Aerele"}, "N+1 Query")
+		assert meta == {
+			"optimus_session_uuid": "uuid-123",
+			"optimus_session": "nonj171gfs",
+			"optimus_finding_type": "N+1 Query",
+		}
+
+	def test_call_includes_metadata_in_body(self, monkeypatch):
+		fp = _post_returning(_FakeResp(200, _OPENAI_OK))
+		monkeypatch.setattr(requests, "post", fp)
+		ai_fix._call_openai_chat(
+			"u", "k", "m", "s", [{"role": "user", "content": "x"}],
+			metadata={"optimus_session": "abc"},
+		)
+		assert fp.last.body["metadata"] == {"optimus_session": "abc"}
+
+	def test_call_omits_metadata_key_when_none(self, monkeypatch):
+		fp = _post_returning(_FakeResp(200, _OPENAI_OK))
+		monkeypatch.setattr(requests, "post", fp)
+		ai_fix._call_openai_chat("u", "k", "m", "s", [{"role": "user", "content": "x"}])
+		assert "metadata" not in fp.last.body
+
+
 class TestUsageNormalization:
 	def test_openai_passthrough(self):
 		assert ai_fix._usage_from_openai(

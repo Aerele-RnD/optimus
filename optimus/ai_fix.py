@@ -553,6 +553,7 @@ def suggest_fix(finding: dict) -> dict:
 		text = _call_openai_chat(
 			provider["base_url"], provider.get("api_key") or "",
 			provider["model"], system, messages, usage_out=usage,
+			metadata=_aerele_call_metadata(provider, finding.get("finding_type")),
 		)
 
 	text = (text or "").strip()
@@ -604,6 +605,7 @@ def humanize_steps(
 		text = _call_openai_chat(
 			provider["base_url"], provider.get("api_key") or "",
 			provider["model"], system, messages, usage_out=usage_out,
+			metadata=_aerele_call_metadata(provider, "Steps to Reproduce"),
 		)
 	text = (text or "").strip()
 	if not text:
@@ -641,6 +643,7 @@ def suggest_index(table_payload: dict) -> dict:
 		text = _call_openai_chat(
 			provider["base_url"], provider.get("api_key") or "",
 			provider["model"], system, messages, usage_out=usage,
+			metadata=_aerele_call_metadata(provider, "Table Index"),
 		)
 	text = (text or "").strip()
 	if not text:
@@ -1309,6 +1312,37 @@ def _record_session_spend(total_tokens) -> None:
 		pass
 
 
+def _aerele_call_metadata(provider, finding_type=None) -> dict | None:
+	"""Metadata to attach to the Aerele managed-proxy request so the Aerele
+	billing portal can attribute each AI call to the originating Optimus
+	Session (for its per-call usage ledger + a per-session spend breakdown).
+
+	Only the **Aerele** provider consumes this — other providers (OpenAI,
+	Anthropic) get ``None`` so we never send unknown body fields that they
+	might reject. The active session uuid is the one the caller marked on
+	``frappe.local._optimus_spend_session`` (the same hook that powers
+	``ai_tokens_spent``); the human docname is resolved from it so the portal
+	can show the same reference the customer sees in their bench. Best-effort:
+	any failure returns ``None`` and the call proceeds unattributed."""
+	if not provider or provider.get("name") != "Aerele":
+		return None
+	try:
+		import frappe
+
+		uuid = getattr(frappe.local, "_optimus_spend_session", None)
+		if not uuid:
+			return None
+		meta = {"optimus_session_uuid": uuid}
+		docname = frappe.db.get_value("Optimus Session", {"session_uuid": uuid}, "name")
+		if docname:
+			meta["optimus_session"] = docname
+		if finding_type:
+			meta["optimus_finding_type"] = finding_type
+		return meta
+	except Exception:
+		return None
+
+
 def _call_anthropic(
 	base_url: str, api_key: str, model: str, system: str, messages: list[dict],
 	*, max_tokens: int = _MAX_OUTPUT_TOKENS, usage_out: dict | None = None,
@@ -1347,6 +1381,7 @@ def _call_anthropic(
 def _call_openai_chat(
 	base_url: str, api_key: str, model: str, system: str, messages: list[dict],
 	*, max_tokens: int = _MAX_OUTPUT_TOKENS, usage_out: dict | None = None,
+	metadata: dict | None = None,
 ) -> str:
 	url = base_url.rstrip("/") + "/chat/completions"
 	headers = {"content-type": "application/json"}
@@ -1359,6 +1394,9 @@ def _call_openai_chat(
 	}
 	if not _is_reasoning_model(model):
 		body["temperature"] = _TEMPERATURE
+	# Aerele-only: attribute this call to the originating Optimus Session.
+	if metadata:
+		body["metadata"] = metadata
 	data = _http_post(url, headers, body, provider="openai", where="chat/completions")
 	if usage_out is not None:
 		usage_out.update(_usage_from_openai(data))
